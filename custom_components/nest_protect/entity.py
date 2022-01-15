@@ -41,6 +41,7 @@ class NestEntity(CoordinatorEntity):
         area = self.coordinator.areas[self.bucket.value.get("where_id")]
 
         # TODO make this less specific, currently mainly for Topaz / (nest device)
+        # TODO change .get() to direct [""] access
         return DeviceInfo(
             connections={
                 (dr.CONNECTION_NETWORK_MAC, self.bucket.value.get("wifi_mac_address"))
