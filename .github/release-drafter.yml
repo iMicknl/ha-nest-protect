@@ -1,0 +1,21 @@
+name-template: 'v$NEXT_PATCH_VERSION'
+tag-template: 'v$NEXT_PATCH_VERSION'
+exclude-labels:
+  - 'exclude-from-changelog'
+categories:
+  - title: '⚠️ Breaking changes'
+    label: 'breaking'
+  - title: '🚀 Features'
+    label: 'feature'
+  - title: '✨ Enhancement'
+    label: 'enhancement'
+  - title: '📘 Documentation'
+    label: 'documentation'
+  - title: '🐛 Bug Fixes'
+    label: 'bug'
+template: |
+  ## What's changed
+  $CHANGES
+
+  ## Contributors to this release
+  $CONTRIBUTORS

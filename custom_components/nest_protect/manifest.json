@@ -1,0 +1,12 @@
+{
+    "domain": "nest_protect",
+    "name": "Nest Protect",
+    "config_flow": true,
+    "documentation": "https://github.com/imicknl/ha-nest-protect",
+    "requirements": [],
+    "codeowners": [
+        "@imicknl"
+    ],
+    "iot_class": "cloud_polling",
+    "version": "0.1.0"
+}
