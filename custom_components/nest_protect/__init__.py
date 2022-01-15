@@ -41,8 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Get initial first data (move later to coordinator)
     data = await client.get_first_data(nest.access_token, nest.userid)
 
-    # object key -> bucket
-    devices = []
+    devices: list[Bucket] = []
     areas: dict[str, str] = {}
 
     for bucket in data["updated_buckets"]:
