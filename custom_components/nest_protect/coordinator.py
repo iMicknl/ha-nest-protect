@@ -33,8 +33,8 @@ class NestProtectDataUpdateCoordinator(DataUpdateCoordinator[list[Bucket]]):
 
         self.api = client
         self.platforms = []
-        self.devices = devices
         self.areas = areas
+        self.devices: dict[str, Bucket] = {b.object_key: b for b in devices}
 
     async def _async_update_data(self):
         """Update data."""

@@ -40,8 +40,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     # Get initial first data (move later to coordinator)
     data = await client.get_first_data(nest.access_token, nest.userid)
+
+    # object key -> bucket
     devices = []
-    areas = {}
+    areas: dict[str, str] = {}
 
     for bucket in data["updated_buckets"]:
         key = bucket["object_key"]
@@ -53,17 +55,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         # Areas
         if key.startswith("where."):
-            bucket = Bucket(**bucket).value
+            bucket_value = Bucket(**bucket).value
 
-            for area in bucket["wheres"]:
+            for area in bucket_value["wheres"]:
                 areas[area["where_id"]] = area["name"]
 
         # Yale Locks
         if key.startswith("kryptonite."):
-            kryptonite = Bucket(**bucket).value
+            kryptonite = Bucket(**bucket)
             LOGGER.debug("Detected lock")
             LOGGER.debug(kryptonite)
-
             devices.append(kryptonite)
 
     coordinator = NestProtectDataUpdateCoordinator(

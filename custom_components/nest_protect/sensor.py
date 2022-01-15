@@ -64,15 +64,15 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSensor] = []
 
-    supported_keys = {
+    SUPPORTED_KEYS = {
         description.key: description for description in SENSOR_DESCRIPTIONS
     }
 
-    for device in data.coordinator.devices:
+    for device in data.coordinator.devices.values():
         for key in device.value:
-            if description := supported_keys.get(key):
+            if description := SUPPORTED_KEYS.get(key):
                 entities.append(
-                    NestProtectSensor(device, data.coordinator, description)
+                    NestProtectSensor(device.object_key, data.coordinator, description)
                 )
 
     async_add_devices(entities)
@@ -86,5 +86,5 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     @property
     def native_value(self) -> bool:
         """Return the state of the sensor."""
-        state = self.device.value.get(self.entity_description.key)
+        state = self.bucket.value.get(self.entity_description.key)
         return self.entity_description.value_fn(state)
