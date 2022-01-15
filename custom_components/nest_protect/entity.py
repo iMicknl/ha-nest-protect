@@ -13,45 +13,50 @@ class NestEntity(CoordinatorEntity):
 
     def __init__(
         self,
-        device: Bucket,
+        object_key: str,
         coordinator: NestProtectDataUpdateCoordinator,
         description: EntityDescription,
     ):
         """Initialize."""
         super().__init__(coordinator)
         self.entity_description = description
-        self.device = device
+        self.object_key = object_key
+        self._attr_unique_id = object_key
 
-        self._attr_unique_id = self.device.object_key
-
-        if label := self.device.value.get("description"):
+        if label := self.bucket.value.get("description"):
             self._attr_name = label
         else:
-            area = self.coordinator.areas[self.device.value.get("where_id")]
+            area = self.coordinator.areas[self.bucket.value.get("where_id")]
             self._attr_name = f"Nest Protect ({area})"
 
         self._attr_device_info = self.generate_device_info()
 
+    @property
+    def bucket(self) -> Bucket:
+        """Return bucket linked to this entity."""
+        return self.coordinator.data[self.object_key]
+
     def generate_device_info(self) -> DeviceInfo:
         """Generate device info."""
-        area = self.coordinator.areas[self.device.value.get("where_id")]
+        area = self.coordinator.areas[self.bucket.value.get("where_id")]
 
         # TODO make this less specific, currently mainly for Topaz / (nest device)
+        # TODO change .get() to direct [""] access
         return DeviceInfo(
             connections={
-                (dr.CONNECTION_NETWORK_MAC, self.device.value.get("wifi_mac_address"))
+                (dr.CONNECTION_NETWORK_MAC, self.bucket.value.get("wifi_mac_address"))
             },
-            identifiers={(DOMAIN, self.device.value.get("serial_number"))},
+            identifiers={(DOMAIN, self.bucket.value.get("serial_number"))},
             name=self._attr_name,
             manufacturer="Google",
-            model=self.device.value.get("model"),
-            sw_version=self.device.value.get("kl_software_version"),
+            model=self.bucket.value.get("model"),
+            sw_version=self.bucket.value.get("kl_software_version"),
             hw_version="Wired"
-            if self.device.value.get("wired_or_battery") == 0
+            if self.bucket.value.get("wired_or_battery") == 0
             else "Battery",
             suggested_area=area,
             configuration_url="https://home.nest.com/protect/"
-            + self.device.value.get("structure_id"),  # TODO change url based on device
+            + self.bucket.value.get("structure_id"),  # TODO change url based on device
         )
 
     @property
@@ -65,11 +70,11 @@ class NestDescriptiveEntity(NestEntity):
 
     def __init__(
         self,
-        device: Bucket,
+        object_key: str,
         coordinator: NestProtectDataUpdateCoordinator,
         description: EntityDescription,
     ) -> None:
         """Initialize the device."""
-        super().__init__(device, coordinator, description)
+        super().__init__(object_key, coordinator, description)
         self._attr_name = f"{super().name} {self.entity_description.name}"
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
