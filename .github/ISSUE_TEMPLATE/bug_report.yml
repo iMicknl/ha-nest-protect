@@ -1,0 +1,86 @@
+name: Bug Report
+description: Create a report to help us improve the integration
+labels: [bug]
+body:
+  - type: textarea
+    validations:
+      required: true
+    attributes:
+      label: The problem
+      description: >-
+        Describe the issue you are experiencing here to communicate to the
+        maintainers. Tell us what you were trying to do and what happened.
+
+        Provide a clear and concise description of what the problem is. What did you expect to happen?
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Environment
+
+  - type: input
+    id: version
+    validations:
+      required: true
+    attributes:
+      label: What version of this integration (ha-nest-protect) has the issue?
+      placeholder: 0.1.0
+      description: >
+        Can be found in the Configuration panel -> Info.
+
+  - type: input
+    id: ha_version
+    validations:
+      required: true
+    attributes:
+      label: What version of Home Assistant Core has the issue?
+      placeholder: core-
+      description: >
+        Can be found in the Configuration panel -> Info.
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Device
+
+  - type: input
+    id: nest_protect_device_model
+    validations:
+      required: false
+    attributes:
+      label: Device / Model
+      placeholder: e.g. Nest Protect (Battery)
+      description: >
+        Can be found in the Configuration panel -> Integrations -> Nest Protect -> (x) devices -> Model.
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Details
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Home Assistant log
+      description: Enable [debug logging](https://github.com/iMicknl/ha-nest-protect#enable-debug-logging) and paste your full log here, if you have errors.
+      value: |
+        <details><summary>Logs</summary>
+
+        ```
+
+        Copy/paste any log here, between the starting and ending backticks
+
+        ```
+
+        </details>
+
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional information
+      description: If you have any additional information for us, use the field below. Please note, you can attach screenshots or screen recordings here, by dragging and dropping files in the field below.
+
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
