@@ -134,9 +134,14 @@ class NestClient:
             nest_response = await response.json()
 
             # Change variable names since Python cannot handle vars that start with a number
-            nest_response["_2fa_state"] = nest_response.pop("2fa_state")
-            nest_response["_2fa_enabled"] = nest_response.pop("2fa_enabled")
-            nest_response["_2fa_state_changed"] = nest_response.pop("2fa_state_changed")
+            if nest_response.get("2fa_state"):
+                nest_response["_2fa_state"] = nest_response.pop("2fa_state")
+            if nest_response.get("2fa_enabled"):
+                nest_response["_2fa_enabled"] = nest_response.pop("2fa_enabled")
+            if nest_response.get("2fa_state_changed"):
+                nest_response["_2fa_state_changed"] = nest_response.pop(
+                    "2fa_state_changed"
+                )
 
             return NestResponse(**nest_response)
 
