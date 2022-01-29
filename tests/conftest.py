@@ -1,17 +1,15 @@
 """Fixtures for testing."""
 
-from typing import Any, TypeVar
+from collections.abc import Awaitable, Callable, Generator
+from typing import TypeVar
 
-import pytest
-from collections.abc import Callable, Awaitable, Generator
-from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-from custom_components.nest_protect.const import DOMAIN
 
+from custom_components.nest_protect.const import DOMAIN
 
 # Typing helpers
 ComponentSetup = Callable[[], Awaitable[None]]
@@ -24,6 +22,7 @@ REFRESH_TOKEN = "some-token"
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations) -> None:
+    """Enable custom integration."""
     yield
 
 
@@ -35,7 +34,8 @@ async def config_entry() -> MockConfigEntry:
 
 @pytest.fixture
 async def component_setup(
-    hass: HomeAssistant, config_entry: MockConfigEntry,
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
 ) -> YieldFixture[ComponentSetup]:
     """Fixture for setting up the component."""
     config_entry.add_to_hass(hass)
