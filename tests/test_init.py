@@ -8,8 +8,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from .conftest import ComponentSetup
 
-REFRESH_TOKEN = "some-token"
-
 
 async def test_init(
     hass, component_setup: ComponentSetup, config_entry: MockConfigEntry

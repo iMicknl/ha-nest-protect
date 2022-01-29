@@ -27,11 +27,6 @@ def auto_enable_custom_integrations(enable_custom_integrations) -> None:
     yield
 
 
-#@pytest.fixture
-#async def loop(event_loop: Any) -> Any:
-#    return event_loop
-
-
 @pytest.fixture
 async def config_entry() -> MockConfigEntry:
     """Fixture to initialize a MockConfigEntry."""
