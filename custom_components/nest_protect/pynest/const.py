@@ -14,11 +14,15 @@ CLIENT_ID = "733249279899-1gpkq9duqmdp55a7e5lft1pr2smumdla.apps.googleuserconten
 
 NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt"
 
+# General Nest information: "structure"
+# Thermostats: "device", "shared",
+# Protect: "topaz"
+# Temperature sensors: "kryptonite"
+
 BUCKET_TYPES = [
+    "structure",
     # Protect
-    "delayed_topaz",
     "topaz",
-    "topaz_resource"
     # Areas
     "where",
 ]
@@ -39,6 +43,6 @@ KNOWN_BUCKET_TYPES = [
 KNOWN_BUCKET_VERSION = []
 
 NEST_REQUEST = {
-    "known_bucket_types": KNOWN_BUCKET_TYPES,
+    "known_bucket_types": BUCKET_TYPES,
     "known_bucket_versions": KNOWN_BUCKET_VERSION,
 }
