@@ -12,6 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.const import ENTITY_CATEGORY_CONFIG, ENTITY_CATEGORY_DIAGNOSTIC
+from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
@@ -20,9 +21,9 @@ from .entity import NestDescriptiveEntity
 
 @dataclass
 class NestProtectSensorDescriptionMixin:
-    """Define an entity description mixin for binary sensor entities."""
+    """Define an entity description mixin for sensor entities."""
 
-    value_fn: Callable[[Any], bool]
+    value_fn: Callable[[Any], StateType] | None = None
 
 
 @dataclass
@@ -52,9 +53,14 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         value_fn=lambda state: {1: "Off", 2: "On", 3: "Always On"}.get(state),
         entity_category=ENTITY_CATEGORY_CONFIG,
     ),
+    # TODO Translate string Color Status (gray, green, yellow, red)
+    NestProtectSensorDescription(
+        name="Color",
+        key="device_external_color",
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
     # TODO Smoke Status (OK, Warning, Emergency)
     # TODO CO Status (OK, Warning, Emergency)
-    # TODO Color Status (gray, green, yellow, red)
 ]
 
 
@@ -85,4 +91,8 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     def native_value(self) -> bool:
         """Return the state of the sensor."""
         state = self.bucket.value.get(self.entity_description.key)
-        return self.entity_description.value_fn(state)
+
+        if self.entity_description.value_fn:
+            return self.entity_description.value_fn(state)
+
+        return state
