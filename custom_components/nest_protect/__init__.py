@@ -37,6 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         nest = await client.authenticate(access_token)
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
+        raise ConfigEntryNotReady from exception
 
     # Get initial first data (move later to coordinator)
     data = await client.get_first_data(nest.access_token, nest.userid)
