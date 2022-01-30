@@ -9,7 +9,14 @@ import urllib.parse
 
 from aiohttp import ClientSession, FormData
 
-from .const import CLIENT_ID, NEST_AUTH_URL_JWT, NEST_REQUEST, TOKEN_URL, USER_AGENT
+from .const import (
+    APP_LAUNCH_URL_FORMAT,
+    CLIENT_ID,
+    NEST_AUTH_URL_JWT,
+    NEST_REQUEST,
+    TOKEN_URL,
+    USER_AGENT,
+)
 from .models import NestResponse
 
 
@@ -158,7 +165,7 @@ class NestClient:
     async def get_first_data(self, nest_access_token: str, user_id: str) -> Any:
         """Get a Nest refresh token from an authorization code."""
         async with self.session.post(
-            f"https://home.nest.com/api/0.1/user/{user_id}/app_launch",
+            APP_LAUNCH_URL_FORMAT.format(user_id=user_id),
             json=NEST_REQUEST,
             headers={
                 "Authorization": f"Basic {nest_access_token}",
