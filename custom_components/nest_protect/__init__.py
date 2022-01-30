@@ -112,10 +112,13 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
     try:
         # TODO move refresh token logic to client
-        if entry_data.client.nest_session.is_expired():
+        if (
+            not entry_data.client.nest_session
+            or entry_data.client.nest_session.is_expired()
+        ):
             LOGGER.debug("Subscriber: authenticate for new Nest session")
 
-            if entry_data.client.auth.is_expired():
+            if not entry_data.client.auth or entry_data.client.auth.is_expired():
                 LOGGER.debug("Subscriber: retrieving new Google access token")
                 await entry_data.client.get_access_token()
 
