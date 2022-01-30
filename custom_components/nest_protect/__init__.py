@@ -142,11 +142,10 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
                     entry_data.areas[area["where_id"]] = area["name"]
 
         # Update buckets with new data, to only receive new updates
-        l2 = data["updated_buckets"]
-        l1 = result["objects"]
-
-        d1 = {d["object_key"]: d for d in l1}
-        objects = [dict(d, **d1.get(d["object_key"], {})) for d in l2]
+        d1 = {d["object_key"]: d for d in result["objects"]}
+        objects = [
+            dict(d, **d1.get(d["object_key"], {})) for d in data["updated_buckets"]
+        ]
 
         data["updated_buckets"] = objects
 
