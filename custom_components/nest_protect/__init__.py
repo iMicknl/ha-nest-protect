@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
@@ -124,13 +125,16 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         LOGGER.debug(result)
 
         # TODO write this data away in a better way
-        for bucket in data["objects"]:
+        for bucket in result["objects"]:
             key = bucket["object_key"]
 
             # Nest Protect
             if key.startswith("topaz."):
                 topaz = TopazBucket(**bucket)
                 entry_data.devices[key] = topaz
+
+                # TODO investigate if we want to use dispatcher, or get data from entry data in sensors
+                async_dispatcher_send(hass, key, topaz)
 
             # Areas
             if key.startswith("where."):

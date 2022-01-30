@@ -1,13 +1,17 @@
 """Entity class for Nest Protect."""
+from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.entity import DeviceInfo, EntityDescription
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.models import Bucket
 
 
-class NestEntity:
+class NestEntity(Entity):
     """Class to describe an Nest entity and link it to a device."""
+
+    _attr_should_poll = False
 
     def __init__(
         self, bucket: Bucket, description: EntityDescription, areas: dict[str, str]
@@ -24,11 +28,6 @@ class NestEntity:
             self._attr_name = f"Nest Protect ({self.area})"
 
         self._attr_device_info = self.generate_device_info()
-
-    # @property
-    # def bucket(self) -> Bucket:
-    #     """Return bucket linked to this entity."""
-    #     return self.bucket
 
     def generate_device_info(self) -> DeviceInfo:
         """Generate device info."""
@@ -56,6 +55,20 @@ class NestEntity:
     def extra_state_attributes(self) -> dict:
         """Return the state attributes."""
         return {"attribution": ATTRIBUTION}
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity is added to register update signal handler."""
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, self.bucket.object_key, self.update_callback
+            )
+        )
+
+    @callback
+    def update_callback(self, bucket: Bucket):
+        """Update the entities state."""
+        self.bucket = bucket
+        self.async_write_ha_state()
 
 
 class NestDescriptiveEntity(NestEntity):
