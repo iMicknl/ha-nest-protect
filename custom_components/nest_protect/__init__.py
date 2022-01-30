@@ -111,6 +111,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     LOGGER.debug("Subscribing for data")
 
     try:
+        # TODO add refresh token logic
         access_token = await entry_data.client.get_access_token()
         nest = await entry_data.client.authenticate(access_token)
 
@@ -122,9 +123,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
             data["updated_buckets"],
         )
 
-        # LOGGER.debug(result)
-
-        # TODO write this data away in a better way
+        # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
             key = bucket["object_key"]
 
@@ -143,13 +142,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
                 for area in bucket_value["wheres"]:
                     entry_data.areas[area["where_id"]] = area["name"]
 
-    except asyncio.exceptions.TimeoutError:
-        LOGGER.debug("Subscribe session timed out.")
-
-    except Exception as exception:  # pylint: disable=broad-except
-        LOGGER.exception(exception)
-
-    finally:
+        # Update buckets with new data, to only receive new updates
         l2 = data["updated_buckets"]
         l1 = result["objects"]
 
@@ -158,6 +151,13 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
         data["updated_buckets"] = objects
 
+    except asyncio.exceptions.TimeoutError:
+        LOGGER.debug("Subscribe session timed out.")
+
+    except Exception as exception:  # pylint: disable=broad-except
+        LOGGER.exception(exception)
+
+    finally:
         entry_data.data_subscriber_task = hass.async_create_task(
             _async_subscribe_for_data(hass, entry, data)
         )
