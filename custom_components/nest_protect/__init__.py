@@ -75,9 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     devices: dict[str, Bucket] = {b.object_key: b for b in devices}
 
-    task_data_subscriber = hass.async_create_task(
-        _async_subscribe_for_data(hass, entry, data)
-    )
+    task_data_subscriber = _register_subscribe_task(hass, entry, data)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices=devices,
@@ -102,6 +100,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
+
+
+def _register_subscribe_task(hass: HomeAssistant, entry: ConfigEntry, data: Any):
+    return hass.async_create_task(_async_subscribe_for_data(hass, entry, data))
 
 
 async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, data: Any):
@@ -160,14 +162,11 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         data["updated_buckets"] = objects
     except ServerDisconnectedError:
         LOGGER.debug("Subcriber: server disconnected.")
+        _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subcriber: session timed out.")
+        _register_subscribe_task(hass, entry, data)
 
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
-
-    finally:
-        entry_data.data_subscriber_task = hass.async_create_task(
-            _async_subscribe_for_data(hass, entry, data)
-        )
