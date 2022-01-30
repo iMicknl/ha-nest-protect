@@ -4,6 +4,7 @@ from unittest.mock import patch
 from aiohttp import web
 import pytest
 
+from custom_components.nest_protect.pynest.const import NEST_REQUEST
 from custom_components.nest_protect.pynest.client import NestClient
 
 
@@ -90,21 +91,7 @@ async def test_get_first_data_success(aiohttp_client, loop):
     (headers, json_request) = app["request"][0]
     assert headers.get("Authorization") == "Basic access-token"
     assert headers.get("X-nl-user-id") == "example-user"
-    assert json_request == {
-        "known_bucket_types": [
-            "buckets",
-            "structure",
-            "shared",
-            "topaz",
-            "device",
-            "rcs_settings",
-            "kryptonite",
-            "quartz",
-            "track",
-            "where",
-        ],
-        "known_bucket_versions": [],
-    }
+    assert json_request == NEST_REQUEST
     assert result == {
         "updated_buckets": [
             {
