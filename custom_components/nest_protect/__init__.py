@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Awaitable
 
+from aiohttp import ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
@@ -107,7 +108,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     """Subscribe for new data."""
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
-    LOGGER.debug("Subscribing for data")
+    LOGGER.debug("Subcriber: listening for new data")
 
     try:
         # TODO add refresh token logic
@@ -148,9 +149,11 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         ]
 
         data["updated_buckets"] = objects
+    except ServerDisconnectedError:
+        LOGGER.debug("Subcriber: server disconnected.")
 
     except asyncio.exceptions.TimeoutError:
-        LOGGER.debug("Subscribe session timed out.")
+        LOGGER.debug("Subcriber: session timed out.")
 
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
