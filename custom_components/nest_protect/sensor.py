@@ -48,17 +48,12 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
-        name="Pathlight",
+        name="Brightness",
         key="night_light_brightness",
-        value_fn=lambda state: {1: "Off", 2: "On", 3: "Always On"}.get(state),
+        value_fn=lambda state: {1: "Low", 2: "Medium", 3: "High"}.get(state),
         entity_category=ENTITY_CATEGORY_CONFIG,
     ),
-    # TODO Translate string Color Status (gray, green, yellow, red)
-    NestProtectSensorDescription(
-        name="Color",
-        key="device_external_color",
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-    ),
+    # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
     # TODO CO Status (OK, Warning, Emergency)
 ]
