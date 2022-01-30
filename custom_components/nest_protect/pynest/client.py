@@ -181,13 +181,15 @@ class NestClient:
 
         epoch = int(time.time())
         random = str(randint(100, 999))
+        timeout = 3600 * 24
 
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
+            timeout=timeout,
             json={
                 "objects": updated_buckets,
-                "timeout": 120 * 1000,
+                "timeout": timeout,
                 "sessionID": f"ios-${user_id}.{random}.{epoch}",
             },
             headers={

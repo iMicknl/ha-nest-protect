@@ -95,7 +95,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Unregister data subscriber
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-
     entry_data.data_subscriber_task()
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
