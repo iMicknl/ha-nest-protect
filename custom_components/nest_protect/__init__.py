@@ -121,8 +121,26 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
             data["updated_buckets"],
         )
 
-        # TODO write this data away
         LOGGER.debug(result)
+
+        # TODO write this data away in a better way
+        for bucket in data["objects"]:
+            key = bucket["object_key"]
+
+            # Nest Protect
+            if key.startswith("topaz."):
+                topaz = TopazBucket(**bucket)
+                entry_data.devices[key] = topaz
+
+            # Areas
+            if key.startswith("where."):
+                bucket_value = Bucket(**bucket).value
+
+                for area in bucket_value["wheres"]:
+                    entry_data.areas[area["where_id"]] = area["name"]
+
+    except asyncio.exceptions.TimeoutError:
+        LOGGER.debug("Subscribe session timed out.")
 
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
