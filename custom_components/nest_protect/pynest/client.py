@@ -1,6 +1,8 @@
 """PyNest API Client."""
 from __future__ import annotations
 
+from random import randint
+import time
 from types import TracebackType
 from typing import Any
 import urllib.parse
@@ -17,12 +19,12 @@ class NestClient:
     session: ClientSession
 
     def __init__(
-        self,
-        session: ClientSession | None = None,
+        self, session: ClientSession | None = None, refresh_token: str | None = None
     ) -> None:
         """Initialize NestClient."""
 
         self.session = session if session else ClientSession()
+        self.refresh_token = refresh_token
 
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
@@ -73,16 +75,24 @@ class NestClient:
                 raise Exception(result["error"])
 
             refresh_token = result["refresh_token"]
+            self.refresh_token = refresh_token
 
             return refresh_token
 
-    async def get_access_token(self, refresh_token: str) -> Any:
+    async def get_access_token(self, refresh_token: str | None = None) -> Any:
         """Get a Nest refresh token from an authorization code."""
+
+        if refresh_token:
+            self.refresh_token = refresh_token
+
+        if not self.refresh_token:
+            raise Exception("No refresh token")
+
         async with self.session.post(
             TOKEN_URL,
             data=FormData(
                 {
-                    "refresh_token": refresh_token,
+                    "refresh_token": self.refresh_token,
                     "client_id": CLIENT_ID,
                     "grant_type": "refresh_token",
                 }
@@ -160,19 +170,34 @@ class NestClient:
 
             return result
 
-    async def get_data(
-        self, nest_access_token: str, user_id: str, transport_url: str
+    async def subscribe_for_data(
+        self,
+        nest_access_token: str,
+        user_id: str,
+        transport_url: str,
+        updated_buckets: dict,
     ) -> Any:
-        """Get a Nest refresh token from an authorization code."""
+        """Subscribe for data."""
+
+        epoch = int(time.time())
+        random = str(randint(100, 999))
+
+        # TODO throw better exceptions
         async with self.session.post(
-            f"{transport_url}/v5/subscribe",
-            json=NEST_REQUEST,
+            f"{transport_url}/v6/subscribe",
+            json={
+                "objects": updated_buckets,
+                "timeout": 1000,
+                "sessionID": f"ios-${user_id}.{random}.{epoch}",
+            },
             headers={
                 "Authorization": f"Basic {nest_access_token}",
                 "X-nl-user-id": user_id,
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            result = await response.text()
+            result = await response.json()
+
+            # TODO type object
 
             return result

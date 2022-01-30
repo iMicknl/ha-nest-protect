@@ -1,6 +1,8 @@
 """Nest Protect integration."""
+import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Any, Awaitable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -21,6 +23,7 @@ class HomeAssistantNestProtectData:
     devices: dict[str, Bucket]
     areas: list[str, str]
     client: NestClient
+    data_subscriber_task: asyncio.Task[Awaitable]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -70,8 +73,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     devices: dict[str, Bucket] = {b.object_key: b for b in devices}
 
+    task_data_subscriber = hass.async_create_task(
+        _async_subscribe_for_data(hass, entry, data)
+    )
+
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
-        devices=devices, areas=areas, client=client
+        devices=devices,
+        areas=areas,
+        client=client,
+        data_subscriber_task=task_data_subscriber,
     )
 
     hass.config_entries.async_setup_platforms(entry, PLATFORMS)
@@ -82,7 +92,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
 
+    # Unregister data subscriber
+    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+
+    entry_data.data_subscriber_task()
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
+
+
+async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, data: Any):
+    """Subscribe for new data."""
+    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+
+    LOGGER.debug("Subscribing for data")
+
+    try:
+        access_token = await entry_data.client.get_access_token()
+        nest = await entry_data.client.authenticate(access_token)
+
+        # Subscribe to Google Nest subscribe endpoint
+        result = await entry_data.client.subscribe_for_data(
+            nest.access_token,
+            nest.userid,
+            data["service_urls"]["urls"]["transport_url"],
+            data["updated_buckets"],
+        )
+
+        # TODO write this data away
+        LOGGER.debug(result)
+
+    except Exception as exception:  # pylint: disable=broad-except
+        LOGGER.exception(exception)
+
+    finally:
+        entry_data.data_subscriber_task = hass.async_create_task(
+            _async_subscribe_for_data(hass, entry, data)
+        )
