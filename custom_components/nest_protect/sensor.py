@@ -20,17 +20,10 @@ from .entity import NestDescriptiveEntity
 
 
 @dataclass
-class NestProtectSensorDescriptionMixin:
-    """Define an entity description mixin for sensor entities."""
+class NestProtectSensorDescription(SensorEntityDescription):
+    """Class to describe an Nest Protect sensor."""
 
     value_fn: Callable[[Any], StateType] | None = None
-
-
-@dataclass
-class NestProtectSensorDescription(
-    SensorEntityDescription, NestProtectSensorDescriptionMixin
-):
-    """Class to describe an Nest Protect sensor."""
 
 
 SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
