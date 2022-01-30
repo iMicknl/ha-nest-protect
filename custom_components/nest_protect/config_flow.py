@@ -24,9 +24,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         token = user_input[CONF_TOKEN]
 
         refresh_token = await client.get_refresh_token(token)
-        access_token = await client.get_access_token(refresh_token)
+        auth = await client.get_access_token(refresh_token)
+
         await client.authenticate(
-            access_token
+            auth.access_token
         )  # TODO use result to gather more details
 
         return refresh_token

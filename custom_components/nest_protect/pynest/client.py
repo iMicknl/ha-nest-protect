@@ -17,12 +17,14 @@ from .const import (
     TOKEN_URL,
     USER_AGENT,
 )
-from .models import NestResponse
+from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
 
 
 class NestClient:
     """Interface class for the Nest API."""
 
+    nest_session: NestResponse | None = None
+    auth: GoogleAuthResponse | None = None
     session: ClientSession
 
     def __init__(
@@ -86,7 +88,9 @@ class NestClient:
 
             return refresh_token
 
-    async def get_access_token(self, refresh_token: str | None = None) -> Any:
+    async def get_access_token(
+        self, refresh_token: str | None = None
+    ) -> GoogleAuthResponse:
         """Get a Nest refresh token from an authorization code."""
 
         if refresh_token:
@@ -111,15 +115,16 @@ class NestClient:
         ) as response:
             result = await response.json()
 
+            # TODO Move away from 1 generic exception
             if "error" in result:
                 raise Exception(result["error"])
 
-            access_token = result["access_token"]
+            self.auth = GoogleAuthResponse(**result)
 
-            return access_token
+            return self.auth
 
     async def authenticate(self, access_token: str) -> NestResponse:
-        """Get a Nest refresh token from an authorization code."""
+        """Start a new Nest session with an access token."""
         async with self.session.post(
             NEST_AUTH_URL_JWT,
             data=FormData(
@@ -137,15 +142,14 @@ class NestClient:
             },
         ) as response:
             result = await response.json()
-
-            jwt = result["jwt"]
+            nest_auth = NestAuthResponse(**result)
 
         async with self.session.get(
             "https://home.nest.com/session",
             headers={
-                "Authorization": f"Basic {jwt}",
+                "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="
-                + jwt,
+                + nest_auth.jwt,
             },
         ) as response:
             nest_response = await response.json()
@@ -160,7 +164,9 @@ class NestClient:
                     "2fa_state_changed"
                 )
 
-            return NestResponse(**nest_response)
+            self.nest_session = NestResponse(**nest_response)
+
+            return self.nest_session
 
     async def get_first_data(self, nest_access_token: str, user_id: str) -> Any:
         """Get a Nest refresh token from an authorization code."""

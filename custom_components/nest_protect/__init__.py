@@ -39,8 +39,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     client = NestClient(session)
 
     try:
-        access_token = await client.get_access_token(refresh_token)
-        nest = await client.authenticate(access_token)
+        auth = await client.get_access_token(refresh_token)
+        nest = await client.authenticate(auth.access_token)
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
         raise ConfigEntryNotReady from exception
@@ -111,14 +111,20 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     LOGGER.debug("Subcriber: listening for new data")
 
     try:
-        # TODO add refresh token logic
-        access_token = await entry_data.client.get_access_token()
-        nest = await entry_data.client.authenticate(access_token)
+        # TODO move refresh token logic to client
+        if entry_data.client.nest_session.is_expired():
+            LOGGER.debug("Subscriber: authenticate for new Nest session")
+
+            if entry_data.client.auth.is_expired():
+                LOGGER.debug("Subscriber: retrieving new Google access token")
+                await entry_data.client.get_access_token()
+
+            await entry_data.client.authenticate(entry_data.client.auth.access_token)
 
         # Subscribe to Google Nest subscribe endpoint
         result = await entry_data.client.subscribe_for_data(
-            nest.access_token,
-            nest.userid,
+            entry_data.client.nest_session.access_token,
+            entry_data.client.nest_session.userid,
             data["service_urls"]["urls"]["transport_url"],
             data["updated_buckets"],
         )
