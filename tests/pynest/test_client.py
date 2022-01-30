@@ -4,8 +4,8 @@ from unittest.mock import patch
 from aiohttp import web
 import pytest
 
-from custom_components.nest_protect.pynest.const import NEST_REQUEST
 from custom_components.nest_protect.pynest.client import NestClient
+from custom_components.nest_protect.pynest.const import NEST_REQUEST
 
 
 @pytest.mark.enable_socket
