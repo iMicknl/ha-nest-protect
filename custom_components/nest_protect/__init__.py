@@ -8,7 +8,6 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN, LOGGER, PLATFORMS
-from .coordinator import NestProtectDataUpdateCoordinator
 from .pynest.client import NestClient
 from .pynest.models import Bucket, TopazBucket
 
@@ -19,7 +18,9 @@ SCAN_INTERVAL = timedelta(seconds=30)
 class HomeAssistantNestProtectData:
     """Nest Protect data stored in the Home Assistant data object."""
 
-    coordinator: NestProtectDataUpdateCoordinator
+    devices: dict[str, Bucket]
+    areas: list[str, str]
+    client: NestClient
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -67,19 +68,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             LOGGER.debug(kryptonite)
             devices.append(kryptonite)
 
-    coordinator = NestProtectDataUpdateCoordinator(
-        hass,
-        name="events",
-        client=client,
-        update_interval=timedelta(seconds=30),
-        devices=devices,
-        areas=areas,
-    )
-
-    await coordinator.async_config_entry_first_refresh()
+    devices: dict[str, Bucket] = {b.object_key: b for b in devices}
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
-        coordinator=coordinator
+        devices=devices, areas=areas, client=client
     )
 
     hass.config_entries.async_setup_platforms(entry, PLATFORMS)
