@@ -187,7 +187,7 @@ class NestClient:
             f"{transport_url}/v6/subscribe",
             json={
                 "objects": updated_buckets,
-                "timeout": 1000,
+                "timeout": 120 * 1000,
                 "sessionID": f"ios-${user_id}.{random}.{epoch}",
             },
             headers={

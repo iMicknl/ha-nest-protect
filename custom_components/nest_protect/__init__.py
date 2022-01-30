@@ -122,7 +122,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
             data["updated_buckets"],
         )
 
-        LOGGER.debug(result)
+        # LOGGER.debug(result)
 
         # TODO write this data away in a better way
         for bucket in result["objects"]:
@@ -150,6 +150,14 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         LOGGER.exception(exception)
 
     finally:
+        l2 = data["updated_buckets"]
+        l1 = result["objects"]
+
+        d1 = {d["object_key"]: d for d in l1}
+        objects = [dict(d, **d1.get(d["object_key"], {})) for d in l2]
+
+        data["updated_buckets"] = objects
+
         entry_data.data_subscriber_task = hass.async_create_task(
             _async_subscribe_for_data(hass, entry, data)
         )
