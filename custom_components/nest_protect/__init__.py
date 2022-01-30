@@ -110,7 +110,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     """Subscribe for new data."""
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
-    LOGGER.debug("Subcriber: listening for new data")
+    LOGGER.debug("Subscriber: listening for new data")
 
     try:
         # TODO move refresh token logic to client
@@ -161,11 +161,11 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
         data["updated_buckets"] = objects
     except ServerDisconnectedError:
-        LOGGER.debug("Subcriber: server disconnected.")
+        LOGGER.debug("Subscriber: server disconnected.")
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
-        LOGGER.debug("Subcriber: session timed out.")
+        LOGGER.debug("Subscriber: session timed out.")
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except Exception as exception:  # pylint: disable=broad-except
