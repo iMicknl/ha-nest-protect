@@ -7,7 +7,7 @@ from types import TracebackType
 from typing import Any
 import urllib.parse
 
-from aiohttp import ClientSession, FormData
+from aiohttp import ClientSession, ClientTimeout, FormData
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
@@ -199,7 +199,7 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
-            timeout=timeout,
+            timeout=ClientTimeout(total=timeout),
             json={
                 "objects": updated_buckets,
                 "timeout": timeout,
