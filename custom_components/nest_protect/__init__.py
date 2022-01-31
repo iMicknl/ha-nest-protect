@@ -162,11 +162,11 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         data["updated_buckets"] = objects
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
+
+    entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
