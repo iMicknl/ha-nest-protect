@@ -93,8 +93,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
 
     # Unregister data subscriber
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    entry_data.data_subscriber_task()
+    # entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    # entry_data.data_subscriber_task()
+
+    # TODO check if running task is cancelled on unload
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
@@ -160,13 +162,15 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         ]
 
         data["updated_buckets"] = objects
+
+        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
+        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
+        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
-
-    entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)

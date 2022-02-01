@@ -1,6 +1,7 @@
 """PyNest API Client."""
 from __future__ import annotations
 
+from json import JSONDecodeError
 from random import randint
 import time
 from types import TracebackType
@@ -211,7 +212,14 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            result = await response.json()
+            try:
+                result = await response.json()
+            except JSONDecodeError as error:
+                result = await response.text()
+
+                raise Exception(
+                    f"Unknown error while subscribing {response.status} - {result}"
+                ) from error
 
             # TODO type object
 
