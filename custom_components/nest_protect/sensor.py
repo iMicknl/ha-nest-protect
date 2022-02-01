@@ -42,6 +42,7 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     ),
     NestProtectSensorDescription(
         name="Brightness",
+        icon="mdi:lightbulb-on",
         key="night_light_brightness",
         value_fn=lambda state: {1: "Low", 2: "Medium", 3: "High"}.get(state),
         entity_category=ENTITY_CATEGORY_CONFIG,
