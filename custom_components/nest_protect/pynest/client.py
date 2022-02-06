@@ -1,14 +1,13 @@
 """PyNest API Client."""
 from __future__ import annotations
 
-from json import JSONDecodeError
 from random import randint
 import time
 from types import TracebackType
 from typing import Any
 import urllib.parse
 
-from aiohttp import ClientSession, ClientTimeout, FormData
+from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
@@ -18,6 +17,7 @@ from .const import (
     TOKEN_URL,
     USER_AGENT,
 )
+from .exceptions import PynestException
 from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
 
 
@@ -214,10 +214,10 @@ class NestClient:
         ) as response:
             try:
                 result = await response.json()
-            except JSONDecodeError as error:
+            except ContentTypeError as error:
                 result = await response.text()
 
-                raise Exception(
+                raise PynestException(
                     f"Unknown error while subscribing {response.status} - {result}"
                 ) from error
 

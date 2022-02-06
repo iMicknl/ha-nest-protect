@@ -13,6 +13,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
+from .pynest.exceptions import PynestException
 from .pynest.models import Bucket, TopazBucket
 
 SCAN_INTERVAL = timedelta(seconds=30)
@@ -170,6 +171,11 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
+        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+
+    except PynestException as exception:
+        LOGGER.debug("Subscriber: pynest exception.")
+        LOGGER.exception(exception)
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except Exception as exception:  # pylint: disable=broad-except
