@@ -17,7 +17,7 @@ from .const import (
     TOKEN_URL,
     USER_AGENT,
 )
-from .exceptions import PynestException
+from .exceptions import NotAuthenticatedException, PynestException
 from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
 
 
@@ -212,6 +212,10 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
+
+            if response.status == "401":
+                raise NotAuthenticatedException(response.text())
+
             try:
                 result = await response.json()
             except ContentTypeError as error:

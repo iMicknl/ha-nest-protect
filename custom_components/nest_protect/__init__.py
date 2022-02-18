@@ -13,7 +13,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
-from .pynest.exceptions import PynestException
+from .pynest.exceptions import NotAuthenticatedException, PynestException
 from .pynest.models import Bucket, TopazBucket
 
 SCAN_INTERVAL = timedelta(seconds=30)
@@ -157,9 +157,9 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
                     entry_data.areas[area["where_id"]] = area["name"]
 
         # Update buckets with new data, to only receive new updates
-        d1 = {d["object_key"]: d for d in result["objects"]}
+        buckets = {d["object_key"]: d for d in result["objects"]}
         objects = [
-            dict(d, **d1.get(d["object_key"], {})) for d in data["updated_buckets"]
+            dict(d, **buckets.get(d["object_key"], {})) for d in data["updated_buckets"]
         ]
 
         data["updated_buckets"] = objects
@@ -171,6 +171,12 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
+        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+
+    except NotAuthenticatedException as exception:
+        LOGGER.debug("Subscriber: 401 exception.")
+        LOGGER.exception(exception)
+        await entry_data.client.get_access_token()
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except PynestException as exception:

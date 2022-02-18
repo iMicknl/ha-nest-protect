@@ -12,11 +12,11 @@ This integration will add the main sensors of your Nest Protect device (CO, heat
 
 ## Known limitations and issues
 
-- **State will only be refreshed on start (reload) of the integration for now**
 - Only Nest Protect devices are supported
 - Only Google Accounts are supported
 - After the occupancy is triggered, it will stay 'on' for 10 minutes. (device limitation)
 - Config sensors are shown, but you cannot change the settings (yet)
+- (bug) Full start-up can take up to 5 minutes, while Nest Protect integration is configured
 
 ## Installation
 
