@@ -12,7 +12,7 @@
     "version": "0.1.1",
     "dhcp": [
         {
-            "macaddress": "CCA7C1"
+            "macaddress": "CCA7C1*"
         }
     ]
 }
