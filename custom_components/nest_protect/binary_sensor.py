@@ -35,8 +35,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     NestProtectBinarySensorDescription(
         key="co_status",
         name="CO Status",
-        device_class="carbon_monoxide",  # TODO swap when 2022.2 is released
-        # device_class=BinarySensorDeviceClass.CO,
+        device_class=BinarySensorDeviceClass.CO,
         value_fn=lambda state: state == 3,
     ),
     NestProtectBinarySensorDescription(

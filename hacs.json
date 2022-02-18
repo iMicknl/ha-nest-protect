@@ -1,4 +1,10 @@
 {
     "name": "Nest Protect",
-    "homeassistant": "2021.12"
+    "domains": [
+        "binary_sensor",
+        "sensor"
+    ],
+    "homeassistant": "2022.2",
+    "render_readme": "true",
+    "iot_class": "Cloud Polling"
 }
