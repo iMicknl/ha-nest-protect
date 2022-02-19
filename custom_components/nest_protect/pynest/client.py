@@ -1,6 +1,7 @@
 """PyNest API Client."""
 from __future__ import annotations
 
+import logging
 from random import randint
 import time
 from types import TracebackType
@@ -19,6 +20,8 @@ from .const import (
 )
 from .exceptions import NotAuthenticatedException, PynestException
 from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
+
+_LOGGER = logging.getLogger(__package__)
 
 
 class NestClient:
@@ -212,8 +215,7 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-
-            if response.status == "401":
+            if response.status == 401:
                 raise NotAuthenticatedException(response.text())
 
             try:
