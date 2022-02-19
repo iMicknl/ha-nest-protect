@@ -3,10 +3,16 @@
     "name": "Nest Protect",
     "config_flow": true,
     "documentation": "https://github.com/imicknl/ha-nest-protect",
+    "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
     "requirements": [],
     "codeowners": [
         "@imicknl"
     ],
-    "iot_class": "cloud_push",
-    "version": "0.1.1"
+    "iot_class": "cloud_polling",
+    "version": "0.1.2",
+    "dhcp": [
+        {
+            "macaddress": "CCA7C1*"
+        }
+    ]
 }
