@@ -41,6 +41,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     try:
         auth = await client.get_access_token(refresh_token)
+        # LOGGER.debug("When is google auth expired?")
+        # print(auth.expires_in)
+        # readable = datetime.datetime.now() + datetime.timedelta(
+        #     seconds=auth.expires_in - 5
+        # )
+        # LOGGER.debug(readable.strftime("%d-%b-%Y %H:%M:%S %Z"))
+
         nest = await client.authenticate(auth.access_token)
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
@@ -116,6 +123,14 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     LOGGER.debug("Subscriber: listening for new data")
 
     try:
+        # LOGGER.debug(entry_data.client.nest_session.expires_in)
+        # LOGGER.debug(
+        #     datetime.datetime.strptime(
+        #         entry_data.client.nest_session.expires_in, "%a, %d-%b-%Y %H:%M:%S %Z"
+        #     )
+        # )
+        # LOGGER.debug(entry_data.client.nest_session.is_expired())
+
         # TODO move refresh token logic to client
         if (
             not entry_data.client.nest_session
@@ -177,6 +192,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         LOGGER.debug("Subscriber: 401 exception.")
         LOGGER.exception(exception)
         await entry_data.client.get_access_token()
+        await entry_data.client.authenticate(entry_data.client.auth.access_token)
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
     except PynestException as exception:

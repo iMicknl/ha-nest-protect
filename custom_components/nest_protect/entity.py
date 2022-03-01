@@ -28,33 +28,28 @@ class NestEntity(Entity):
             self._attr_name = f"Nest Protect ({self.area})"
 
         self._attr_device_info = self.generate_device_info()
+        self._attr_attribution = ATTRIBUTION
 
     def generate_device_info(self) -> DeviceInfo:
         """Generate device info."""
 
         # TODO make this less specific, currently mainly for Topaz / (nest device)
-        # TODO change .get() to direct [""] access
         return DeviceInfo(
             connections={
-                (dr.CONNECTION_NETWORK_MAC, self.bucket.value.get("wifi_mac_address"))
+                (dr.CONNECTION_NETWORK_MAC, self.bucket.value["wifi_mac_address"])
             },
-            identifiers={(DOMAIN, self.bucket.value.get("serial_number"))},
+            identifiers={(DOMAIN, self.bucket.value["serial_number"])},
             name=self._attr_name,
             manufacturer="Google",
-            model=self.bucket.value.get("model"),
-            sw_version=self.bucket.value.get("kl_software_version"),
+            model=self.bucket.value["model"],
+            sw_version=self.bucket.value["kl_software_version"],
             hw_version="Wired"
-            if self.bucket.value.get("wired_or_battery") == 0
+            if self.bucket.value["wired_or_battery"] == 0
             else "Battery",
             suggested_area=self.area,
             configuration_url="https://home.nest.com/protect/"
-            + self.bucket.value.get("structure_id"),  # TODO change url based on device
+            + self.bucket.value["structure_id"],  # TODO change url based on device
         )
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        """Return the state attributes."""
-        return {"attribution": ATTRIBUTION}
 
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to register update signal handler."""

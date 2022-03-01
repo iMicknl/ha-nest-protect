@@ -216,7 +216,7 @@ class NestClient:
             },
         ) as response:
             if response.status == 401:
-                raise NotAuthenticatedException(response.text())
+                raise NotAuthenticatedException(await response.text())
 
             try:
                 result = await response.json()
