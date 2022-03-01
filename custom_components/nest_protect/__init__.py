@@ -188,9 +188,9 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         LOGGER.debug("Subscriber: session timed out.")
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
-    except NotAuthenticatedException as exception:
+    except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
-        LOGGER.exception(exception)
+        # Renewing access token
         await entry_data.client.get_access_token()
         await entry_data.client.authenticate(entry_data.client.auth.access_token)
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
@@ -200,5 +200,5 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         LOGGER.exception(exception)
         entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
 
-    except Exception as exception:  # pylint: disable=broad-except
-        LOGGER.exception(exception)
+    except Exception:  # pylint: disable=broad-except
+        LOGGER.exception("Unknown exception. Live updates disabled.")
