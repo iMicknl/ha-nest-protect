@@ -2,7 +2,7 @@
 import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Awaitable
+from typing import Any
 
 from aiohttp import ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
@@ -26,7 +26,6 @@ class HomeAssistantNestProtectData:
     devices: dict[str, Bucket]
     areas: list[str, str]
     client: NestClient
-    data_subscriber_task: asyncio.Task[Awaitable]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -41,13 +40,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     try:
         auth = await client.get_access_token(refresh_token)
-        # LOGGER.debug("When is google auth expired?")
-        # print(auth.expires_in)
-        # readable = datetime.datetime.now() + datetime.timedelta(
-        #     seconds=auth.expires_in - 5
-        # )
-        # LOGGER.debug(readable.strftime("%d-%b-%Y %H:%M:%S %Z"))
-
         nest = await client.authenticate(auth.access_token)
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
@@ -83,27 +75,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     devices: dict[str, Bucket] = {b.object_key: b for b in devices}
 
-    task_data_subscriber = _register_subscribe_task(hass, entry, data)
-
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices=devices,
         areas=areas,
         client=client,
-        data_subscriber_task=task_data_subscriber,
     )
 
     hass.config_entries.async_setup_platforms(entry, PLATFORMS)
+
+    _register_subscribe_task(hass, entry, data)
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-
-    # Unregister data subscriber
-    # entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    # entry_data.data_subscriber_task()
-
     # TODO check if running task is cancelled on unload
 
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
@@ -123,14 +109,6 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     LOGGER.debug("Subscriber: listening for new data")
 
     try:
-        # LOGGER.debug(entry_data.client.nest_session.expires_in)
-        # LOGGER.debug(
-        #     datetime.datetime.strptime(
-        #         entry_data.client.nest_session.expires_in, "%a, %d-%b-%Y %H:%M:%S %Z"
-        #     )
-        # )
-        # LOGGER.debug(entry_data.client.nest_session.is_expired())
-
         # TODO move refresh token logic to client
         if (
             not entry_data.client.nest_session
