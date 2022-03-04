@@ -90,8 +90,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # TODO check if running task is cancelled on unload
-
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
 
@@ -99,7 +97,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 def _register_subscribe_task(hass: HomeAssistant, entry: ConfigEntry, data: Any):
-    return hass.async_create_task(_async_subscribe_for_data(hass, entry, data))
+    return asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
 
 
 async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, data: Any):
