@@ -220,12 +220,12 @@ class NestClient:
 
             try:
                 result = await response.json()
-            except ContentTypeError as error:
+            except ContentTypeError:
                 result = await response.text()
 
                 raise PynestException(
-                    f"Unknown error while subscribing {response.status} - {result}"
-                ) from error
+                    f"{response.status} error while subscribing - {result}"
+                )
 
             # TODO type object
 

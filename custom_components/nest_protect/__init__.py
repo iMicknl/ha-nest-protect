@@ -157,26 +157,30 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
         data["updated_buckets"] = objects
 
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+        _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+        _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+        _register_subscribe_task(hass, entry, data)
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
         # Renewing access token
         await entry_data.client.get_access_token()
         await entry_data.client.authenticate(entry_data.client.auth.access_token)
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+        _register_subscribe_task(hass, entry, data)
 
-    except PynestException as exception:
-        LOGGER.debug("Subscriber: pynest exception.")
-        LOGGER.exception(exception)
-        entry_data.data_subscriber_task = _register_subscribe_task(hass, entry, data)
+    except PynestException:
+        LOGGER.exception("Subscriber: pynest exception.")
+
+        # Wait a minute before retrying
+        await asyncio.sleep(60)
+        _register_subscribe_task(hass, entry, data)
 
     except Exception:  # pylint: disable=broad-except
-        LOGGER.exception("Unknown exception. Live updates disabled.")
+        LOGGER.exception(
+            "Unknown exception. Live updates disabled. Please turn on debug mode and create an issue on GitHub."
+        )
