@@ -10,9 +10,10 @@ Custom component for Home Assistant to interact with Nest Protect devices via th
 
 This integration will add the main sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired.
 
+Since this integration is still a work in progress, there are some limitations and bugs. Please have a look at the known limitations and issues below, feel free to create an issue if you find another one or if you have a suggestion.
+
 ## Known limitations and issues
 
-- **State will only be refreshed on start (reload) of the integration for now**
 - Only Nest Protect devices are supported
 - Only Google Accounts are supported
 - After the occupancy is triggered, it will stay 'on' for 10 minutes. (device limitation)

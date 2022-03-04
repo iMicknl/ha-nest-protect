@@ -1,11 +1,14 @@
 """PyNest API Client."""
 from __future__ import annotations
 
+import logging
+from random import randint
+import time
 from types import TracebackType
 from typing import Any
 import urllib.parse
 
-from aiohttp import ClientSession, FormData
+from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
@@ -15,21 +18,26 @@ from .const import (
     TOKEN_URL,
     USER_AGENT,
 )
-from .models import NestResponse
+from .exceptions import NotAuthenticatedException, PynestException
+from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
+
+_LOGGER = logging.getLogger(__package__)
 
 
 class NestClient:
     """Interface class for the Nest API."""
 
+    nest_session: NestResponse | None = None
+    auth: GoogleAuthResponse | None = None
     session: ClientSession
 
     def __init__(
-        self,
-        session: ClientSession | None = None,
+        self, session: ClientSession | None = None, refresh_token: str | None = None
     ) -> None:
         """Initialize NestClient."""
 
         self.session = session if session else ClientSession()
+        self.refresh_token = refresh_token
 
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
@@ -80,16 +88,26 @@ class NestClient:
                 raise Exception(result["error"])
 
             refresh_token = result["refresh_token"]
+            self.refresh_token = refresh_token
 
             return refresh_token
 
-    async def get_access_token(self, refresh_token: str) -> Any:
+    async def get_access_token(
+        self, refresh_token: str | None = None
+    ) -> GoogleAuthResponse:
         """Get a Nest refresh token from an authorization code."""
+
+        if refresh_token:
+            self.refresh_token = refresh_token
+
+        if not self.refresh_token:
+            raise Exception("No refresh token")
+
         async with self.session.post(
             TOKEN_URL,
             data=FormData(
                 {
-                    "refresh_token": refresh_token,
+                    "refresh_token": self.refresh_token,
                     "client_id": CLIENT_ID,
                     "grant_type": "refresh_token",
                 }
@@ -101,15 +119,16 @@ class NestClient:
         ) as response:
             result = await response.json()
 
+            # TODO Move away from 1 generic exception
             if "error" in result:
                 raise Exception(result["error"])
 
-            access_token = result["access_token"]
+            self.auth = GoogleAuthResponse(**result)
 
-            return access_token
+            return self.auth
 
     async def authenticate(self, access_token: str) -> NestResponse:
-        """Get a Nest refresh token from an authorization code."""
+        """Start a new Nest session with an access token."""
         async with self.session.post(
             NEST_AUTH_URL_JWT,
             data=FormData(
@@ -127,15 +146,14 @@ class NestClient:
             },
         ) as response:
             result = await response.json()
-
-            jwt = result["jwt"]
+            nest_auth = NestAuthResponse(**result)
 
         async with self.session.get(
             "https://home.nest.com/session",
             headers={
-                "Authorization": f"Basic {jwt}",
+                "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="
-                + jwt,
+                + nest_auth.jwt,
             },
         ) as response:
             nest_response = await response.json()
@@ -150,7 +168,9 @@ class NestClient:
                     "2fa_state_changed"
                 )
 
-            return NestResponse(**nest_response)
+            self.nest_session = NestResponse(**nest_response)
+
+            return self.nest_session
 
     async def get_first_data(self, nest_access_token: str, user_id: str) -> Any:
         """Get a Nest refresh token from an authorization code."""
@@ -167,19 +187,46 @@ class NestClient:
 
             return result
 
-    async def get_data(
-        self, nest_access_token: str, user_id: str, transport_url: str
+    async def subscribe_for_data(
+        self,
+        nest_access_token: str,
+        user_id: str,
+        transport_url: str,
+        updated_buckets: dict,
     ) -> Any:
-        """Get a Nest refresh token from an authorization code."""
+        """Subscribe for data."""
+
+        epoch = int(time.time())
+        random = str(randint(100, 999))
+        timeout = 3600 * 24
+
+        # TODO throw better exceptions
         async with self.session.post(
-            f"{transport_url}/v5/subscribe",
-            json=NEST_REQUEST,
+            f"{transport_url}/v6/subscribe",
+            timeout=ClientTimeout(total=timeout),
+            json={
+                "objects": updated_buckets,
+                "timeout": timeout,
+                "sessionID": f"ios-${user_id}.{random}.{epoch}",
+            },
             headers={
                 "Authorization": f"Basic {nest_access_token}",
                 "X-nl-user-id": user_id,
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            result = await response.text()
+            if response.status == 401:
+                raise NotAuthenticatedException(await response.text())
+
+            try:
+                result = await response.json()
+            except ContentTypeError:
+                result = await response.text()
+
+                raise PynestException(
+                    f"{response.status} error while subscribing - {result}"
+                )
+
+            # TODO type object
 
             return result

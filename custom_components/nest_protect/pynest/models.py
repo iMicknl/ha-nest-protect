@@ -1,6 +1,7 @@
 """Models used by PyNest."""
 
 from dataclasses import dataclass, field
+import datetime
 from typing import Any
 
 
@@ -48,9 +49,17 @@ class NestResponse:
     _2fa_enabled: bool = None
     _2fa_state_changed: str = None
 
-    # field(repr=bool, default=None)
+    def is_expired(self):
+        """Check if session is expired."""
+        # Tue, 01-Mar-2022 23:15:55 GMT
+        expiry_date = datetime.datetime.strptime(
+            self.expires_in, "%a, %d-%b-%Y %H:%M:%S %Z"
+        )
 
-    # field(default_factory=lambda: [CalendarSlot])
+        if expiry_date <= datetime.datetime.now():
+            return True
+
+        return False
 
 
 @dataclass
@@ -155,3 +164,44 @@ class TopazBucket(Bucket):
     """Class that reflects a Nest API response."""
 
     value: TopazBucketValue = field(default_factory=TopazBucketValue)
+
+
+@dataclass
+class GoogleAuthResponse:
+    """TODO."""
+
+    access_token: str
+    expires_in: int
+    scope: str
+    token_type: str
+    id_token: str
+
+    def is_expired(self):
+        """Check if access token is expired."""
+        expiry_date = datetime.datetime.now() + datetime.timedelta(
+            seconds=self.expires_in - 5
+        )
+
+        if expiry_date <= datetime.datetime.now():
+            return True
+
+        return False
+
+
+# TODO rewrite to snake_case
+@dataclass
+class NestAuthClaims:
+    """TODO."""
+
+    subject: Any
+    expirationTime: str
+    policyId: str
+    structureConstraint: str
+
+
+@dataclass
+class NestAuthResponse:
+    """TODO."""
+
+    jwt: str
+    claims: NestAuthClaims = field(default_factory=NestAuthClaims)

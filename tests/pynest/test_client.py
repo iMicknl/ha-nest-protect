@@ -28,7 +28,15 @@ async def test_get_access_token_success(aiohttp_client, loop):
     """Test getting an access token."""
 
     async def make_token_response(request):
-        return web.json_response({"access_token": "new-access-token"})
+        return web.json_response(
+            {
+                "access_token": "new-access-token",
+                "expires_in": 3600,
+                "scope": "Bearer",
+                "token_type": "Bearer",
+                "id_token": "",
+            }
+        )
 
     app = web.Application()
     app.router.add_post("/token", make_token_response)
@@ -36,8 +44,8 @@ async def test_get_access_token_success(aiohttp_client, loop):
 
     nest_client = NestClient(client)
     with patch("custom_components.nest_protect.pynest.client.TOKEN_URL", "/token"):
-        access_token = await nest_client.get_access_token("refresh-token")
-        assert access_token == "new-access-token"
+        auth = await nest_client.get_access_token("refresh-token")
+        assert auth.access_token == "new-access-token"
 
 
 @pytest.mark.enable_socket
