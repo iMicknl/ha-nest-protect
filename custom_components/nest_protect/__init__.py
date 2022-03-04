@@ -83,6 +83,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hass.config_entries.async_setup_platforms(entry, PLATFORMS)
 
+    # Subscribe for real-time updates
+    # TODO cancel when closing HA / unloading entry
     _register_subscribe_task(hass, entry, data)
 
     return True
