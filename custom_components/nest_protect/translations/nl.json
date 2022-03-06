@@ -13,7 +13,7 @@
                 "data": {
                     "token": "Toegangstoken"
                 },
-                "description": "Om uw Google account te koppelen, [authoriseer uw account]({url}).\n\nNa autorisatie, copy-paste u de gegeven toegangstoken hieronder."
+                "description": "Om uw Google account te koppelen, [authoriseer uw account]({url}).\n\nNa autorisatie, plaatst u het gegeven toegangstoken hieronder."
             }
         }
     }
