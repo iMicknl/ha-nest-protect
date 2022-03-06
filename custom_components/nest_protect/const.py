@@ -11,4 +11,6 @@ LOGGER: logging.Logger = logging.getLogger(__package__)
 DOMAIN: Final = "nest_protect"
 ATTRIBUTION: Final = "Data provided by Google"
 
+CONF_REFRESH_TOKEN: Final = "refresh_token"
+
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
