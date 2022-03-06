@@ -20,7 +20,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self._attr_unique_id = bucket.object_key
-        self.area = areas[self.bucket.value.get("where_id")]
+        self.area = areas[self.bucket.value["where_id"]]
 
         if label := self.bucket.value.get("description"):
             self._attr_name = label
