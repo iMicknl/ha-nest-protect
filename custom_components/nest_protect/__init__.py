@@ -1,7 +1,6 @@
 """Nest Protect integration."""
 import asyncio
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
 from aiohttp import ServerDisconnectedError
@@ -11,12 +10,10 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import DOMAIN, LOGGER, PLATFORMS
+from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
 from .pynest.exceptions import NotAuthenticatedException, PynestException
 from .pynest.models import Bucket, TopazBucket
-
-SCAN_INTERVAL = timedelta(seconds=30)
 
 
 @dataclass
@@ -30,7 +27,7 @@ class HomeAssistantNestProtectData:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
-    refresh_token = entry.data["refresh_token"]
+    refresh_token = entry.data[CONF_REFRESH_TOKEN]
 
     if not refresh_token:
         raise ConfigEntryNotReady("No refresh token provided")
@@ -66,10 +63,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             for area in bucket_value["wheres"]:
                 areas[area["where_id"]] = area["name"]
 
-        # Yale Locks
+        # Temperature Sensors
         if key.startswith("kryptonite."):
             kryptonite = Bucket(**bucket)
-            LOGGER.debug("Detected lock")
+            LOGGER.debug("Detected temperature sensor")
             LOGGER.debug(kryptonite)
             devices.append(kryptonite)
 

@@ -30,6 +30,7 @@ class NestClient:
     nest_session: NestResponse | None = None
     auth: GoogleAuthResponse | None = None
     session: ClientSession
+    transport_url: str | None = None
 
     def __init__(
         self, session: ClientSession | None = None, refresh_token: str | None = None
@@ -185,6 +186,8 @@ class NestClient:
         ) as response:
             result = await response.json()
 
+            self.transport_url = result["service_urls"]["urls"]["transport_url"]
+
             return result
 
     async def subscribe_for_data(
@@ -230,3 +233,59 @@ class NestClient:
             # TODO type object
 
             return result
+
+    async def update_objects(
+        self,
+        nest_access_token: str,
+        user_id: str,
+        transport_url: str,
+        objects_to_update: dict,
+    ) -> Any:
+        """Subscribe for data."""
+
+        epoch = int(time.time())
+        random = str(randint(100, 999))
+
+        # TODO throw better exceptions
+        async with self.session.post(
+            f"{transport_url}/v6/put",
+            json={
+                "session": f"ios-${user_id}.{random}.{epoch}",
+                "objects": objects_to_update,
+            },
+            headers={
+                "Authorization": f"Basic {nest_access_token}",
+                "X-nl-user-id": user_id,
+                "X-nl-protocol-version": str(1),
+            },
+        ) as response:
+            if response.status == 401:
+                raise NotAuthenticatedException(await response.text())
+
+            try:
+                result = await response.json()
+            except ContentTypeError:
+                result = await response.text()
+
+                raise PynestException(
+                    f"{response.status} error while subscribing - {result}"
+                )
+
+            # TODO type object
+
+            return result
+
+
+# https://czfe82-front01-iad01.transport.home.nest.com/v5/put
+# {
+# 	"session": "30523153.35436.1646600092822",
+# 	"objects": [{
+# 		"base_object_revision": 25277,
+# 		"object_key": "topaz.18B43000418C356F",
+# 		"op": "MERGE",
+# 		"value": {
+# 			"night_light_enable": true,
+# 			"night_light_continuous": true
+# 		}
+# 	}]
+# }

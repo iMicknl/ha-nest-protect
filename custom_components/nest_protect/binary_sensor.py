@@ -146,7 +146,9 @@ async def async_setup_entry(hass, entry, async_add_devices):
         for key in device.value:
             if description := SUPPORTED_KEYS.get(key):
                 entities.append(
-                    NestProtectBinarySensor(device, description, data.areas)
+                    NestProtectBinarySensor(
+                        device, description, data.areas, data.client
+                    )
                 )
 
     async_add_devices(entities)

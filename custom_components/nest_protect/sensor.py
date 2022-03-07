@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_CONFIG, ENTITY_CATEGORY_DIAGNOSTIC
+from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC
 from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
@@ -40,13 +40,6 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         device_class=SensorDeviceClass.DATE,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     ),
-    NestProtectSensorDescription(
-        name="Brightness",
-        icon="mdi:lightbulb-on",
-        key="night_light_brightness",
-        value_fn=lambda state: {1: "Low", 2: "Medium", 3: "High"}.get(state),
-        entity_category=ENTITY_CATEGORY_CONFIG,
-    ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
     # TODO CO Status (OK, Warning, Emergency)
@@ -66,7 +59,9 @@ async def async_setup_entry(hass, entry, async_add_devices):
     for device in data.devices.values():
         for key in device.value:
             if description := SUPPORTED_KEYS.get(key):
-                entities.append(NestProtectSensor(device, description, data.areas))
+                entities.append(
+                    NestProtectSensor(device, description, data.areas, data.client)
+                )
 
     async_add_devices(entities)
 
