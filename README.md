@@ -10,14 +10,13 @@ Custom component for Home Assistant to interact with Nest Protect devices via th
 
 This integration will add the main sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired.
 
-Since this integration is still a work in progress, there are some limitations and bugs. Please have a look at the known limitations and issues below, feel free to create an issue if you find another one or if you have a suggestion.
+Since this integration is still a work in progress, there are some limitations and bugs. Please have a look at the known limitations and issues below, feel free to [create an issue](https://github.com/iMicknl/ha-nest-protect/issues/new/choose) if you find another one or if you have a suggestion.
 
-## Known limitations and issues
+## Known limitations
 
-- Only Nest Protect devices are supported
-- Only Google Accounts are supported
+- Only Google Accounts are supported, there is no plan to support legacy Nest accounts
+- Only Nest Protect devices are supported for now
 - After the occupancy is triggered, it will stay 'on' for 10 minutes. (device limitation)
-- Config sensors are shown, but you cannot change the settings (yet)
 
 ## Installation
 
@@ -25,11 +24,7 @@ You can install this integration via [HACS](#hacs) or [manually](#manual).
 
 ### HACS
 
-Add the repository url below to HACS, search for the Nest Protect integration and choose install.
-
-> https://github.com/imicknl/ha-nest-protect
-
-Reboot Home Assistant and configure the Nest Protect integration via the integrations page or press the blue button below.
+Search for the Nest Protect integration and choose install. Reboot Home Assistant and configure the Nest Protect integration via the integrations page or press the blue button below.
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=nest_protect)
 
@@ -57,4 +52,4 @@ logger:
 
 ## Credits
 
-Based on the great work of [homebridge-nest](https://github.com/chrisjshull/homebridge-nest).
+Based on the research and implementation of [homebridge-nest](https://github.com/chrisjshull/homebridge-nest).
