@@ -10,7 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_CONFIG, ENTITY_CATEGORY_DIAGNOSTIC
+from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
@@ -49,34 +49,6 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         name="Heat Status",
         device_class=BinarySensorDeviceClass.HEAT,
         value_fn=lambda state: state == 3,
-    ),
-    NestProtectBinarySensorDescription(
-        name="Pathlight",
-        key="night_light_enable",
-        value_fn=lambda state: state,
-        entity_category=ENTITY_CATEGORY_CONFIG,
-        icon="mdi:weather-night",
-    ),
-    NestProtectBinarySensorDescription(
-        key="ntp_green_led_enable",
-        name="Nightly Promise",
-        value_fn=lambda state: state,
-        entity_category=ENTITY_CATEGORY_CONFIG,
-        icon="mdi:led-off",
-    ),
-    NestProtectBinarySensorDescription(
-        key="steam_detection_enable",
-        name="Steam Check",
-        value_fn=lambda state: state,
-        entity_category=ENTITY_CATEGORY_CONFIG,
-        icon="mdi:pot-steam",
-    ),
-    NestProtectBinarySensorDescription(
-        key="heads_up_enable",
-        name="Heads-Up",
-        value_fn=lambda state: state,
-        entity_category=ENTITY_CATEGORY_CONFIG,
-        icon="mdi:exclamation-thick",
     ),
     NestProtectBinarySensorDescription(
         key="component_speaker_test_passed",
@@ -121,13 +93,6 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="auto_away",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.OCCUPANCY,
-    ),
-    # Yale Lock
-    NestProtectBinarySensorDescription(
-        name="Bolt Locked",
-        key="bolt_locked",
-        value_fn=lambda state: not state,
-        device_class=BinarySensorDeviceClass.LOCK,
     ),
 ]
 
