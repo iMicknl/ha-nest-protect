@@ -13,4 +13,4 @@ ATTRIBUTION: Final = "Data provided by Google"
 
 CONF_REFRESH_TOKEN: Final = "refresh_token"
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SELECT]

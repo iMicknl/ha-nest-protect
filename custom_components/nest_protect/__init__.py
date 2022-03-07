@@ -1,7 +1,6 @@
 """Nest Protect integration."""
 import asyncio
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
 from aiohttp import ServerDisconnectedError
@@ -15,8 +14,6 @@ from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
 from .pynest.exceptions import NotAuthenticatedException, PynestException
 from .pynest.models import Bucket, TopazBucket
-
-SCAN_INTERVAL = timedelta(seconds=30)
 
 
 @dataclass
