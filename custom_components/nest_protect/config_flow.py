@@ -8,7 +8,7 @@ import voluptuous as vol
 
 from custom_components.nest_protect.pynest.client import NestClient
 
-from .const import DOMAIN, LOGGER
+from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -39,7 +39,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             try:
                 refresh_token = await self.async_validate_input(user_input)
-                user_input["refresh_token"] = refresh_token
+                user_input[CONF_REFRESH_TOKEN] = refresh_token
                 # TODO catch more specific exceptions when pynest supports this
             except Exception as exception:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
@@ -47,7 +47,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 # TODO change unique id to an id related to the nest account
                 await self.async_set_unique_id(user_input[CONF_TOKEN])
-
                 self._abort_if_unique_id_configured()
 
                 # TODO pull name from account
