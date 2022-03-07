@@ -3,12 +3,33 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import HomeAssistantNestProtectData
 from .const import CONF_REFRESH_TOKEN, DOMAIN
+
+TO_REDACT = [
+    "city",
+    "state",
+    "zip",
+    "country",
+    "service_config",
+    "pairing_token",
+    "access_token",
+    "name",
+    "location",
+    "ifj_primary_fabric_id",
+    "aux_primary_fabric_id",
+    "topaz_hush_key",
+    "postal_code",
+    "latitude",
+    "longitude",
+    "thread_ip_address",
+    "serial_number",
+]
 
 
 async def async_get_config_entry_diagnostics(
@@ -25,7 +46,7 @@ async def async_get_config_entry_diagnostics(
 
     data = {"app_launch": await client.get_first_data(nest.access_token, nest.userid)}
 
-    return data
+    return async_redact_data(data, TO_REDACT)
 
 
 async def async_get_device_diagnostics(
@@ -49,4 +70,4 @@ async def async_get_device_diagnostics(
         "app_launch": await client.get_first_data(nest.access_token, nest.userid),
     }
 
-    return data
+    return async_redact_data(data, TO_REDACT)
