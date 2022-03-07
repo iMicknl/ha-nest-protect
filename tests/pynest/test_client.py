@@ -79,7 +79,30 @@ async def test_get_first_data_success(aiohttp_client, loop):
                     {
                         "object_key": "example-object-key",
                     }
-                ]
+                ],
+                "service_urls": {
+                    "urls": {
+                        "rubyapi_url": "https://home.nest.com/",
+                        "czfe_url": "https://xxxx.transport.home.nest.com",
+                        "log_upload_url": "https://logsink.home.nest.com/upload/user",
+                        "transport_url": "https://xxxx.transport.home.nest.com",
+                        "weather_url": "https://apps-weather.nest.com/weather/v1?query=",
+                        "support_url": "https://nest.secure.force.com/support/webapp?",
+                        "direct_transport_url": "https://xxx.transport.home.nest.com:443",
+                    },
+                    "limits": {
+                        "thermostats_per_structure": 20,
+                        "structures": 5,
+                        "smoke_detectors_per_structure": 18,
+                        "smoke_detectors": 54,
+                        "thermostats": 60,
+                    },
+                    "weave": {
+                        "service_config": "xxxx",
+                        "pairing_token": "xxxx",
+                        "access_token": "xxxx",
+                    },
+                },
             }
         )
 
