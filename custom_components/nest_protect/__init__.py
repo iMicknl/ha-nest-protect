@@ -32,10 +32,6 @@ class HomeAssistantNestProtectData:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
     refresh_token = entry.data[CONF_REFRESH_TOKEN]
-
-    if not refresh_token:
-        raise ConfigEntryNotReady("No refresh token provided")
-
     session = async_get_clientsession(hass)
     client = NestClient(session)
 
