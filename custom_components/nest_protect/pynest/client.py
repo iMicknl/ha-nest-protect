@@ -18,7 +18,11 @@ from .const import (
     TOKEN_URL,
     USER_AGENT,
 )
-from .exceptions import NotAuthenticatedException, PynestException
+from .exceptions import (
+    BadCredentialsException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
 
 _LOGGER = logging.getLogger(__package__)
@@ -86,6 +90,9 @@ class NestClient:
             result = await response.json()
 
             if "error" in result:
+                if result["error"] == "invalid_grant":
+                    raise BadCredentialsException(result["error"])
+
                 raise Exception(result["error"])
 
             refresh_token = result["refresh_token"]

@@ -1,14 +1,15 @@
 """Adds config flow for Nest Protect."""
 from typing import Any
 
+from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.const import CONF_TOKEN
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
-from custom_components.nest_protect.pynest.client import NestClient
-
 from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER
+from .pynest.client import NestClient
+from .pynest.exceptions import BadCredentialsException
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -40,7 +41,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 refresh_token = await self.async_validate_input(user_input)
                 user_input[CONF_REFRESH_TOKEN] = refresh_token
-                # TODO catch more specific exceptions when pynest supports this
+            except (TimeoutError, ClientError):
+                errors["base"] = "cannot_connect"
+            except BadCredentialsException:
+                errors["base"] = "invalid_auth"
             except Exception as exception:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
                 LOGGER.exception(exception)
