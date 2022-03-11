@@ -90,8 +90,6 @@ class NestProtectSwitch(NestDescriptiveEntity, SwitchEntity):
         """Return True if entity is on."""
         state = self.bucket.value.get(self.entity_description.key)
 
-        print("state", state)
-
         return state
 
     async def async_turn_on(self, **kwargs: Any) -> None:
