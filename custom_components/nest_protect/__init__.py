@@ -1,18 +1,24 @@
 """Nest Protect integration."""
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from aiohttp import ServerDisconnectedError
+from aiohttp import ClientError, ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
-from .pynest.exceptions import NotAuthenticatedException, PynestException
+from .pynest.exceptions import (
+    BadCredentialsException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .pynest.models import Bucket, TopazBucket
 
 
@@ -28,21 +34,20 @@ class HomeAssistantNestProtectData:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
     refresh_token = entry.data[CONF_REFRESH_TOKEN]
-
-    if not refresh_token:
-        raise ConfigEntryNotReady("No refresh token provided")
-
     session = async_get_clientsession(hass)
     client = NestClient(session)
 
     try:
         auth = await client.get_access_token(refresh_token)
         nest = await client.authenticate(auth.access_token)
+    except (TimeoutError, ClientError) as exception:
+        raise ConfigEntryNotReady from exception
+    except BadCredentialsException as exception:
+        raise ConfigEntryAuthFailed from exception
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception(exception)
         raise ConfigEntryNotReady from exception
 
-    # Get initial first data (move later to coordinator)
     data = await client.get_first_data(nest.access_token, nest.userid)
 
     devices: list[Bucket] = []
