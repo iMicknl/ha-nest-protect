@@ -89,6 +89,22 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         icon="mdi:molecule-co",
     ),
     NestProtectBinarySensorDescription(
+        name="WiFi Test",
+        key="component_wifi_test_passed",
+        value_fn=lambda state: not state,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        icon="mdi:wifi",
+    ),
+    NestProtectBinarySensorDescription(
+        name="LED Test",
+        key="component_led_test_passed",
+        value_fn=lambda state: not state,
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        icon="mdi:led-off",
+    ),
+    NestProtectBinarySensorDescription(
         name="Occupancy",
         key="auto_away",
         value_fn=lambda state: not state,
