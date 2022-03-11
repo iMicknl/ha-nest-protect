@@ -127,8 +127,10 @@ class NestClient:
         ) as response:
             result = await response.json()
 
-            # TODO Move away from 1 generic exception
             if "error" in result:
+                if result["error"] == "invalid_grant":
+                    raise BadCredentialsException(result["error"])
+
                 raise Exception(result["error"])
 
             self.auth = GoogleAuthResponse(**result)

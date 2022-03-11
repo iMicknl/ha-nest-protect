@@ -1,9 +1,11 @@
 """Adds config flow for Nest Protect."""
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import ClientError
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_TOKEN
+from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
@@ -16,6 +18,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Nest Protect."""
 
     VERSION = 1
+
+    _config_entry: ConfigEntry | None
+
+    def __init__(self) -> None:
+        """Initialize Nest Protect Config Flow."""
+        super().__init__()
+
+        self._config_entry = None
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> None:
         """Validate user credentials."""
@@ -31,9 +41,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             auth.access_token
         )  # TODO use result to gather more details
 
+        # TODO change unique id to an id related to the nest account
+        await self.async_set_unique_id(user_input[CONF_TOKEN])
+
         return refresh_token
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Handle a flow initialized by the user."""
         errors = {}
 
@@ -49,8 +64,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
                 LOGGER.exception(exception)
             else:
-                # TODO change unique id to an id related to the nest account
-                await self.async_set_unique_id(user_input[CONF_TOKEN])
+                if self._config_entry:
+                    # Update existing entry during reauth
+                    self.hass.config_entries.async_update_entry(
+                        self._config_entry,
+                        data={
+                            **self._config_entry.data,
+                            **user_input,
+                        },
+                    )
+
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(
+                            self._config_entry.entry_id
+                        )
+                    )
+
+                    return self.async_abort(reason="reauth_successful")
+
                 self._abort_if_unique_id_configured()
 
                 # TODO pull name from account
@@ -66,3 +97,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+    async def async_step_reauth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle reauth."""
+        self._config_entry = cast(
+            ConfigEntry,
+            self.hass.config_entries.async_get_entry(self.context["entry_id"]),
+        )
+
+        return await self.async_step_user(user_input)
