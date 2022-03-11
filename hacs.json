@@ -4,7 +4,7 @@
         "binary_sensor",
         "sensor"
     ],
-    "homeassistant": "2022.2",
+    "homeassistant": "2022.3",
     "render_readme": "true",
     "iot_class": "Cloud Polling"
 }

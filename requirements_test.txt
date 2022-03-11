@@ -1,2 +1,5 @@
-pytest-homeassistant-custom-component==0.6.3
+-r requirements_dev.txt
+
+pytest==7.0.1
+pytest-homeassistant-custom-component==0.7.2 # 2022.3.3
 pytest-timeout==2.1.0
