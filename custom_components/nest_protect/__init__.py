@@ -16,6 +16,7 @@ from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
 from .pynest.exceptions import (
     BadCredentialsException,
+    GatewayTimeoutException,
     NotAuthenticatedException,
     PynestException,
 )
@@ -118,10 +119,9 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         ):
             LOGGER.debug("Subscriber: authenticate for new Nest session")
 
-            if not entry_data.client.auth or entry_data.client.auth.is_expired():
-                LOGGER.debug("Subscriber: retrieving new Google access token")
-                await entry_data.client.get_access_token()
-
+        if not entry_data.client.auth or entry_data.client.auth.is_expired():
+            LOGGER.debug("Subscriber: retrieving new Google access token")
+            await entry_data.client.get_access_token()
             await entry_data.client.authenticate(entry_data.client.auth.access_token)
 
         # Subscribe to Google Nest subscribe endpoint
@@ -173,6 +173,12 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         # Renewing access token
         await entry_data.client.get_access_token()
         await entry_data.client.authenticate(entry_data.client.auth.access_token)
+        _register_subscribe_task(hass, entry, data)
+
+    except GatewayTimeoutException:
+        LOGGER.debug("Subscriber: gateway time-out. Pausing for 2 minutes.")
+
+        await asyncio.sleep(120)
         _register_subscribe_task(hass, entry, data)
 
     except PynestException:

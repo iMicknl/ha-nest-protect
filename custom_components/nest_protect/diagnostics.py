@@ -12,6 +12,7 @@ from . import HomeAssistantNestProtectData
 from .const import CONF_REFRESH_TOKEN, DOMAIN
 
 TO_REDACT = [
+    "address_lines",
     "access_token",
     "aux_primary_fabric_id",
     "city",
