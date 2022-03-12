@@ -20,6 +20,7 @@ from .const import (
 )
 from .exceptions import (
     BadCredentialsException,
+    GatewayTimeoutException,
     NotAuthenticatedException,
     PynestException,
 )
@@ -229,6 +230,9 @@ class NestClient:
         ) as response:
             if response.status == 401:
                 raise NotAuthenticatedException(await response.text())
+
+            if response.status == 501:
+                raise GatewayTimeoutException(await response.text())
 
             try:
                 result = await response.json()
