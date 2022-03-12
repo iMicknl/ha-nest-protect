@@ -72,8 +72,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         # Temperature Sensors
         if key.startswith("kryptonite."):
             kryptonite = Bucket(**bucket)
-            LOGGER.debug("Detected temperature sensor")
-            LOGGER.debug(kryptonite)
             devices.append(kryptonite)
 
     devices: dict[str, Bucket] = {b.object_key: b for b in devices}

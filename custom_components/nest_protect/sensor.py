@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC
+from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC, TEMP_CELSIUS
 from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
@@ -39,6 +39,13 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
         device_class=SensorDeviceClass.DATE,
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
+    NestProtectSensorDescription(
+        name="Temperature",
+        key="temperature",
+        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
+        device_class=SensorDeviceClass.TEMPERATURE,
+        unit_of_measurement=TEMP_CELSIUS,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
