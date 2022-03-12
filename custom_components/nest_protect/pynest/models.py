@@ -175,14 +175,17 @@ class GoogleAuthResponse:
     scope: str
     token_type: str
     id_token: str
+    expiry_date: datetime.datetime = field(init=False)
+
+    def __post_init__(self):
+        """Set the expiry date during post init."""
+        self.expiry_date = datetime.datetime.now() + datetime.timedelta(
+            seconds=self.expires_in
+        )
 
     def is_expired(self):
         """Check if access token is expired."""
-        expiry_date = datetime.datetime.now() + datetime.timedelta(
-            seconds=self.expires_in - 5
-        )
-
-        if expiry_date <= datetime.datetime.now():
+        if self.expiry_date <= datetime.datetime.now():
             return True
 
         return False
