@@ -17,3 +17,9 @@ class NotAuthenticatedException(Exception):
     """Raised when session is invalid."""
 
     pass
+
+
+class GatewayTimeoutException(Exception):
+    """Raised when server times out."""
+
+    pass
