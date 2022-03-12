@@ -43,7 +43,6 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     NestProtectSensorDescription(
         name="Temperature",
         key="temperature",
-        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
         device_class=SensorDeviceClass.TEMPERATURE,
         unit_of_measurement=TEMP_CELSIUS,
     ),
