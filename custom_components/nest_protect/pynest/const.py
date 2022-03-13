@@ -20,7 +20,7 @@ NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt
 
 BUCKET_TYPES = [
     # Temperature Sensors,
-    "kryptonite"
+    "kryptonite",
     # General
     "structure",
     # Protect
