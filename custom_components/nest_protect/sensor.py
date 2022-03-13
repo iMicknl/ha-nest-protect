@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
@@ -38,7 +38,7 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         key="replace_by_date_utc_secs",
         value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
         device_class=SensorDeviceClass.DATE,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
