@@ -142,6 +142,13 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.OCCUPANCY,
     ),
+    NestProtectBinarySensorDescription(
+        name="Line Power",
+        key="line_power_present",
+        value_fn=lambda state: state,
+        device_class=BinarySensorDeviceClass.POWER,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
 ]
 
 
