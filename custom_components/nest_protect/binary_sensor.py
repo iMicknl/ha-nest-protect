@@ -10,7 +10,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC
+from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
@@ -55,7 +55,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         name="Speaker Test",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:speaker-wireless",
     ),
     NestProtectBinarySensorDescription(
@@ -63,21 +63,21 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         name="Battery Health",
         value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.BATTERY,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectBinarySensorDescription(
         key="component_wifi_test_passed",
         name="Online",
         value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectBinarySensorDescription(
         name="Smoke Test",
         key="component_smoke_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:smoke",
     ),
     NestProtectBinarySensorDescription(
@@ -85,7 +85,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_co_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:molecule-co",
     ),
     NestProtectBinarySensorDescription(
@@ -93,7 +93,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_wifi_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:wifi",
     ),
     NestProtectBinarySensorDescription(
@@ -101,7 +101,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_led_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:led-off",
     ),
     NestProtectBinarySensorDescription(
@@ -109,7 +109,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_pir_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:run",
     ),
     NestProtectBinarySensorDescription(
@@ -117,7 +117,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_buzzer_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:alarm-bell",
     ),
     NestProtectBinarySensorDescription(
@@ -125,7 +125,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_heat_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:fire",
     ),
     NestProtectBinarySensorDescription(
@@ -133,7 +133,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="component_hum_test_passed",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:water-percent",
     ),
     NestProtectBinarySensorDescription(
@@ -147,7 +147,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="line_power_present",
         value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.POWER,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 ]
 
