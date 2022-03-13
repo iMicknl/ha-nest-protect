@@ -11,7 +11,8 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC, TEMP_CELSIUS
+from homeassistant.const import TEMP_CELSIUS
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
@@ -38,7 +39,7 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         key="replace_by_date_utc_secs",
         value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
         device_class=SensorDeviceClass.DATE,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
         name="Temperature",

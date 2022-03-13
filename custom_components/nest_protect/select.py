@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from homeassistant.components.select import SelectEntity, SelectEntityDescription
-from homeassistant.const import ENTITY_CATEGORY_CONFIG
+from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
@@ -37,7 +37,7 @@ SENSOR_DESCRIPTIONS: list[SelectEntityDescription] = [
         name="Brightness",
         icon="mdi:lightbulb-on",
         options=[*PRESET_TO_BRIGHTNESS],
-        entity_category=ENTITY_CATEGORY_CONFIG,
+        entity_category=EntityCategory.CONFIG,
         device_class=NestProtectDeviceClass.NIGHT_LIGHT_BRIGHTNESS,
     ),
 ]
