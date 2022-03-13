@@ -31,7 +31,7 @@ class NestEntity(Entity):
         self.area = areas[self.bucket.value["where_id"]]
 
         if label := self.bucket.value.get("description"):
-            self._attr_name = label
+            self._attr_name = f"Nest Protect ({label})"
         else:
             self._attr_name = f"Nest Protect ({self.area})"
 
