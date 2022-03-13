@@ -36,8 +36,10 @@ class NestEntity(Entity):
             self._attr_name = f"Nest Protect ({self.area})"
 
         self._attr_unique_id = bucket.object_key
-        self._attr_device_info = self.generate_device_info()
         self._attr_attribution = ATTRIBUTION
+
+        if bucket.object_key.startswith("topaz."):
+            self._attr_device_info = self.generate_device_info()
 
     def generate_device_info(self) -> DeviceInfo:
         """Generate device info."""
