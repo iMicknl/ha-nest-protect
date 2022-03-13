@@ -2,9 +2,6 @@
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36"
 
-# Timeout other API calls after this number of seconds
-API_TIMEOUT_SECONDS = 40
-
 # / URL for refresh token generation
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
