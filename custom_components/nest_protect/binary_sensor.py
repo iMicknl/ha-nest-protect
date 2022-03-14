@@ -28,7 +28,7 @@ class NestProtectBinarySensorDescriptionMixin:
 class NestProtectBinarySensorDescription(
     BinarySensorEntityDescription, NestProtectBinarySensorDescriptionMixin
 ):
-    """Class to describe an Overkiz binary sensor."""
+    """Class to describe a Nest Protect binary sensor."""
 
     wired_only: bool = False
 
