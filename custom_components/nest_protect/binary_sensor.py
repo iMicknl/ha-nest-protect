@@ -181,9 +181,6 @@ async def async_setup_entry(hass, entry, async_add_devices):
                     )
                 )
 
-        for key in device.value:
-            print(device.value["wired_or_battery"])
-
     async_add_devices(entities)
 
 
