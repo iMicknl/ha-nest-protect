@@ -120,14 +120,15 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:alarm-bell",
     ),
-    NestProtectBinarySensorDescription(
-        name="Heat Test",
-        key="component_heat_test_passed",
-        value_fn=lambda state: not state,
-        device_class=BinarySensorDeviceClass.PROBLEM,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        icon="mdi:fire",
-    ),
+    # Disabled for now, since it seems like this state is not valid
+    # NestProtectBinarySensorDescription(
+    #     name="Heat Test",
+    #     key="component_heat_test_passed",
+    #     value_fn=lambda state: not state,
+    #     device_class=BinarySensorDeviceClass.PROBLEM,
+    #     entity_category=EntityCategory.DIAGNOSTIC,
+    #     icon="mdi:fire",
+    # ),
     NestProtectBinarySensorDescription(
         name="Humidity Test",
         key="component_hum_test_passed",
