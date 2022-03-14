@@ -1,22 +1,19 @@
-![Detail page of a Nest Protect device](https://user-images.githubusercontent.com/1424596/149627841-e5611c04-f0e7-4b66-9b10-a9ec0b5c37f8.png)
+![Detail page of a Nest Protect device](https://user-images.githubusercontent.com/1424596/158192051-c4a49665-2675-4299-9abf-c0848623445a.png)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/custom-components/hacs)
 [![GitHub release](https://img.shields.io/github/release/iMicknl/ha-nest-protect.svg)](https://GitHub.com/iMicknl/ha-nest-protect/releases/)
 [![HA integration usage](https://img.shields.io/badge/dynamic/json?color=41BDF5&logo=home-assistant&label=integration%20usage&suffix=%20installs&cacheSeconds=15600&url=https://analytics.home-assistant.io/custom_integrations.json&query=$.nest_protect.total)](https://analytics.home-assistant.io/custom_integrations.json)
 
-# Nest Protect integration for Home Assistant (work in progress)
+# Nest Protect integration for Home Assistant
 
-Custom component for Home Assistant to interact with Nest Protect devices via the original Nest platform. Currently Google SDM doesn't support Nest Protect devices and thus the official [Nest integration](https://www.home-assistant.io/integrations/nest/) won't work for Nest Protect.
+Custom component for Home Assistant to interact with Nest Protect devices via an undocumented and unofficial Nest API. Unfortunately, Google SDM doesn't support Nest Protect devices and thus the core [Nest integration](https://www.home-assistant.io/integrations/nest/) won't work for Nest Protect.
 
-This integration will add the main sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired.
-
-Since this integration is still a work in progress, there are some limitations and bugs. Please have a look at the known limitations and issues below, feel free to [create an issue](https://github.com/iMicknl/ha-nest-protect/issues/new/choose) if you find another one or if you have a suggestion.
+This integration will add the most important sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired (to main power). In addition, it will expose several diagnostic and configuration entities. All sensor values will be updated real-time.
 
 ## Known limitations
 
 - Only Google Accounts are supported, there is no plan to support legacy Nest accounts
-- Only Nest Protect devices are supported for now
-- After the occupancy is triggered, it will stay 'on' for 10 minutes. (device limitation)
+- When Nest Protect (wired) occupancy is triggered, it will stay 'on' for 10 minutes. (API limitation)
 
 ## Installation
 
@@ -38,6 +35,8 @@ Copy the `custom_components/nest_protect` to your custom_components folder. Rebo
 
 
 ## Advanced
+
+Feel free to [create an issue on GitHub](https://github.com/iMicknl/ha-nest-protect/issues/new/choose) if you find an issue or if you have a suggestion. It is always helpful to download the diagnostics information and to include debug logging.
 
 ### Enable debug logging
 
