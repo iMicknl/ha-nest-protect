@@ -12,11 +12,13 @@ from . import HomeAssistantNestProtectData
 from .const import CONF_REFRESH_TOKEN, DOMAIN
 
 TO_REDACT = [
-    "address_lines",
     "access_token",
+    "address_lines",
     "aux_primary_fabric_id",
     "city",
     "country",
+    "emergency_contact_description",
+    "emergency_contact_phone",
     "ifj_primary_fabric_id",
     "latitude",
     "location",
@@ -27,8 +29,15 @@ TO_REDACT = [
     "serial_number",
     "service_config",
     "state",
+    "sunrise",
+    "sunset",
+    "temp_c",
     "thread_ip_address",
+    "thread_mac_address",
+    "time_zone",
     "topaz_hush_key",
+    "user",
+    "wifi_mac_address",
     "zip",
 ]
 
