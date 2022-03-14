@@ -30,6 +30,8 @@ class NestProtectBinarySensorDescription(
 ):
     """Class to describe an Overkiz binary sensor."""
 
+    wired_only: bool = False
+
 
 BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     NestProtectBinarySensorDescription(
@@ -142,6 +144,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="auto_away",
         value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.OCCUPANCY,
+        wired_only=True,
     ),
     NestProtectBinarySensorDescription(
         name="Line Power",
@@ -149,6 +152,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.POWER,
         entity_category=EntityCategory.DIAGNOSTIC,
+        wired_only=True,
     ),
 ]
 
@@ -166,11 +170,19 @@ async def async_setup_entry(hass, entry, async_add_devices):
     for device in data.devices.values():
         for key in device.value:
             if description := SUPPORTED_KEYS.get(key):
+
+                # Not all entities are useful for battery powered Nest Protect devices
+                if description.wired_only and device.value["wired_or_battery"] != 0:
+                    continue
+
                 entities.append(
                     NestProtectBinarySensor(
                         device, description, data.areas, data.client
                     )
                 )
+
+        for key in device.value:
+            print(device.value["wired_or_battery"])
 
     async_add_devices(entities)
 
