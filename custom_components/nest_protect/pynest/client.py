@@ -231,7 +231,7 @@ class NestClient:
             if response.status == 401:
                 raise NotAuthenticatedException(await response.text())
 
-            if response.status == 501:
+            if response.status == 504:
                 raise GatewayTimeoutException(await response.text())
 
             try:
