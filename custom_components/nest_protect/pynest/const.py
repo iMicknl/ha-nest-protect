@@ -65,6 +65,6 @@ KNOWN_BUCKET_TYPES = [
 KNOWN_BUCKET_VERSION = []
 
 NEST_REQUEST = {
-    "known_bucket_types": BUCKET_TYPES,
+    "known_bucket_types": KNOWN_BUCKET_TYPES,
     "known_bucket_versions": KNOWN_BUCKET_VERSION,
 }
