@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC, TEMP_CELSIUS
+from homeassistant.const import ENTITY_CATEGORY_DIAGNOSTIC, PERCENTAGE, TEMP_CELSIUS
 from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
@@ -27,12 +27,14 @@ class NestProtectSensorDescription(SensorEntityDescription):
 
 
 SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
-    # TODO figure out Battery Level mapping
-    # NestProtectSensorDescription(
-    #     key="battery_level",
-    #     name="Battery Level",
-    #     value_fn=lambda state: state,
-    # ),
+    NestProtectSensorDescription(
+        key="battery_level",
+        name="Battery Level",
+        value_fn=lambda state: state if state <= 100 else None,
+        device_class=SensorDeviceClass.BATTERY,
+        unit_of_measurement=PERCENTAGE,
+        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    ),
     NestProtectSensorDescription(
         name="Replace By",
         key="replace_by_date_utc_secs",
@@ -42,7 +44,8 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     ),
     NestProtectSensorDescription(
         name="Temperature",
-        key="temperature",
+        key="current_temperature",
+        value_fn=lambda state: round(state, 2),
         device_class=SensorDeviceClass.TEMPERATURE,
         unit_of_measurement=TEMP_CELSIUS,
     ),
