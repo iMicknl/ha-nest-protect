@@ -48,7 +48,7 @@ class NestEntity(Entity):
             return f"Nest Protect ({name})"
 
         if self.bucket.object_key.startswith("kryptonite."):
-            return f"Nest Thermostat ({name})"
+            return f"Nest Temperature Sensor ({name})"
 
         return None
 
