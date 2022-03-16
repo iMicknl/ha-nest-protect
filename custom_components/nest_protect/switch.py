@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.const import ENTITY_CATEGORY_CONFIG
+from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
@@ -36,25 +36,25 @@ SWITCH_DESCRIPTIONS: list[SwitchEntityDescription] = [
     NestProtectSwitchDescription(
         name="Pathlight",
         key="night_light_enable",
-        entity_category=ENTITY_CATEGORY_CONFIG,
+        entity_category=EntityCategory.CONFIG,
         icon="mdi:weather-night",
     ),
     NestProtectSwitchDescription(
         key="ntp_green_led_enable",
         name="Nightly Promise",
-        entity_category=ENTITY_CATEGORY_CONFIG,
+        entity_category=EntityCategory.CONFIG,
         icon="mdi:led-off",
     ),
     NestProtectSwitchDescription(
         key="heads_up_enable",
         name="Heads-Up",
-        entity_category=ENTITY_CATEGORY_CONFIG,
+        entity_category=EntityCategory.CONFIG,
         icon="mdi:exclamation-thick",
     ),
     NestProtectSwitchDescription(
         key="steam_detection_enable",
         name="Steam Check",
-        entity_category=ENTITY_CATEGORY_CONFIG,
+        entity_category=EntityCategory.CONFIG,
         icon="mdi:pot-steam",
     ),
 ]

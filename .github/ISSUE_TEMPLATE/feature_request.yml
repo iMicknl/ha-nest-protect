@@ -19,7 +19,7 @@ body:
         ## Device
 
   - type: input
-    id: overkiz_device_model
+    id: nest_device_model
     validations:
       required: false
     attributes:
