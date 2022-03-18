@@ -196,6 +196,9 @@ class NestClient:
         ) as response:
             result = await response.json()
 
+            if result.get("error"):
+                _LOGGER.debug(result)
+
             self.transport_url = result["service_urls"]["urls"]["transport_url"]
 
             return result

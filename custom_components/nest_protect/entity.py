@@ -1,4 +1,6 @@
 """Entity class for Nest Protect."""
+from __future__ import annotations
+
 from enum import unique
 
 from homeassistant.backports.enum import StrEnum
@@ -30,35 +32,57 @@ class NestEntity(Entity):
         self.client = client
         self.area = areas[self.bucket.value["where_id"]]
 
-        if label := self.bucket.value.get("description"):
-            self._attr_name = f"Nest Protect ({label})"
-        else:
-            self._attr_name = f"Nest Protect ({self.area})"
-
         self._attr_unique_id = bucket.object_key
-        self._attr_device_info = self.generate_device_info()
         self._attr_attribution = ATTRIBUTION
+        self._attr_name = self.device_name()
+        self._attr_device_info = self.generate_device_info()
 
-    def generate_device_info(self) -> DeviceInfo:
+    def device_name(self) -> str | None:
+        """Generate device name."""
+        if label := self.bucket.value.get("description"):
+            name = label
+        else:
+            name = self.area
+
+        if self.bucket.object_key.startswith("topaz."):
+            return f"Nest Protect ({name})"
+
+        if self.bucket.object_key.startswith("kryptonite."):
+            return f"Nest Temperature Sensor ({name})"
+
+        return None
+
+    def generate_device_info(self) -> DeviceInfo | None:
         """Generate device info."""
 
-        # TODO make this less specific, currently mainly for Topaz / (nest device)
-        return DeviceInfo(
-            connections={
-                (dr.CONNECTION_NETWORK_MAC, self.bucket.value["wifi_mac_address"])
-            },
-            identifiers={(DOMAIN, self.bucket.value["serial_number"])},
-            name=self._attr_name,
-            manufacturer="Google",
-            model=self.bucket.value["model"],
-            sw_version=self.bucket.value["software_version"],
-            hw_version="Wired"
-            if self.bucket.value["wired_or_battery"] == 0
-            else "Battery",
-            suggested_area=self.area,
-            configuration_url="https://home.nest.com/protect/"
-            + self.bucket.value["structure_id"],  # TODO change url based on device
-        )
+        if self.bucket.object_key.startswith("topaz."):
+            return DeviceInfo(
+                connections={
+                    (dr.CONNECTION_NETWORK_MAC, self.bucket.value["wifi_mac_address"])
+                },
+                identifiers={(DOMAIN, self.bucket.value["serial_number"])},
+                name=self._attr_name,
+                manufacturer="Google",
+                model=self.bucket.value["model"],
+                sw_version=self.bucket.value["software_version"],
+                hw_version="Wired"
+                if self.bucket.value["wired_or_battery"] == 0
+                else "Battery",
+                suggested_area=self.area,
+                configuration_url="https://home.nest.com/protect/"
+                + self.bucket.value["structure_id"],  # TODO change url based on device
+            )
+
+        if self.bucket.object_key.startswith("kryptonite."):
+            return DeviceInfo(
+                identifiers={(DOMAIN, self.bucket.value["serial_number"])},
+                name=self._attr_name,
+                manufacturer="Google",
+                model=self.bucket.value["model"],
+                suggested_area=self.area,
+            )
+
+        return None
 
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to register update signal handler."""

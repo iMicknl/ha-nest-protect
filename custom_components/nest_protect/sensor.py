@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
+from homeassistant.const import PERCENTAGE, TEMP_CELSIUS
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
@@ -27,18 +28,27 @@ class NestProtectSensorDescription(SensorEntityDescription):
 
 
 SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
-    # TODO figure out Battery Level mapping
-    # NestProtectSensorDescription(
-    #     key="battery_level",
-    #     name="Battery Level",
-    #     value_fn=lambda state: state,
-    # ),
+    NestProtectSensorDescription(
+        key="battery_level",
+        name="Battery Level",
+        value_fn=lambda state: state if state <= 100 else None,
+        device_class=SensorDeviceClass.BATTERY,
+        native_unit_of_measurement=PERCENTAGE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     NestProtectSensorDescription(
         name="Replace By",
         key="replace_by_date_utc_secs",
         value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    NestProtectSensorDescription(
+        name="Temperature",
+        key="current_temperature",
+        value_fn=lambda state: round(state, 2),
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=TEMP_CELSIUS,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
