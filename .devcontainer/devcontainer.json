@@ -6,9 +6,6 @@
 	"appPort": [
 		"8123:8123"
 	],
-	"containerEnv": {
-		"WORKSPACE_DIRECTORY": "/workspaces/ha-nest-protect"
-	},
 	"postCreateCommand": "container install && pip install -r requirements_dev.txt && pre-commit install && pre-commit install-hooks",
 	"extensions": [
 		"ms-python.python",
@@ -38,13 +35,5 @@
 		"editor.formatOnType": true,
 		"files.trimTrailingWhitespace": true,
 		"python.linting.mypyEnabled": true,
-		"python.defaultInterpreterPath": "/usr/local/bin/python",
-		"python.formatting.blackPath": "/usr/local/bin/black",
-		"python.linting.banditPath": "/usr/local/bin/bandit",
-		"python.linting.flake8Path": "/usr/local/bin/flake8",
-		"python.linting.mypyPath": "/usr/local/bin/mypy",
-		"python.linting.pycodestylePath": "/usr/local/bin/pycodestyle",
-		"python.linting.pylintPath": "/usr/local/bin/pylint",
-		"python.sortImports.path": "/usr/local/bin/isort",
 	}
 }
