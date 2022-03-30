@@ -74,11 +74,15 @@ class NestEntity(Entity):
             )
 
         if self.bucket.object_key.startswith("kryptonite."):
+            identifier = (
+                self.bucket.value.get("serial_number") or self.bucket.object_key
+            )
+
             return DeviceInfo(
-                identifiers={(DOMAIN, self.bucket.value["serial_number"])},
+                identifiers={(DOMAIN, identifier)},
                 name=self._attr_name,
                 manufacturer="Google",
-                model=self.bucket.value["model"],
+                model=self.bucket.value.get("model"),
                 suggested_area=self.area,
             )
 
