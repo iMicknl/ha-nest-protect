@@ -2,6 +2,11 @@
     "config": {
         "step": {
             "user": {
+                "data": {
+                    "account_type": "Account Type"
+                }
+            },
+            "account_link": {
                 "description": "To link your Google account, [authorize your account]({url}).\n\nAfter authorization, copy-paste the provided Auth Token code below.",
                 "data": {
                     "token": "[%key:common::config_flow::data::access_token%]"

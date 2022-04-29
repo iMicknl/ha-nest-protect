@@ -12,8 +12,9 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
+from .const import CONF_ACCOUNT_TYPE, CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
 from .pynest.client import NestClient
+from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.exceptions import (
     BadCredentialsException,
     GatewayTimeoutException,
@@ -35,8 +36,9 @@ class HomeAssistantNestProtectData:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
     refresh_token = entry.data[CONF_REFRESH_TOKEN]
+    account_type = entry.data[CONF_ACCOUNT_TYPE]
     session = async_get_clientsession(hass)
-    client = NestClient(session)
+    client = NestClient(session=session, environment=NEST_ENVIRONMENTS[account_type])
 
     try:
         auth = await client.get_access_token(refresh_token)

@@ -208,3 +208,11 @@ class NestAuthResponse:
 
     jwt: str
     claims: NestAuthClaims = field(default_factory=NestAuthClaims)
+
+
+@dataclass
+class NestEnvironment:
+    """Class to describe a Nest environment."""
+
+    name: str
+    client_id: str

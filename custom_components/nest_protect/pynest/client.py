@@ -12,7 +12,7 @@ from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
-    CLIENT_ID,
+    DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
     TOKEN_URL,
@@ -24,7 +24,7 @@ from .exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
-from .models import GoogleAuthResponse, NestAuthResponse, NestResponse
+from .models import GoogleAuthResponse, NestAuthResponse, NestEnvironment, NestResponse
 
 _LOGGER = logging.getLogger(__package__)
 
@@ -36,14 +36,19 @@ class NestClient:
     auth: GoogleAuthResponse | None = None
     session: ClientSession
     transport_url: str | None = None
+    environment: NestEnvironment
 
     def __init__(
-        self, session: ClientSession | None = None, refresh_token: str | None = None
+        self,
+        session: ClientSession | None = None,
+        refresh_token: str | None = None,
+        environment: NestEnvironment = DEFAULT_NEST_ENVIRONMENT,
     ) -> None:
         """Initialize NestClient."""
 
         self.session = session if session else ClientSession()
         self.refresh_token = refresh_token
+        self.environment = environment
 
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
@@ -59,14 +64,16 @@ class NestClient:
         await self.session.close()
 
     @staticmethod
-    def generate_token_url() -> str:
+    def generate_token_url(
+        environment: NestEnvironment = DEFAULT_NEST_ENVIRONMENT,
+    ) -> str:
         """Generate the URL to get a Nest authentication token."""
         data = {
             "access_type": "offline",
             "response_type": "code",
             "scope": "openid profile email https://www.googleapis.com/auth/nest-account",
             "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
-            "client_id": CLIENT_ID,
+            "client_id": environment.client_id,
         }
 
         return f"https://accounts.google.com/o/oauth2/auth/oauthchooseaccount?{urllib.parse.urlencode(data)}"
@@ -79,7 +86,7 @@ class NestClient:
                 {
                     "code": token,
                     "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
-                    "client_id": CLIENT_ID,
+                    "client_id": self.environment.client_id,
                     "grant_type": "authorization_code",
                 }
             ),
@@ -117,7 +124,7 @@ class NestClient:
             data=FormData(
                 {
                     "refresh_token": self.refresh_token,
-                    "client_id": CLIENT_ID,
+                    "client_id": self.environment.client_id,
                     "grant_type": "refresh_token",
                 }
             ),

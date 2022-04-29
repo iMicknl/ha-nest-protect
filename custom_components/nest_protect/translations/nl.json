@@ -11,6 +11,11 @@
         "step": {
             "user": {
                 "data": {
+                    "account_type": "Account type"
+                }
+            },
+            "account_link": {
+                "data": {
                     "token": "Toegangstoken"
                 },
                 "description": "Om uw Google account te koppelen, [authoriseer uw account]({url}).\n\nNa autorisatie, plaatst u het gegeven toegangstoken hieronder."
