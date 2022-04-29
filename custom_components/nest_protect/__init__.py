@@ -180,7 +180,9 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         _register_subscribe_task(hass, entry, data)
 
     except PynestException:
-        LOGGER.exception("Subscriber: pynest exception.")
+        LOGGER.exception(
+            "Unknown pynest exception. Please create an issue on GitHub with your logfile. Updates paused for 1 minute."
+        )
 
         # Wait a minute before retrying
         await asyncio.sleep(60)
@@ -192,5 +194,5 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         _register_subscribe_task(hass, entry, data)
 
         LOGGER.exception(
-            "Unknown exception. Please create an issue on GitHub with your logfile."
+            "Unknown exception. Please create an issue on GitHub with your logfile. Updates paused for 5 minutes."
         )
