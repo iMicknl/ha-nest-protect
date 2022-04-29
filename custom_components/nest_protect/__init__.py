@@ -33,6 +33,22 @@ class HomeAssistantNestProtectData:
     client: NestClient
 
 
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
+    """Migrate old Config entries."""
+    LOGGER.debug("Migrating from version %s", config_entry.version)
+
+    if config_entry.version == 1:
+        entry_data = {**config_entry.data}
+        entry_data[CONF_ACCOUNT_TYPE] = "production"
+
+        config_entry.data = {**entry_data}
+        config_entry.version = 2
+
+    LOGGER.debug("Migration to version %s successful", config_entry.version)
+
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
     refresh_token = entry.data[CONF_REFRESH_TOKEN]

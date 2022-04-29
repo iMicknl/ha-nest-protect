@@ -20,7 +20,7 @@ from .pynest.exceptions import BadCredentialsException
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Nest Protect."""
 
-    VERSION = 1
+    VERSION = 2
 
     _config_entry: ConfigEntry | None
 
