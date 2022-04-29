@@ -29,7 +29,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         super().__init__()
 
         self._config_entry = None
-        self._default_hub = "production"
+        self._default_account_type = "production"
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> None:
         """Validate user credentials."""
@@ -58,14 +58,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input:
-            self._default_hub = user_input[CONF_ACCOUNT_TYPE]
+            self._default_account_type = user_input[CONF_ACCOUNT_TYPE]
             return await self.async_step_account_link()
 
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ACCOUNT_TYPE, default=self._default_hub): vol.In(
+                    vol.Required(
+                        CONF_ACCOUNT_TYPE, default=self._default_account_type
+                    ): vol.In(
                         {key: env.name for key, env in NEST_ENVIRONMENTS.items()}
                     ),
                 }
@@ -81,7 +83,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input:
             try:
-                user_input[CONF_ACCOUNT_TYPE] = self._default_hub
+                user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
                 refresh_token = await self.async_validate_input(user_input)
                 user_input[CONF_REFRESH_TOKEN] = refresh_token
             except (TimeoutError, ClientError):
@@ -119,7 +121,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="account_link",
             description_placeholders={
                 CONF_URL: NestClient.generate_token_url(
-                    environment=NEST_ENVIRONMENTS[self._default_hub]
+                    environment=NEST_ENVIRONMENTS[self._default_account_type]
                 )
             },
             data_schema=vol.Schema({vol.Required(CONF_TOKEN): str}),
@@ -135,4 +137,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.hass.config_entries.async_get_entry(self.context["entry_id"]),
         )
 
-        return await self.async_step_user(user_input)
+        self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
+
+        return await self.async_step_account_link(user_input)
