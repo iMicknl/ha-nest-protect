@@ -160,14 +160,14 @@ class NestClient:
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "User-Agent": USER_AGENT,
-                "Referer": "https://home.nest.com",
+                "Referer": self.environment.host,
             },
         ) as response:
             result = await response.json()
             nest_auth = NestAuthResponse(**result)
 
         async with self.session.get(
-            "https://home.nest.com/session",
+            self.environment.host + "/session",
             headers={
                 "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="

@@ -7,10 +7,12 @@ NEST_ENVIRONMENTS: dict[str, NestEnvironment] = {
     "production": NestEnvironment(
         name="Google Account",
         client_id="733249279899-1gpkq9duqmdp55a7e5lft1pr2smumdla.apps.googleusercontent.com",  # Nest iOS application
+        host="https://home.nest.com",
     ),
     "fieldtest": NestEnvironment(
         name="Google Account (Field Test)",
         client_id="384529615266-57v6vaptkmhm64n9hn5dcmkr4at14p8j.apps.googleusercontent.com",  # Test Flight Beta Nest iOS application
+        host="https://home.ft.nest.com",
     ),
 }
 

@@ -216,3 +216,4 @@ class NestEnvironment:
 
     name: str
     client_id: str
+    host: str
