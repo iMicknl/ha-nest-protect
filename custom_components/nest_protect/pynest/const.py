@@ -22,7 +22,7 @@ DEFAULT_NEST_ENVIRONMENT = NEST_ENVIRONMENTS["production"]
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # App launch API endpoint
-APP_LAUNCH_URL_FORMAT = "https://home.nest.com/api/0.1/user/{user_id}/app_launch"
+APP_LAUNCH_URL_FORMAT = "{host}/api/0.1/user/{user_id}/app_launch"
 
 NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt"
 

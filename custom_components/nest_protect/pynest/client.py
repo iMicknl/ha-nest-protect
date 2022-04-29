@@ -193,7 +193,7 @@ class NestClient:
     async def get_first_data(self, nest_access_token: str, user_id: str) -> Any:
         """Get a Nest refresh token from an authorization code."""
         async with self.session.post(
-            APP_LAUNCH_URL_FORMAT.format(user_id=user_id),
+            APP_LAUNCH_URL_FORMAT.format(host=self.environment.host, user_id=user_id),
             json=NEST_REQUEST,
             headers={
                 "Authorization": f"Basic {nest_access_token}",
