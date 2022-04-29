@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from aiohttp import ClientError, ServerDisconnectedError
+from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -164,6 +164,10 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
+        _register_subscribe_task(hass, entry, data)
+
+    except ClientConnectorError:
+        LOGGER.debug("Subscriber: cannot connect to host.")
         _register_subscribe_task(hass, entry, data)
 
     except NotAuthenticatedException:
