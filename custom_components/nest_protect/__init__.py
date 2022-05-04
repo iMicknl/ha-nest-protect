@@ -167,6 +167,13 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
                 for area in bucket_value["wheres"]:
                     entry_data.areas[area["where_id"]] = area["name"]
 
+            # Temperature Sensors
+            if key.startswith("kryptonite."):
+                kryptonite = Bucket(**bucket)
+                entry_data.devices[key] = kryptonite
+
+                async_dispatcher_send(hass, key, kryptonite)
+                
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
         objects = [
