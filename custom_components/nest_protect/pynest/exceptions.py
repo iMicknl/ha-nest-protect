@@ -7,6 +7,12 @@ class PynestException(Exception):
     pass
 
 
+class NestServiceException(Exception):
+    """Raised when service is not available."""
+
+    pass
+
+
 class BadCredentialsException(Exception):
     """Raised when credentials are incorrect."""
 
@@ -19,7 +25,13 @@ class NotAuthenticatedException(Exception):
     pass
 
 
-class GatewayTimeoutException(Exception):
+class GatewayTimeoutException(NestServiceException):
     """Raised when server times out."""
+
+    pass
+
+
+class BadGatewayException(NestServiceException):
+    """Raised when server returns Bad Gateway."""
 
     pass
