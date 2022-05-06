@@ -173,7 +173,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
                 entry_data.devices[key] = kryptonite
 
                 async_dispatcher_send(hass, key, kryptonite)
-                
+
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
         objects = [
