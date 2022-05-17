@@ -42,6 +42,7 @@ class NestResponse:
     weave: dict[str, str]
     user: str
     is_staff: bool
+    error: dict | None
     urls: NestUrls = field(default_factory=NestUrls)
     limits: NestLimits = field(default_factory=NestLimits)
 

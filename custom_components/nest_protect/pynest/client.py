@@ -194,7 +194,14 @@ class NestClient:
                     "2fa_state_changed"
                 )
 
-            self.nest_session = NestResponse(**nest_response)
+            try:
+                self.nest_session = NestResponse(**nest_response)
+            except Exception:
+                nest_response = await response.text()
+
+                raise PynestException(
+                    f"{response.status} error while authenticating - {nest_response}. Please create an issue on GitHub."
+                )
 
             return self.nest_session
 
