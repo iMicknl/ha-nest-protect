@@ -124,4 +124,5 @@ class NestDescriptiveEntity(NestEntity):
 class NestProtectDeviceClass(StrEnum):
     """Device class for Nest Protect specific devices."""
 
+    DETAILED_STATUS = "nest_protect__detailed_status"
     NIGHT_LIGHT_BRIGHTNESS = "nest_protect__night_light_brightness"

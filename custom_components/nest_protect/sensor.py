@@ -17,7 +17,9 @@ from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
-from .entity import NestDescriptiveEntity
+from .entity import NestDescriptiveEntity, NestProtectDeviceClass
+
+ALARM_STATE_TO_STRING: dict[int, str] = {0: "ok", 2: "warning", 3: "emergency"}
 
 
 @dataclass
@@ -50,9 +52,28 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=TEMP_CELSIUS,
     ),
-    # TODO Add Color Status (gray, green, yellow, red)
-    # TODO Smoke Status (OK, Warning, Emergency)
-    # TODO CO Status (OK, Warning, Emergency)
+    # Add detailed status sensors
+    NestProtectSensorDescription(
+        entity_registry_enabled_default=False,
+        key="co_status",
+        name="Detailed CO Status",
+        device_class=NestProtectDeviceClass.DETAILED_STATUS,
+        value_fn=lambda state: ALARM_STATE_TO_STRING.get(state),
+    ),
+    NestProtectSensorDescription(
+        entity_registry_enabled_default=False,
+        key="smoke_status",
+        name="Detailed Smoke Status",
+        device_class=NestProtectDeviceClass.DETAILED_STATUS,
+        value_fn=lambda state: ALARM_STATE_TO_STRING.get(state),
+    ),
+    NestProtectSensorDescription(
+        entity_registry_enabled_default=False,
+        key="heat_status",
+        name="Detailed Heat Status",
+        device_class=NestProtectDeviceClass.DETAILED_STATUS,
+        value_fn=lambda state: ALARM_STATE_TO_STRING.get(state),
+    ),
 ]
 
 
@@ -87,6 +108,8 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
         state = self.bucket.value.get(self.entity_description.key)
 
         if self.entity_description.value_fn:
+            print(self.entity_description.name)
+            print(state)
             return self.entity_description.value_fn(state)
 
         return state

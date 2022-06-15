@@ -1,0 +1,9 @@
+{
+    "state": {
+        "nest_protect__detailed_status": {
+            "ok": "OK",
+            "warning": "Warning",
+            "emergency": "Emergency"
+        }
+    }
+}
