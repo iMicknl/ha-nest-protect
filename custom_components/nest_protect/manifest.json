@@ -9,7 +9,7 @@
         "@imicknl"
     ],
     "iot_class": "cloud_polling",
-    "version": "0.3.7",
+    "version": "0.3.8",
     "dhcp": [
         {
             "macaddress": "CCA7C1*"
