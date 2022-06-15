@@ -108,8 +108,6 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
         state = self.bucket.value.get(self.entity_description.key)
 
         if self.entity_description.value_fn:
-            print(self.entity_description.name)
-            print(state)
             return self.entity_description.value_fn(state)
 
         return state
