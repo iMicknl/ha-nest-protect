@@ -1,0 +1,9 @@
+{
+    "state": {
+        "nest_protect__night_light_brightness": {
+            "low": "Gering",
+            "medium": "Medium",
+            "high": "Hoch"
+        }
+    }
+}
