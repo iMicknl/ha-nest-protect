@@ -2,7 +2,9 @@
     "name": "Nest Protect",
     "domains": [
         "binary_sensor",
-        "sensor"
+        "sensor",
+        "select",
+        "switch"
     ],
     "homeassistant": "2022.11",
     "render_readme": "true",
