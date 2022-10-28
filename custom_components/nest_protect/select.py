@@ -12,17 +12,7 @@ from .entity import NestDescriptiveEntity, NestProtectDeviceClass
 
 
 @dataclass
-class NestProtectSelectDescriptionMixin:
-    """Define an entity description mixin for select entities."""
-
-    options: list[str]
-    # select_option: Callable[[str, Callable[..., Awaitable[None]]], Awaitable[None]]
-
-
-@dataclass
-class NestProtectSelectDescription(
-    SelectEntityDescription, NestProtectSelectDescriptionMixin
-):
+class NestProtectSelectDescription(SelectEntityDescription):
     """Class to describe an Nest Protect sensor."""
 
 
