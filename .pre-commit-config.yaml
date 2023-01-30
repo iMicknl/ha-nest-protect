@@ -21,7 +21,7 @@ repos:
           - --skip="./.*,*.csv,*.json,*.md"
           - --quiet-level=2
         exclude_types: [csv, json]
-  - repo: https://gitlab.com/pycqa/flake8
+  - repo: https://github.com/PyCQA/flake8
     rev: 3.9.2
     hooks:
       - id: flake8
@@ -30,7 +30,7 @@ repos:
           - pydocstyle==5.1.1
         files: ^(custom_components)/.+\.py$
   - repo: https://github.com/PyCQA/isort
-    rev: 5.10.1
+    rev: 5.12.0
     hooks:
       - id: isort
   - repo: https://github.com/adrienverge/yamllint.git
