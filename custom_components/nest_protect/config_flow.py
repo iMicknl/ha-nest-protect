@@ -6,12 +6,18 @@ from typing import Any, cast
 from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_TOKEN, CONF_URL
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
-from .const import CONF_ACCOUNT_TYPE, CONF_REFRESH_TOKEN, DOMAIN, LOGGER
+from .const import (
+    CONF_ACCOUNT_TYPE,
+    CONF_REFRESH_TOKEN,
+    CONF_ISSUE_TOKEN,
+    CONF_COOKIES,
+    DOMAIN,
+    LOGGER,
+)
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.exceptions import BadCredentialsException
@@ -20,7 +26,7 @@ from .pynest.exceptions import BadCredentialsException
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Nest Protect."""
 
-    VERSION = 2
+    VERSION = 3
 
     _config_entry: ConfigEntry | None
 
@@ -37,19 +43,30 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         environment = user_input[CONF_ACCOUNT_TYPE]
         session = async_get_clientsession(self.hass)
         client = NestClient(session=session, environment=NEST_ENVIRONMENTS[environment])
-        token = user_input[CONF_TOKEN]
 
-        refresh_token = await client.get_refresh_token(token)
-        auth = await client.get_access_token(refresh_token)
+        if CONF_ISSUE_TOKEN in user_input and CONF_COOKIES in user_input:
+            issue_token = user_input[CONF_ISSUE_TOKEN]
+            cookies = user_input[CONF_COOKIES]
+        if CONF_REFRESH_TOKEN in user_input:
+            refresh_token = user_input[CONF_REFRESH_TOKEN]
+
+        if issue_token and cookies:
+            auth = await client.get_access_token_from_cookies(issue_token, cookies)
+        elif refresh_token:
+            auth = await client.get_access_token_from_refresh_token(refresh_token)
+        else:
+            raise Exception(
+                "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
+            )
 
         await client.authenticate(
             auth.access_token
         )  # TODO use result to gather more details
 
         # TODO change unique id to an id related to the nest account
-        await self.async_set_unique_id(user_input[CONF_TOKEN])
+        await self.async_set_unique_id(user_input[CONF_ISSUE_TOKEN])
 
-        return refresh_token
+        return [issue_token, cookies]
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -84,8 +101,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             try:
                 user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
-                refresh_token = await self.async_validate_input(user_input)
-                user_input[CONF_REFRESH_TOKEN] = refresh_token
+                [issue_token, cookies] = await self.async_validate_input(user_input)
+                user_input[CONF_ISSUE_TOKEN] = issue_token
+                user_input[CONF_COOKIES] = cookies
             except (TimeoutError, ClientError):
                 errors["base"] = "cannot_connect"
             except BadCredentialsException:
@@ -119,12 +137,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="account_link",
-            description_placeholders={
-                CONF_URL: NestClient.generate_token_url(
-                    environment=NEST_ENVIRONMENTS[self._default_account_type]
-                )
-            },
-            data_schema=vol.Schema({vol.Required(CONF_TOKEN): str}),
+            data_schema=vol.Schema(
+                {vol.Required(CONF_ISSUE_TOKEN): str, vol.Required(CONF_COOKIES): str}
+            ),
             errors=errors,
         )
 

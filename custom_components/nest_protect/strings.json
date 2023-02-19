@@ -1,25 +1,26 @@
 {
-    "config": {
-        "step": {
-            "user": {
-                "data": {
-                    "account_type": "Account Type"
-                }
-            },
-            "account_link": {
-                "description": "To link your Google account, [authorize your account]({url}).\n\nAfter authorization, copy-paste the provided Auth Token code below.",
-                "data": {
-                    "token": "[%key:common::config_flow::data::access_token%]"
-                }
-            }
-        },
-        "error": {
-            "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-            "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-            "unknown": "[%key:common::config_flow::error::unknown%]"
-        },
-        "abort": {
-            "already_configured": "[%key:common::config_flow::abort::already_configured_account%]"
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "account_type": "Account Type"
         }
+      },
+      "account_link": {
+        "description": "Please get your issue_token and cookies following the instructions in the integration README and paste them below.",
+        "data": {
+          "issue_token": "[%key:common::config_flow::data::issue_token%]",
+          "cookies": "[%key:common::config_flow::data::cookies%]"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]"
     }
+  }
 }

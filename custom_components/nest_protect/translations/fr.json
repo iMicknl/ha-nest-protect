@@ -1,0 +1,26 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Le compte est déjà configuré"
+    },
+    "error": {
+      "cannot_connect": "Échec de connexion",
+      "invalid_auth": "Authentification invalide",
+      "unknown": "Erreur inattendue"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "account_type": "Account Type"
+        }
+      },
+      "account_link": {
+        "description": "Veuillez récupérer votre issue_token et vos cookies en suivant les instructions du fichier README d'intégration et collez-les ci-dessous.",
+        "data": {
+          "issue_token": "issue_token",
+          "cookies": "cookies"
+        }
+      }
+    }
+  }
+}

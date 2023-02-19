@@ -1,25 +1,26 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "Account wurde bereits konfiguriert"
-        },
-        "error": {
-            "cannot_connect": "Verbindung fehlgeschlagen",
-            "invalid_auth": "Ungültige Authentifizierung",
-            "unknown": "Unerwarteter Fehler"
-        },
-        "step": {
-            "user": {
-                "data": {
-                    "account_type": "Account Type"
-                }
-            },
-            "account_link": {
-                "description": "Um Deinen Google Account zu verknüpfen, [authorisiere Deinen Account]({url}).\n\nNach der Authorisierung, copy-paste den bereitgestellten Auth Token code unten.",
-                "data": {
-                    "token": "Zugangstoken"
-                }
-            }
+  "config": {
+    "abort": {
+      "already_configured": "Account wurde bereits konfiguriert"
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ungültige Authentifizierung",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "account_type": "Account Type"
         }
+      },
+      "account_link": {
+        "description": "Bitte holen Sie sich Ihr Issue_Token und Ihre Cookies gemäß den Anweisungen in der Integrations-README und fügen Sie sie unten ein.",
+        "data": {
+          "issue_token": "issue_token",
+          "cookies": "cookies"
+        }
+      }
     }
+  }
 }

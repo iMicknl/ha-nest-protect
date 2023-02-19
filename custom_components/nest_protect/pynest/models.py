@@ -170,12 +170,12 @@ class TopazBucket(Bucket):
 
 @dataclass
 class GoogleAuthResponse:
-    """TODO."""
+    """Class that reflects a Google Auth response."""
 
     access_token: str
-    expires_in: int
     scope: str
     token_type: str
+    expires_in: int
     id_token: str
     expiry_date: datetime.datetime = field(init=False)
 
@@ -193,23 +193,32 @@ class GoogleAuthResponse:
         return False
 
 
+@dataclass
+class GoogleAuthResponseForCookies(GoogleAuthResponse):
+    """Class that reflects a Google Auth response for cookies."""
+
+    login_hint: str
+    session_state: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
 # TODO rewrite to snake_case
 @dataclass
 class NestAuthClaims:
     """TODO."""
 
-    subject: Any
-    expirationTime: str
-    policyId: str
-    structureConstraint: str
+    subject: Any | None = None
+    expirationTime: str | None = None
+    policyId: str | None = None
+    structureConstraint: str | None = None
 
 
 @dataclass
 class NestAuthResponse:
     """TODO."""
 
-    jwt: str
+    jwt: str | None = None
     claims: NestAuthClaims = field(default_factory=NestAuthClaims)
+    error: dict | None = None
 
 
 @dataclass

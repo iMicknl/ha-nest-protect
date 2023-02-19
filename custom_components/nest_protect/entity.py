@@ -9,7 +9,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
-from .const import ATTRIBUTION, DOMAIN
+from .const import ATTRIBUTION, DOMAIN, LOGGER
 from .pynest.client import NestClient
 from .pynest.models import Bucket
 
@@ -99,6 +99,7 @@ class NestEntity(Entity):
     @callback
     def update_callback(self, bucket: Bucket):
         """Update the entities state."""
+
         self.bucket = bucket
         self.async_write_ha_state()
 
