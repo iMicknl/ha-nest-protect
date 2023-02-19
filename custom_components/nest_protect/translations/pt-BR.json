@@ -1,20 +1,21 @@
 {
-    "config": {
-        "step": {
-            "user": {
-                "description": "Para vincular sua conta do Google, [autorize sua conta]({url}).\n\nApós a autorização, copie e cole o código de token de autenticação fornecido abaixo.",
-                "data": {
-                    "token": "Atualizar Token"
-                }
-            }
-        },
-        "error": {
-            "cannot_connect": "Falhou ao se conectar",
-            "invalid_auth": "Autenticação inválida",
-            "unknown": "Erro inesperado"
-        },
-        "abort": {
-            "already_configured": "A conta já está configurada"
+  "config": {
+    "step": {
+      "user": {
+        "description": "Obtenha seu issue_token e cookies seguindo as instruções no LEIA-ME de integração e cole-os abaixo.",
+        "data": {
+          "issue_token": "issue_token",
+          "cookies": "cookies"
         }
+      }
+    },
+    "error": {
+      "cannot_connect": "Falhou ao se conectar",
+      "invalid_auth": "Autenticação inválida",
+      "unknown": "Erro inesperado"
+    },
+    "abort": {
+      "already_configured": "A conta já está configurada"
     }
+  }
 }

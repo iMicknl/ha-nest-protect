@@ -38,19 +38,19 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="co_status",
         name="CO Status",
         device_class=BinarySensorDeviceClass.CO,
-        value_fn=lambda state: state == 3,
+        value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="smoke_status",
         name="Smoke Status",
         device_class=BinarySensorDeviceClass.SMOKE,
-        value_fn=lambda state: state == 3,
+        value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="heat_status",
         name="Heat Status",
         device_class=BinarySensorDeviceClass.HEAT,
-        value_fn=lambda state: state == 3,
+        value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="component_speaker_test_passed",
@@ -68,7 +68,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectBinarySensorDescription(
-        key="component_wifi_test_passed",
+        key="is_online",
         name="Online",
         value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.CONNECTIVITY,

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import HomeAssistantNestProtectData
-from .const import CONF_REFRESH_TOKEN, DOMAIN
+from .const import CONF_REFRESH_TOKEN, CONF_ISSUE_TOKEN, CONF_COOKIES, DOMAIN
 
 TO_REDACT = [
     "access_token",
@@ -46,12 +46,25 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    refresh_token = entry.data[CONF_REFRESH_TOKEN]
+
+    if CONF_ISSUE_TOKEN in entry.data and CONF_COOKIES in entry.data:
+        issue_token = entry.data[CONF_ISSUE_TOKEN]
+        cookies = entry.data[CONF_COOKIES]
+    if CONF_REFRESH_TOKEN in entry.data:
+        refresh_token = entry.data[CONF_REFRESH_TOKEN]
 
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     client = entry_data.client
 
-    auth = await client.get_access_token(refresh_token)
+    if issue_token and cookies:
+        auth = await client.get_access_token_from_cookies(issue_token, cookies)
+    elif refresh_token:
+        auth = await client.get_access_token_from_refresh_token(refresh_token)
+    else:
+        raise Exception(
+            "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
+        )
+
     nest = await client.authenticate(auth.access_token)
 
     data = {"app_launch": await client.get_first_data(nest.access_token, nest.userid)}
@@ -64,11 +77,20 @@ async def async_get_device_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a device entry."""
     refresh_token = entry.data[CONF_REFRESH_TOKEN]
+    issue_token = entry.data[CONF_ISSUE_TOKEN]
+    cookies = entry.data[CONF_COOKIES]
 
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     client = entry_data.client
 
-    auth = await client.get_access_token(refresh_token)
+    if issue_token and cookies:
+        auth = await client.get_access_token_from_cookies(issue_token, cookies)
+    elif refresh_token:
+        auth = await client.get_access_token_from_refresh_token(refresh_token)
+    else:
+        raise Exception(
+            "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
+        )
     nest = await client.authenticate(auth.access_token)
 
     data = {

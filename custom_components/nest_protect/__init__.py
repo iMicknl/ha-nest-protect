@@ -13,7 +13,15 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
-from .const import CONF_ACCOUNT_TYPE, CONF_REFRESH_TOKEN, DOMAIN, LOGGER, PLATFORMS
+from .const import (
+    CONF_ACCOUNT_TYPE,
+    CONF_REFRESH_TOKEN,
+    CONF_ISSUE_TOKEN,
+    CONF_COOKIES,
+    DOMAIN,
+    LOGGER,
+    PLATFORMS,
+)
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.exceptions import (
@@ -52,13 +60,28 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
-    refresh_token = entry.data[CONF_REFRESH_TOKEN]
+    issue_token = None
+    cookies = None
+    refresh_token = None
+
+    if CONF_ISSUE_TOKEN in entry.data and CONF_COOKIES in entry.data:
+        issue_token = entry.data[CONF_ISSUE_TOKEN]
+        cookies = entry.data[CONF_COOKIES]
+    if CONF_REFRESH_TOKEN in entry.data:
+        refresh_token = entry.data[CONF_REFRESH_TOKEN]
     account_type = entry.data[CONF_ACCOUNT_TYPE]
     session = async_get_clientsession(hass)
     client = NestClient(session=session, environment=NEST_ENVIRONMENTS[account_type])
 
     try:
-        auth = await client.get_access_token(refresh_token)
+        if issue_token and cookies:
+            auth = await client.get_access_token_from_cookies(issue_token, cookies)
+        elif refresh_token:
+            auth = await client.get_access_token_from_refresh_token(refresh_token)
+        else:
+            raise Exception(
+                "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
+            )
         nest = await client.authenticate(auth.access_token)
     except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
@@ -126,8 +149,6 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
     """Subscribe for new data."""
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
-    LOGGER.debug("Subscriber: listening for new data")
-
     try:
         # TODO move refresh token logic to client
         if (
@@ -138,8 +159,8 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
 
         if not entry_data.client.auth or entry_data.client.auth.is_expired():
             LOGGER.debug("Subscriber: retrieving new Google access token")
-            await entry_data.client.get_access_token()
-            await entry_data.client.authenticate(entry_data.client.auth.access_token)
+            auth = await entry_data.client.get_access_token()
+            entry_data.client.nest_session = await entry_data.client.authenticate(auth)
 
         # Subscribe to Google Nest subscribe endpoint
         result = await entry_data.client.subscribe_for_data(

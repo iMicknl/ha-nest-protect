@@ -1,9 +1,30 @@
 {
-    "python.linting.pylintEnabled": true,
-    "python.linting.enabled": true,
-    "python.pythonPath": "/usr/local/bin/python",
-    "files.associations": {
-        "*.yaml": "home-assistant"
-    },
-    "python.formatting.provider": "black"
+  "python.linting.pylintEnabled": true,
+  "python.linting.enabled": true,
+  "python.pythonPath": "/usr/local/bin/python",
+  "files.associations": {
+    "*.yaml": "home-assistant"
+  },
+  "python.formatting.provider": "black",
+  "workbench.colorCustomizations": {
+    "activityBar.activeBackground": "#fcc15a",
+    "activityBar.background": "#fcc15a",
+    "activityBar.foreground": "#15202b",
+    "activityBar.inactiveForeground": "#15202b99",
+    "activityBarBadge.background": "#039d65",
+    "activityBarBadge.foreground": "#e7e7e7",
+    "commandCenter.border": "#15202b99",
+    "sash.hoverBorder": "#fcc15a",
+    "statusBar.background": "#fbae28",
+    "statusBar.foreground": "#15202b",
+    "statusBarItem.hoverBackground": "#ec9704",
+    "statusBarItem.remoteBackground": "#fbae28",
+    "statusBarItem.remoteForeground": "#15202b",
+    "titleBar.activeBackground": "#fbae28",
+    "titleBar.activeForeground": "#15202b",
+    "titleBar.inactiveBackground": "#fbae2899",
+    "titleBar.inactiveForeground": "#15202b99"
+  },
+  "peacock.color": "#fbae28",
+  "githubPullRequests.ignoredPullRequestBranches": ["main"]
 }
