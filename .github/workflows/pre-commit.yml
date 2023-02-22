@@ -1,8 +1,11 @@
 name: Linters (flake8, black, isort)
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
-
+  
 jobs:
   lint:
     runs-on: ubuntu-latest
