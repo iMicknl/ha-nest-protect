@@ -219,7 +219,7 @@ class NestClient:
                 nest_response = await response.text()
 
                 if result.get("error"):
-                    _LOGGER.error("Could not interprete Nest response")
+                    _LOGGER.error("Could not interpret Nest response")
 
                 raise PynestException(
                     f"{response.status} error while authenticating - {nest_response}. Please create an issue on GitHub."
