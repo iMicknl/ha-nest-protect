@@ -6,7 +6,6 @@ from random import randint
 import time
 from types import TracebackType
 from typing import Any
-import urllib.parse
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
@@ -257,8 +256,6 @@ class NestClient:
     ) -> Any:
         """Subscribe for data."""
 
-        epoch = int(time.time())
-        random = str(randint(100, 999))
         timeout = 3600 * 24
 
         objects = []
