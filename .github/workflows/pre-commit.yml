@@ -3,6 +3,7 @@ name: Linters (flake8, black, isort)
 on:
   pull_request:
   project:
+    main
 
 jobs:
   lint:
