@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import HomeAssistantNestProtectData
-from .const import CONF_REFRESH_TOKEN, CONF_ISSUE_TOKEN, CONF_COOKIES, DOMAIN
+from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN, DOMAIN
 
 TO_REDACT = [
     "access_token",
