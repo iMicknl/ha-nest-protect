@@ -14,7 +14,7 @@ This integration will add the most important sensors of your Nest Protect device
 
 - Only Google Accounts are supported, there is no plan to support legacy Nest accounts
 - When Nest Protect (wired) occupancy is triggered, it will stay 'on' for 10 minutes. (API limitation)
-- Only *cookie authentication* is supported as Google removed the API key authentication method. This means that you need to login to the Nest website at least once to generate a cookie. This cookie will be used to authenticate with the Nest API. The cookie will be stored in the Home Assistant configuration folder and will be used for future requests.
+- Only *cookie authentication* is supported as Google removed the API key authentication method. This means that you need to login to the Nest website at least once to generate a cookie. This cookie will be used to authenticate with the Nest API. The cookie will be stored in the Home Assistant configuration folder and will be used for future requests. If you logout from your browser or change your password, you need to reautenticate and and replace the current issue_token and cookies.
 
 ## Installation
 
