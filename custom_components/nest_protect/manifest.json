@@ -1,18 +1,18 @@
 {
     "domain": "nest_protect",
     "name": "Nest Protect",
-    "config_flow": true,
-    "documentation": "https://github.com/imicknl/ha-nest-protect",
-    "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
-    "requirements": [],
     "codeowners": [
         "@imicknl"
     ],
-    "iot_class": "cloud_polling",
-    "version": "0.4.0",
+    "config_flow": true,
     "dhcp": [
         {
             "macaddress": "CCA7C1*"
         }
-    ]
+    ],
+    "documentation": "https://github.com/imicknl/ha-nest-protect",
+    "iot_class": "cloud_polling",
+    "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
+    "requirements": [],
+    "version": "0.4.0"
 }
