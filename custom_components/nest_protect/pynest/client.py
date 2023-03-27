@@ -188,7 +188,7 @@ class NestClient:
             headers={
                 "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="
-                + nest_auth.jwt,
+                + (nest_auth.jwt if nest_auth.jwt else ""),
             },
         ) as response:
             try:
