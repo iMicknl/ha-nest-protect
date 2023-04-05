@@ -22,5 +22,24 @@
         }
       }
     }
+  },
+  "options": {
+    "abort": {
+      "already_configured": "Account is al geconfigureerd"
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken",
+      "invalid_auth": "Ongeldige authenticatie",
+      "unknown": "Onverwachte fout"
+    },
+    "step": {
+      "account_link": {
+        "description": "Haal uw issue_token en cookies op volgens de instructies in de README voor integratie en plak ze hieronder.",
+        "data": {
+          "issue_token": "issue_token",
+          "cookies": "cookies"
+        }
+      }
+    }
   }
 }

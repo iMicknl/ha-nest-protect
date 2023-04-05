@@ -211,7 +211,7 @@ class NestClient:
                 )
 
             if nest_response.get("error"):
-                _LOGGER.error("Authnetication error: %s", nest_response.get("error"))
+                _LOGGER.error("Authentication error: %s", nest_response.get("error"))
 
             try:
                 self.nest_session = NestResponse(**nest_response)
