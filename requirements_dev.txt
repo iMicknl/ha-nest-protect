@@ -1,2 +1,2 @@
-homeassistant==2023.1.7
+homeassistant==2023.4.4
 pre-commit
