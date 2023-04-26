@@ -15,7 +15,7 @@
         }
       },
       "account_link": {
-        "description": "Please get your issue_token and cookies following the instructions in the integration README and paste them below.",
+        "description": "Please retrieve your issue_token and cookies manually, following the instructions in the [integration README](https://github.com/iMicknl/ha-nest-protect/tree/beta#retrieving-issue_token-and-cookies) and paste them below.",
         "data": {
           "issue_token": "issue_token",
           "cookies": "cookies"
