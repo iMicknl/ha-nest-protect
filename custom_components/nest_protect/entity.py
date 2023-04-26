@@ -99,6 +99,7 @@ class NestEntity(Entity):
     @callback
     def update_callback(self, bucket: Bucket):
         """Update the entities state."""
+
         self.bucket = bucket
         self.async_write_ha_state()
 
