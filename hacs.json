@@ -6,7 +6,7 @@
         "select",
         "switch"
     ],
-    "homeassistant": "2023.1.7",
+    "homeassistant": "2023.8.2",
     "render_readme": "true",
     "iot_class": "Cloud Polling"
 }

@@ -200,3 +200,7 @@ cython_debug/
 .history
 .ionide
 
+# Devcontainer
+config
+!.vscode/tasks.json
+!.vscode/launch.json
