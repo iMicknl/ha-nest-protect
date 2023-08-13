@@ -9,7 +9,7 @@
 			"onAutoForward": "openBrowserOnce"
 		}
 	},
-	"postCreateCommand": "mkdir -p config && pip install -r requirements_dev.txt && pre-commit install && pre-commit install-hooks",
+	"postCreateCommand": "pip install -r requirements_dev.txt && pre-commit install && pre-commit install-hooks",
 	"containerEnv": {
 		"DEVCONTAINER": "1"
 	  },
