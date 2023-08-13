@@ -201,6 +201,6 @@ cython_debug/
 .ionide
 
 # Devcontainer
-# config
+config
 !.vscode/tasks.json
 !.vscode/launch.json
