@@ -150,7 +150,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="account_link",
             data_schema=vol.Schema(
-                {vol.Required(CONF_ISSUE_TOKEN): str, vol.Required(CONF_COOKIES): str}
+                {
+                    vol.Required(CONF_ISSUE_TOKEN): str,
+                    vol.Required(CONF_COOKIES): str,
+                }
             ),
             errors=errors,
             last_step=True,
