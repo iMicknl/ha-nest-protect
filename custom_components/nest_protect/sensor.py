@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+    SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, TEMP_CELSIUS
 from homeassistant.helpers.entity import EntityCategory
@@ -49,6 +50,7 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
         value_fn=lambda state: round(state, 2),
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=TEMP_CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
