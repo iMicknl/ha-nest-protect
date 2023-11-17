@@ -1,6 +1,7 @@
 """Sensor platform for Nest Protect."""
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 import datetime
@@ -31,7 +32,7 @@ SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     NestProtectSensorDescription(
         key="battery_level",
         name="Battery Level",
-        value_fn=lambda state: state if state <= 100 else None,
+        value_fn=lambda state: math.floor((state/54) + 0.5) if state <= 5400 else None,
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
