@@ -16,9 +16,34 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
-from .const import DOMAIN
+from .const import DOMAIN, LOGGER
 from .entity import NestDescriptiveEntity
 
+
+def battery_calc(state):
+    if state <= 100:
+        result = state
+    elif 4200 < state <= 5260:
+        if 4950 < state <= 5260:
+            slope = 0.001816609
+            yint = -8.548096886
+        elif 4800 < state <= 4950:
+            slope = 0.000291667
+            yint = -0.991176471
+        elif 4500 < state <= 4800:
+            slope = 0.001077342
+            yint = -4.730392157
+        else:
+            slope = 0.000434641
+            yint = -1.825490196
+
+        result = round(((slope * state) + yint) * 100)
+    else:
+        result = None
+
+    LOGGER.debug("Battery level: raw / calc: %s -> %s", state, result)
+
+    return result
 
 @dataclass
 class NestProtectSensorDescription(SensorEntityDescription):
@@ -26,12 +51,11 @@ class NestProtectSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[Any], StateType] | None = None
 
-
 SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     NestProtectSensorDescription(
         key="battery_level",
         name="Battery Level",
-        value_fn=lambda state: state if state <= 100 else None,
+        value_fn=lambda state: battery_calc(state),
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
