@@ -21,6 +21,8 @@ from .entity import NestDescriptiveEntity
 
 
 def battery_calc(state):
+    """Calculate battery level if device is reporting in mV."""
+
     if state <= 100:
         result = state
     elif 4200 < state <= 5260:
