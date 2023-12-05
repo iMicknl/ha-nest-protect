@@ -47,11 +47,13 @@ def battery_calc(state):
 
     return result
 
+
 @dataclass
 class NestProtectSensorDescription(SensorEntityDescription):
     """Class to describe an Nest Protect sensor."""
 
     value_fn: Callable[[Any], StateType] | None = None
+
 
 SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
     NestProtectSensorDescription(
