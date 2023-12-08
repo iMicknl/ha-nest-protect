@@ -25,8 +25,8 @@ def battery_calc(state):
 
     if state <= 100:
         result = state
-    elif 4200 < state <= 5260:
-        if 4950 < state <= 5260:
+    elif 3000 < state <= 6000:
+        if 4950 < state <= 6000:
             slope = 0.001816609
             yint = -8.548096886
         elif 4800 < state <= 4950:
@@ -39,7 +39,7 @@ def battery_calc(state):
             slope = 0.000434641
             yint = -1.825490196
 
-        result = round(((slope * state) + yint) * 100)
+        result = max(0, min(100, round(((slope * state) + yint) * 100)))
     else:
         result = None
 
