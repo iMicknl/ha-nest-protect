@@ -160,7 +160,9 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         if not entry_data.client.auth or entry_data.client.auth.is_expired():
             LOGGER.debug("Subscriber: retrieving new Google access token")
             auth = await entry_data.client.get_access_token()
-            entry_data.client.nest_session = await entry_data.client.authenticate(auth)
+            entry_data.client.nest_session = await entry_data.client.authenticate(
+                auth.access_token
+            )
 
         # Subscribe to Google Nest subscribe endpoint
         result = await entry_data.client.subscribe_for_data(
