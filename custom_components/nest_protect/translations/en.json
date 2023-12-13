@@ -22,5 +22,17 @@
         }
       }
     }
+  },
+  "entity": {
+    "select": {
+      "night_light_brightness": {
+        "name": "Night Light Brightness",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      }
+    }
   }
 }
