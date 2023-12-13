@@ -46,6 +46,9 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
+    issue_token = None
+    cookies = None
+    refresh_token = None
 
     if CONF_ISSUE_TOKEN in entry.data and CONF_COOKIES in entry.data:
         issue_token = entry.data[CONF_ISSUE_TOKEN]
@@ -76,6 +79,10 @@ async def async_get_device_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry, device: DeviceEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a device entry."""
+    issue_token = None
+    cookies = None
+    refresh_token = None
+
     if CONF_ISSUE_TOKEN in entry.data and CONF_COOKIES in entry.data:
         issue_token = entry.data[CONF_ISSUE_TOKEN]
         cookies = entry.data[CONF_COOKIES]
