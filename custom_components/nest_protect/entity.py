@@ -1,9 +1,6 @@
 """Entity class for Nest Protect."""
 from __future__ import annotations
 
-from enum import unique
-
-from homeassistant.backports.enum import StrEnum
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -118,11 +115,3 @@ class NestDescriptiveEntity(NestEntity):
         super().__init__(bucket, description, areas, client)
         self._attr_name = f"{super().name} {self.entity_description.name}"
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
-
-
-# Used by state translations for sensor and select entities
-@unique
-class NestProtectDeviceClass(StrEnum):
-    """Device class for Nest Protect specific devices."""
-
-    NIGHT_LIGHT_BRIGHTNESS = "nest_protect__night_light_brightness"

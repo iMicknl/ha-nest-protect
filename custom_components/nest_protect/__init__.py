@@ -74,8 +74,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     client = NestClient(session=session, environment=NEST_ENVIRONMENTS[account_type])
 
     try:
+        # Using user-retrieved cookies for authentication
         if issue_token and cookies:
             auth = await client.get_access_token_from_cookies(issue_token, cookies)
+        # Using refresh_token from legacy authentication method
         elif refresh_token:
             auth = await client.get_access_token_from_refresh_token(refresh_token)
         else:
