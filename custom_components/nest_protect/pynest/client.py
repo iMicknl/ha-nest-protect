@@ -44,20 +44,26 @@ class NestClient:
     transport_url: str | None = None
     environment: NestEnvironment
 
+    # Legacy Auth
+    refresh_token: str | None = None
+    # Cookie Auth
+    cookies: str | None = None
+    issue_token: str | None = None
+
     def __init__(
         self,
         session: ClientSession | None = None,
-        refresh_token: str | None = None,
-        issue_token: str | None = None,
-        cookies: str | None = None,
+        # refresh_token: str | None = None,
+        # issue_token: str | None = None,
+        # cookies: str | None = None,
         environment: NestEnvironment = DEFAULT_NEST_ENVIRONMENT,
     ) -> None:
         """Initialize NestClient."""
 
         self.session = session if session else ClientSession()
-        self.refresh_token = refresh_token
-        self.issue_token = issue_token
-        self.cookies = cookies
+        # self.refresh_token = refresh_token
+        # self.issue_token = issue_token
+        # self.cookies = cookies
         self.environment = environment
 
     async def __aenter__(self) -> NestClient:
@@ -80,8 +86,6 @@ class NestClient:
             await self.get_access_token_from_refresh_token(self.refresh_token)
         elif self.issue_token and self.cookies:
             await self.get_access_token_from_cookies(self.issue_token, self.cookies)
-        else:
-            raise Exception("No credentials")
 
         return self.auth
 
@@ -123,7 +127,7 @@ class NestClient:
             return self.auth
 
     async def get_access_token_from_cookies(
-        self, issue_token: str | None = None, cookies: str | None = None
+        self, issue_token: str, cookies: str
     ) -> GoogleAuthResponse:
         """Get a Nest refresh token from an issue token and cookies."""
 
@@ -132,12 +136,6 @@ class NestClient:
 
         if cookies:
             self.cookies = cookies
-
-        if not self.issue_token:
-            raise Exception("No issue token")
-
-        if not self.cookies:
-            raise Exception("No cookies")
 
         async with self.session.get(
             issue_token,
