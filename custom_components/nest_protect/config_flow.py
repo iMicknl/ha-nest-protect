@@ -7,7 +7,7 @@ from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 import voluptuous as vol
 
 from .const import (
@@ -42,7 +42,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Validate user credentials."""
 
         environment = user_input[CONF_ACCOUNT_TYPE]
-        session = async_get_clientsession(self.hass)
+        session = async_create_clientsession(self.hass)
         client = NestClient(session=session, environment=NEST_ENVIRONMENTS[environment])
 
         if CONF_ISSUE_TOKEN in user_input and CONF_COOKIES in user_input:

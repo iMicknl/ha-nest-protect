@@ -9,7 +9,7 @@ from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
@@ -69,8 +69,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         cookies = entry.data[CONF_COOKIES]
     if CONF_REFRESH_TOKEN in entry.data:
         refresh_token = entry.data[CONF_REFRESH_TOKEN]
+
+    session = async_create_clientsession(hass)
     account_type = entry.data[CONF_ACCOUNT_TYPE]
-    session = async_get_clientsession(hass)
     client = NestClient(session=session, environment=NEST_ENVIRONMENTS[account_type])
 
     try:
