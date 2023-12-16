@@ -22,7 +22,14 @@ from .pynest.enums import BucketType
 
 
 def milli_volt_to_percentage(state: int):
-    """Calculate battery level if device is reporting in mV."""
+    """
+    Convert battery level in mV to a percentage.
+
+    The battery life percentage in devices is estimated using slopes from the L91 battery's datasheet.
+    This is a rough estimation, and the battery life percentage is not linear.
+
+    Tests on various devices have shown accurate results.
+    """
     if 3000 < state <= 6000:
         if 4950 < state <= 6000:
             slope = 0.001816609
