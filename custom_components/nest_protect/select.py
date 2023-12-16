@@ -8,7 +8,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
-from .entity import NestDescriptiveEntity, NestProtectDeviceClass
+from .entity import NestDescriptiveEntity
 
 
 @dataclass
@@ -24,11 +24,11 @@ PRESET_TO_BRIGHTNESS = {v: k for k, v in BRIGHTNESS_TO_PRESET.items()}
 SENSOR_DESCRIPTIONS: list[SelectEntityDescription] = [
     NestProtectSelectDescription(
         key="night_light_brightness",
+        translation_key="night_light_brightness",
         name="Brightness",
         icon="mdi:lightbulb-on",
         options=[*PRESET_TO_BRIGHTNESS],
         entity_category=EntityCategory.CONFIG,
-        device_class=NestProtectDeviceClass.NIGHT_LIGHT_BRIGHTNESS,
     ),
 ]
 

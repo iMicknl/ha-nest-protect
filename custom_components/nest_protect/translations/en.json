@@ -15,7 +15,7 @@
         }
       },
       "account_link": {
-        "description": "Please retrieve your issue_token and cookies manually, following the instructions in the [integration README](https://github.com/iMicknl/ha-nest-protect/tree/beta#retrieving-issue_token-and-cookies) and paste them below.",
+        "description": "Please retrieve your issue_token and cookies manually by following the instructions in the [integration README](https://github.com/iMicknl/ha-nest-protect/tree/beta#retrieving-issue_token-and-cookies) and paste them below.",
         "data": {
           "issue_token": "issue_token",
           "cookies": "cookies"
@@ -23,21 +23,14 @@
       }
     }
   },
-  "options": {
-    "abort": {
-      "already_configured": "Account is already configured"
-    },
-    "error": {
-      "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error"
-    },
-    "step": {
-      "account_link": {
-        "description": "Please get your issue_token and cookies following the instructions in the integration README and paste them below.",
-        "data": {
-          "issue_token": "issue_token",
-          "cookies": "cookies"
+  "entity": {
+    "select": {
+      "night_light_brightness": {
+        "name": "Night Light Brightness",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
         }
       }
     }
