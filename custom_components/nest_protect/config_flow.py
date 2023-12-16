@@ -36,6 +36,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._config_entry = None
         self._default_account_type = "production"
+        self._cookies_latest = ""
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> list:
         """Validate user credentials."""
@@ -95,6 +96,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle a flow initialized by the user."""
         errors = {}
+        issue_token = ""
+        cookies = ""
 
         if user_input:
             try:
@@ -104,10 +107,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 user_input[CONF_ISSUE_TOKEN] = issue_token
                 user_input[CONF_COOKIES] = cookies
+
+                self.check_cookies(cookies)
+
             except (TimeoutError, ClientError):
                 errors["base"] = "cannot_connect"
             except BadCredentialsException:
                 errors["base"] = "invalid_auth"
+            except ExcessCookiesException:
+                errors["base"] = "cookies_unknown"
             except Exception as exception:  # pylint: disable=broad-except
                 errors["base"] = "unknown"
                 LOGGER.exception(exception)
@@ -142,8 +150,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="account_link",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_ISSUE_TOKEN): str,
-                    vol.Required(CONF_COOKIES): str,
+                    vol.Required(CONF_ISSUE_TOKEN, default=issue_token): str,
+                    vol.Required(CONF_COOKIES, default=cookies): str,
                 }
             ),
             errors=errors,
@@ -162,3 +170,36 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
 
         return await self.async_step_account_link(user_input)
+
+    def check_cookies(self, cookies):
+        """Check for other cookies than five expected ones."""
+        # If there are other cookies, it may be an indication of cache not being cleared properly.
+
+        if cookies != self._cookies_latest:
+            self._cookies_latest = cookies
+
+            cookie_dict = {
+                k.strip(): v.strip()
+                for (k, v) in (item.split("=", 1) for item in cookies.split(";"))
+            }
+
+            for cookie_name in cookie_dict.keys():
+                if cookie_name.upper() not in (
+                    cn.upper()
+                    for cn in [
+                        "NID",
+                        "__Secure-3PSID",
+                        "__Secure-3PAPISID",
+                        "__Host-3PLSID",
+                        "__Secure-3PSIDCC",
+                    ]
+                ):
+                    raise ExcessCookiesException
+
+        self._cookies_latest = ""
+
+
+class ExcessCookiesException(Exception):
+    """Raised when there are more then the expected cookies."""
+
+    pass

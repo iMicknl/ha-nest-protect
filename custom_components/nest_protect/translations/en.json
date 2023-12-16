@@ -6,6 +6,7 @@
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
+      "cookies_unknown": "Authentication succeeded, but it seems as if the cache may not have been properly cleared which could lead to reduced session lifetime. We recommend to retrieve cookies using Incognito Mode. Alternatively you may continue as is by clicking send once again.",
       "unknown": "Unexpected error"
     },
     "step": {
