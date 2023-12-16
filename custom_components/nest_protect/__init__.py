@@ -81,17 +81,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         # Using refresh_token from legacy authentication method
         elif refresh_token:
             auth = await client.get_access_token_from_refresh_token(refresh_token)
-        else:
-            raise Exception(
-                "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
-            )
+
         nest = await client.authenticate(auth.access_token)
     except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
     except BadCredentialsException as exception:
         raise ConfigEntryAuthFailed from exception
     except Exception as exception:  # pylint: disable=broad-except
-        LOGGER.exception(exception)
+        LOGGER.exception("Unknown exception.")
         raise ConfigEntryNotReady from exception
 
     data = await client.get_first_data(nest.access_token, nest.userid)
