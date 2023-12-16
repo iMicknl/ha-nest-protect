@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorEntityDescription,
 )
-from homeassistant.const import PERCENTAGE, TEMP_CELSIUS, UnitOfElectricPotential
+from homeassistant.const import PERCENTAGE, TEMP_CELSIUS
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
@@ -68,15 +68,16 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         entity_category=EntityCategory.DIAGNOSTIC,
         bucket_type=BucketType.KRYPTONITE,
     ),
-    NestProtectSensorDescription(
-        key="battery_level",
-        name="Battery Voltage",
-        value_fn=lambda state: round(state / 1000, 3),
-        device_class=SensorDeviceClass.BATTERY,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        bucket_type=BucketType.TOPAZ,
-    ),
+    # TODO Due to duplicate keys, this sensor is not available yet
+    # NestProtectSensorDescription(
+    #     key="battery_level",
+    #     name="Battery Voltage",
+    #     value_fn=lambda state: round(state / 1000, 3),
+    #     device_class=SensorDeviceClass.BATTERY,
+    #     native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+    #     entity_category=EntityCategory.DIAGNOSTIC,
+    #     bucket_type=BucketType.TOPAZ,
+    # ),
     NestProtectSensorDescription(
         key="battery_level",
         name="Battery Level",
