@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 import datetime
 from typing import Any
 
+from .enums import BucketType
+
 
 @dataclass
 class NestLimits:
@@ -72,6 +74,11 @@ class Bucket:
     object_revision: str
     object_timestamp: str
     value: Any
+    type: str = ""
+
+    def __post_init__(self):
+        """Set the expiry date during post init."""
+        self.type = BucketType(self.object_key.split(".")[0])
 
 
 @dataclass
