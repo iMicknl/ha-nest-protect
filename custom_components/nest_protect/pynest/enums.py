@@ -9,9 +9,16 @@ _LOGGER = logging.getLogger(__name__)
 class BucketType(StrEnum):
     """Bucket types."""
 
-    KRYPTONITE = "kryptonite"
-    TOPAZ = "topaz"
-    WHERE = "where"
+    BUCKETS = "buckets"
+    DEVICE = "device"
+    KRYPTONITE = "kryptonite"  # Temperature Sensors
+    QUARTZ = "quartz"
+    RCS_SETTINGS = "rcs_settings"
+    SHARED = "shared"
+    STRUCTURE = "structure"  # General
+    TOPAZ = "topaz"  # Nest Protect
+    TRACK = "track"
+    WHERE = "where"  # Areas
 
     UNKNOWN = "unknown"
 
@@ -20,3 +27,11 @@ class BucketType(StrEnum):
         _LOGGER.warning(f"Unsupported value {value} has been returned for {cls}")
 
         return cls.UNKNOWN
+
+
+@unique
+class Environment(StrEnum):
+    """Bucket types."""
+
+    FIELDTEST = "fieldtest"
+    PRODUCTION = "production"

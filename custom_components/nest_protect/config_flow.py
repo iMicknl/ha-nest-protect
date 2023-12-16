@@ -20,6 +20,7 @@ from .const import (
 )
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
+from .pynest.enums import Environment
 from .pynest.exceptions import BadCredentialsException
 
 
@@ -35,7 +36,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         super().__init__()
 
         self._config_entry = None
-        self._default_account_type = "production"
+        self._default_account_type = Environment.PRODUCTION
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> list:
         """Validate user credentials."""
