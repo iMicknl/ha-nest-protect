@@ -39,7 +39,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSelect] = []
 
-    SUPPORTED_KEYS = {
+    SUPPORTED_KEYS: dict[str, NestProtectSelectDescription] = {
         description.key: description for description in SENSOR_DESCRIPTIONS
     }
 
@@ -84,7 +84,6 @@ class NestProtectSelect(NestDescriptiveEntity, SelectEntity):
         ]
 
         if not self.client.nest_session or self.client.nest_session.is_expired():
-
             if not self.client.auth or self.client.auth.is_expired():
                 await self.client.get_access_token()
 
