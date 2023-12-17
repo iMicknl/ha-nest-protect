@@ -11,6 +11,7 @@
     },
     "step": {
       "user": {
+        "description": "Choose which environment to use. Unless instructed otherwise use the first and default option, 'Google Account'.",
         "data": {
           "account_type": "Account Type"
         }
