@@ -283,7 +283,7 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            _LOGGER.debug("Got data from Nest service %s", response.status)
+            _LOGGER.debug("Got data from Nest service (status: %s)", response.status)
 
             if response.status == 401:
                 raise NotAuthenticatedException(await response.text())
