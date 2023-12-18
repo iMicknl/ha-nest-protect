@@ -63,10 +63,6 @@ async def async_get_config_entry_diagnostics(
         auth = await client.get_access_token_from_cookies(issue_token, cookies)
     elif refresh_token:
         auth = await client.get_access_token_from_refresh_token(refresh_token)
-    else:
-        raise Exception(
-            "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
-        )
 
     nest = await client.authenticate(auth.access_token)
 
@@ -96,10 +92,7 @@ async def async_get_device_diagnostics(
         auth = await client.get_access_token_from_cookies(issue_token, cookies)
     elif refresh_token:
         auth = await client.get_access_token_from_refresh_token(refresh_token)
-    else:
-        raise Exception(
-            "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
-        )
+
     nest = await client.authenticate(auth.access_token)
 
     data = {
