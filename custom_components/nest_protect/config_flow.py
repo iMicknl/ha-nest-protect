@@ -56,8 +56,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         email = ""
         for bucket in data["updated_buckets"]:
             key = bucket["object_key"]
-
-            # Nest Protect
             if key.startswith("user."):
                 email = bucket["value"]["email"]
 
