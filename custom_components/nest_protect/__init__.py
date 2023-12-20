@@ -24,13 +24,14 @@ from .const import (
 )
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
+from .pynest.enums import BucketType
 from .pynest.exceptions import (
     BadCredentialsException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
 )
-from .pynest.models import Bucket, TopazBucket
+from .pynest.models import Bucket, TopazBucket, WhereBucketValue
 
 
 @dataclass
@@ -93,30 +94,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     data = await client.get_first_data(nest.access_token, nest.userid)
 
-    devices: list[Bucket] = []
+    buckets: list[Bucket] = []
     areas: dict[str, str] = {}
 
-    for bucket in data["updated_buckets"]:
-        key = bucket["object_key"]
-
+    for bucket in data.updated_buckets:
         # Nest Protect
-        if key.startswith("topaz."):
-            topaz = TopazBucket(**bucket)
-            devices.append(topaz)
+        if bucket.type == BucketType.TOPAZ:
+            buckets.append(bucket)
+        # Temperature Sensors
+        elif bucket.type == BucketType.KRYPTONITE:
+            buckets.append(bucket)
 
         # Areas
-        if key.startswith("where."):
-            bucket_value = Bucket(**bucket).value
+        if bucket.type == BucketType.WHERE and isinstance(
+            bucket.value, WhereBucketValue
+        ):
+            bucket_value = bucket.value
+            for area in bucket_value.wheres:
+                areas[area.where_id] = area.name
 
-            for area in bucket_value["wheres"]:
-                areas[area["where_id"]] = area["name"]
-
-        # Temperature Sensors
-        if key.startswith("kryptonite."):
-            kryptonite = Bucket(**bucket)
-            devices.append(kryptonite)
-
-    devices: dict[str, Bucket] = {b.object_key: b for b in devices}
+    devices: dict[str, Bucket] = {b.object_key: b for b in buckets}
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices=devices,

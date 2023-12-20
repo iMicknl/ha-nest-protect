@@ -25,6 +25,7 @@ from .exceptions import (
     PynestException,
 )
 from .models import (
+    FirstDataAPIResponse,
     GoogleAuthResponse,
     GoogleAuthResponseForCookies,
     NestAuthResponse,
@@ -225,7 +226,9 @@ class NestClient:
 
             return self.nest_session
 
-    async def get_first_data(self, nest_access_token: str, user_id: str) -> Any:
+    async def get_first_data(
+        self, nest_access_token: str, user_id: str
+    ) -> FirstDataAPIResponse:
         """Get first data."""
         async with self.session.post(
             APP_LAUNCH_URL_FORMAT.format(host=self.environment.host, user_id=user_id),
@@ -238,10 +241,15 @@ class NestClient:
         ) as response:
             result = await response.json()
 
-            if result.get("error"):
-                _LOGGER.debug(result)
+            if result.get("2fa_enabled"):
+                result["_2fa_enabled"] = result.pop("2fa_enabled")
 
-            self.transport_url = result["service_urls"]["urls"]["transport_url"]
+            result = FirstDataAPIResponse(**result)
+
+            # if result.get("error"):
+            #     _LOGGER.debug(result)
+
+            self.transport_url = result.service_urls["urls"]["transport_url"]
 
             return result
 
