@@ -120,7 +120,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
             for description in SENSOR_DESCRIPTIONS
             if (not description.bucket_type or device.type == description.bucket_type)
         }
-            
+
         for key in device.value:
             if description := SUPPORTED_KEYS.get(key):
                 entities.append(
