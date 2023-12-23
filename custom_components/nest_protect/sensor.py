@@ -116,7 +116,9 @@ async def async_setup_entry(hass, entry, async_add_devices):
     for device in data.devices.values():
 
         SUPPORTED_KEYS: dict[str, NestProtectSensorDescription] = {
-            description.key: description for description in SENSOR_DESCRIPTIONS if (not description.bucket_type or device.type == description.bucket_type)
+            description.key: description
+            for description in SENSOR_DESCRIPTIONS
+            if (not description.bucket_type or device.type == description.bucket_type)
         }
             
         for key in device.value:
