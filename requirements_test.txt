@@ -1,6 +1,0 @@
--r requirements_dev.txt
-
-pytest==7.3.1
-pytest-socket==0.6.0
-pytest-homeassistant-custom-component==0.13.51 # 2023.8.2
-pytest-timeout==2.1.0
