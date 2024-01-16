@@ -144,4 +144,3 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
             return self.entity_description.value_fn(state)
 
         return state
-    
