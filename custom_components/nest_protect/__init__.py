@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
 from homeassistant.config_entries import ConfigEntry
@@ -31,7 +30,7 @@ from .pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
-from .pynest.models import Bucket, TopazBucket, WhereBucketValue
+from .pynest.models import Bucket, FirstDataAPIResponse, TopazBucket, WhereBucketValue
 
 
 @dataclass
@@ -138,11 +137,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-def _register_subscribe_task(hass: HomeAssistant, entry: ConfigEntry, data: Any):
+def _register_subscribe_task(
+    hass: HomeAssistant, entry: ConfigEntry, data: _async_subscribe_for_data
+):
     return asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
 
 
-async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, data: Any):
+async def _async_subscribe_for_data(
+    hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
+):
     """Subscribe for new data."""
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
@@ -166,7 +169,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
             entry_data.client.nest_session.access_token,
             entry_data.client.nest_session.userid,
             data.service_urls["urls"]["transport_url"],
-            data["updated_buckets"],
+            data.updated_buckets,
         )
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
@@ -198,10 +201,10 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
         objects = [
-            dict(d, **buckets.get(d["object_key"], {})) for d in data["updated_buckets"]
+            dict(d, **buckets.get(d["object_key"], {})) for d in data.updated_buckets
         ]
 
-        data["updated_buckets"] = objects
+        data.updated_buckets = objects
 
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
