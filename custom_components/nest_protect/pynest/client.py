@@ -5,7 +5,7 @@ import logging
 from random import randint
 import time
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
@@ -25,6 +25,7 @@ from .exceptions import (
     PynestException,
 )
 from .models import (
+    Bucket,
     FirstDataAPIResponse,
     GoogleAuthResponse,
     GoogleAuthResponseForCookies,
@@ -261,16 +262,16 @@ class NestClient:
         updated_buckets: dict,
     ) -> Any:
         """Subscribe for data."""
-
         timeout = 3600 * 24
 
         objects = []
         for bucket in updated_buckets:
+            bucket = cast(Bucket, bucket)
             objects.append(
                 {
-                    "object_key": bucket["object_key"],
-                    "object_revision": bucket["object_revision"],
-                    "object_timestamp": bucket["object_timestamp"],
+                    "object_key": bucket.object_key,
+                    "object_revision": bucket.object_revision,
+                    "object_timestamp": bucket.object_timestamp,
                 }
             )
 
