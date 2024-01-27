@@ -247,8 +247,8 @@ class NestClient:
 
             result = FirstDataAPIResponse(**result)
 
-            # if result.get("error"):
-            #     _LOGGER.debug(result)
+            if result.get("error"):
+                _LOGGER.debug("Received error from Nest service", result)
 
             self.transport_url = result.service_urls["urls"]["transport_url"]
 
