@@ -24,7 +24,7 @@ from .const import (
 )
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
-from .pynest.enums import BucketType
+from .pynest.enums import BucketType, Environment
 from .pynest.exceptions import (
     BadCredentialsException,
     NestServiceException,
@@ -49,7 +49,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
     if config_entry.version == 1:
         entry_data = {**config_entry.data}
-        entry_data[CONF_ACCOUNT_TYPE] = "production"
+        entry_data[CONF_ACCOUNT_TYPE] = Environment.PRODUCTION
 
         config_entry.data = {**entry_data}
         config_entry.version = 2
@@ -94,16 +94,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     data = await client.get_first_data(nest.access_token, nest.userid)
 
-    buckets: list[Bucket] = []
+    device_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
 
     for bucket in data.updated_buckets:
         # Nest Protect
         if bucket.type == BucketType.TOPAZ:
-            buckets.append(bucket)
+            device_buckets.append(bucket)
         # Temperature Sensors
         elif bucket.type == BucketType.KRYPTONITE:
-            buckets.append(bucket)
+            device_buckets.append(bucket)
 
         # Areas
         if bucket.type == BucketType.WHERE and isinstance(
@@ -113,7 +113,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             for area in bucket_value.wheres:
                 areas[area.where_id] = area.name
 
-    devices: dict[str, Bucket] = {b.object_key: b for b in buckets}
+    devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices=devices,
@@ -165,7 +165,7 @@ async def _async_subscribe_for_data(hass: HomeAssistant, entry: ConfigEntry, dat
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
             entry_data.client.nest_session.userid,
-            data["service_urls"]["urls"]["transport_url"],
+            data.service_urls["urls"]["transport_url"],
             data["updated_buckets"],
         )
 
