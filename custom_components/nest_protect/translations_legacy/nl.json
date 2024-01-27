@@ -1,0 +1,45 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Account is al geconfigureerd"
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken",
+      "invalid_auth": "Ongeldige authenticatie",
+      "unknown": "Onverwachte fout"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "account_type": "Account type"
+        }
+      },
+      "account_link": {
+        "description": "Verkrijg uw issue_token en cookies handmatig, volgens de instructies in de [README](https://github.com/iMicknl/ha-nest-protect/tree/beta#retrieving-issue_token-and-cookies) en plak ze hieronder.",
+        "data": {
+          "issue_token": "issue_token",
+          "cookies": "cookies"
+        }
+      }
+    }
+  },
+  "options": {
+    "abort": {
+      "already_configured": "Account is al geconfigureerd"
+    },
+    "error": {
+      "cannot_connect": "Kan geen verbinding maken",
+      "invalid_auth": "Ongeldige authenticatie",
+      "unknown": "Onverwachte fout"
+    },
+    "step": {
+      "account_link": {
+        "description": "Haal uw issue_token en cookies op volgens de instructies in de README voor integratie en plak ze hieronder.",
+        "data": {
+          "issue_token": "issue_token",
+          "cookies": "cookies"
+        }
+      }
+    }
+  }
+}
