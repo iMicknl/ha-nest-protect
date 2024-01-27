@@ -201,7 +201,7 @@ async def _async_subscribe_for_data(
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
         objects = [
-            dict(d, **buckets.get(d["object_key"], {})) for d in data.updated_buckets
+            dict(b, **buckets.get(b.object_key, {})) for b in data.updated_buckets
         ]
 
         data.updated_buckets = objects
