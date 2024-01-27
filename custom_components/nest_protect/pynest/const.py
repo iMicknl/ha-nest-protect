@@ -32,6 +32,7 @@ NEST_REQUEST = {
         BucketType.STRUCTURE,
         BucketType.TOPAZ,
         BucketType.WHERE,
+        BucketType.USER,
     ],
     "known_bucket_versions": [],
 }

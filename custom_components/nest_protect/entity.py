@@ -27,7 +27,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self.client = client
-        self.area = areas[self.bucket.value["where_id"]]
+        self.area = areas.get(self.bucket.value["where_id"])
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
@@ -38,8 +38,10 @@ class NestEntity(Entity):
         """Generate device name."""
         if label := self.bucket.value.get("description"):
             name = label
-        else:
+        elif self.area:
             name = self.area
+        else:
+            name = ""
 
         if self.bucket.object_key.startswith("topaz."):
             return f"Nest Protect ({name})"

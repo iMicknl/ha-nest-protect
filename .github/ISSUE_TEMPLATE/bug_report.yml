@@ -77,10 +77,10 @@ body:
       description: Enable [debug logging](https://github.com/iMicknl/ha-nest-protect#enable-debug-logging) and paste your full log here, if you have errors.
       value: |
         <details><summary>Logs</summary>
+        
         ```
         Copy/paste any log here, between the starting and ending backticks (`)
         ```
-
         </details>
 
   - type: textarea
