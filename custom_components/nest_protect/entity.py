@@ -1,7 +1,7 @@
 """Entity class for Nest Protect."""
 from __future__ import annotations
 
-from enum import unique, StrEnum
+from enum import StrEnum, unique
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
