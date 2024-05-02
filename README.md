@@ -38,6 +38,10 @@ Copy the `custom_components/nest_protect` to your custom_components folder. Rebo
 
 Feel free to [create an issue on GitHub](https://github.com/iMicknl/ha-nest-protect/issues/new/choose) if you find an issue or if you have a suggestion. It is always helpful to download the diagnostics information and to include debug logging.
 
+## Troubleshooting
+
+If your Nest integration logs out, you'll need to do an incognito login to [home.nest.com](https://home.nest.com) and update your 'issue_token' and 'cookies' values as per [these instructions](https://github.com/iMicknl/ha-nest-protect/tree/beta?tab=readme-ov-file#retrieving-issue_token-and-cookies)
+
 ### Enable debug logging
 
 The [logger](https://www.home-assistant.io/integrations/logger/) integration lets you define the level of logging activities in Home Assistant. Turning on debug mode will show more information about unsupported devices in your logbook.
