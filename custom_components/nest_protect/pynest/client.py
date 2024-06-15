@@ -1,4 +1,5 @@
 """PyNest API Client."""
+
 from __future__ import annotations
 
 import logging
@@ -152,8 +153,11 @@ class NestClient:
             result = await response.json()
 
             if "error" in result:
-                if result["error"] == "invalid_grant":
-                    raise BadCredentialsException(result["error"])
+                # Cookie method
+                if result["error"] == "USER_LOGGED_OUT":
+                    raise BadCredentialsException(
+                        f"{result["error"]} - {result["detail"]}"
+                    )
 
                 raise Exception(result["error"])
 
@@ -245,10 +249,10 @@ class NestClient:
             if result.get("2fa_enabled"):
                 result["_2fa_enabled"] = result.pop("2fa_enabled")
 
-            result = FirstDataAPIResponse(**result)
-
             if result.get("error"):
                 _LOGGER.debug("Received error from Nest service", result)
+
+            result = FirstDataAPIResponse(**result)
 
             self.transport_url = result.service_urls["urls"]["transport_url"]
 

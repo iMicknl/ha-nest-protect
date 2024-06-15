@@ -1,4 +1,5 @@
 """Enums for Nest Protect."""
+
 from enum import StrEnum, unique
 import logging
 

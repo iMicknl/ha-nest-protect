@@ -1,4 +1,5 @@
 """Constants used by PyNest."""
+
 from .enums import BucketType, Environment
 from .models import NestEnvironment
 

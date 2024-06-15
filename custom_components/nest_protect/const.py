@@ -1,4 +1,5 @@
 """Constants for Nest Protect."""
+
 from __future__ import annotations
 
 import logging

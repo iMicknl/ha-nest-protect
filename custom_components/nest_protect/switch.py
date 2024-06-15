@@ -1,4 +1,5 @@
 """Switch platform for Nest Protect."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

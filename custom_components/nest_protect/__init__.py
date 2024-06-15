@@ -1,4 +1,5 @@
 """Nest Protect integration."""
+
 from __future__ import annotations
 
 import asyncio
@@ -200,6 +201,10 @@ async def _async_subscribe_for_data(
 
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
+
+        LOGGER.debug(buckets)
+        LOGGER.debug(data.updated_buckets)
+
         objects = [
             dict(b, **buckets.get(b.object_key, {})) for b in data.updated_buckets
         ]

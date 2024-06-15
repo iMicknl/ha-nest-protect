@@ -1,4 +1,5 @@
 """Sensor platform for Nest Protect."""
+
 from __future__ import annotations
 
 from collections.abc import Callable

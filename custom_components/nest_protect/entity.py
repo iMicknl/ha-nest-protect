@@ -1,4 +1,5 @@
 """Entity class for Nest Protect."""
+
 from __future__ import annotations
 
 from homeassistant.core import callback
@@ -64,9 +65,9 @@ class NestEntity(Entity):
                 manufacturer="Google",
                 model=self.bucket.value["model"],
                 sw_version=self.bucket.value["software_version"],
-                hw_version="Wired"
-                if self.bucket.value["wired_or_battery"] == 0
-                else "Battery",
+                hw_version=(
+                    "Wired" if self.bucket.value["wired_or_battery"] == 0 else "Battery"
+                ),
                 suggested_area=self.area,
                 configuration_url="https://home.nest.com/protect/"
                 + self.bucket.value["structure_id"],  # TODO change url based on device
