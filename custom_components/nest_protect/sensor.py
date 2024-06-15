@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+    SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.helpers.entity import EntityCategory
@@ -68,6 +69,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         bucket_type=BucketType.KRYPTONITE,
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     # TODO Due to duplicate keys, this sensor is not available yet
     # NestProtectSensorDescription(
@@ -87,6 +89,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         bucket_type=BucketType.TOPAZ,
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     NestProtectSensorDescription(
         name="Replace By",
@@ -101,6 +104,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=lambda state: round(state, 2),
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
