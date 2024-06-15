@@ -55,7 +55,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data = await client.get_first_data(nest.access_token, nest.userid)
 
         email = ""
-        for bucket in data["updated_buckets"]:
+        for bucket in data.updated_buckets:
             key = bucket["object_key"]
             if key.startswith("user."):
                 email = bucket["value"]["email"]
