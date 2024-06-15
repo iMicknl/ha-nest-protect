@@ -37,3 +37,32 @@ NEST_REQUEST = {
     ],
     "known_bucket_versions": [],
 }
+
+FULL_NEST_REQUEST = {
+    "known_bucket_types": [
+        BucketType.BUCKETS,
+        BucketType.METADATA,
+        BucketType.KRYPTONITE,
+        BucketType.STRUCTURE,
+        BucketType.TOPAZ,
+        BucketType.WHERE,
+        BucketType.USER,
+        BucketType.DEMAND_RESPONSE,
+        BucketType.WIDGET_TRACK,
+        BucketType.OCCUPANCY,
+        BucketType.MESSAGE,
+        BucketType.MESSAGE_CENTER,
+        BucketType.LINK,
+        BucketType.SAFETY,
+        BucketType.SAFETY_SUMMARY,
+        BucketType.DEVICE_ALERT_DIALOG,
+        BucketType.QUARTZ,
+        BucketType.TOPAZ_RESOURCE,
+        BucketType.TRACK,
+        BucketType.TRIP,
+        BucketType.STRUCTURE_METADATA,
+        BucketType.USER,
+        BucketType.WIDGET_TRACK,
+    ],
+    "known_bucket_versions": [],
+}

@@ -232,12 +232,12 @@ class NestClient:
             return self.nest_session
 
     async def get_first_data(
-        self, nest_access_token: str, user_id: str
+        self, nest_access_token: str, user_id: str, request: dict = NEST_REQUEST
     ) -> FirstDataAPIResponse:
         """Get first data."""
         async with self.session.post(
             APP_LAUNCH_URL_FORMAT.format(host=self.environment.host, user_id=user_id),
-            json=NEST_REQUEST,
+            json=request,
             headers={
                 "Authorization": f"Basic {nest_access_token}",
                 "X-nl-user-id": user_id,
@@ -250,7 +250,11 @@ class NestClient:
                 result["_2fa_enabled"] = result.pop("2fa_enabled")
 
             if result.get("error"):
-                _LOGGER.debug("Received error from Nest service", result)
+                _LOGGER.debug("Received error from Nest service", await response.text())
+
+                raise PynestException(
+                    f"{response.status} error while subscribing - {result}"
+                )
 
             result = FirstDataAPIResponse(**result)
 
@@ -294,7 +298,7 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            _LOGGER.debug("Got data from Nest service (status: %s)", response.status)
+            _LOGGER.debug("Data received via subscriber (status: %s)", response.status)
 
             if response.status == 401:
                 raise NotAuthenticatedException(await response.text())

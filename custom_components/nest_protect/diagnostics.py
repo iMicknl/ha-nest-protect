@@ -12,6 +12,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import HomeAssistantNestProtectData
 from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN, DOMAIN
+from .pynest.const import FULL_NEST_REQUEST
 
 TO_REDACT = [
     "access_token",
@@ -27,6 +28,7 @@ TO_REDACT = [
     "location",
     "longitude",
     "name",
+    "parameters",
     "pairing_token",
     "postal_code",
     "profile_image_url",
@@ -72,7 +74,9 @@ async def async_get_config_entry_diagnostics(
 
     data = {
         "app_launch": dataclasses.asdict(
-            await client.get_first_data(nest.access_token, nest.userid)
+            await client.get_first_data(
+                nest.access_token, nest.userid, request=FULL_NEST_REQUEST
+            )
         )
     }
 
