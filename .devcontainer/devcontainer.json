@@ -12,7 +12,7 @@
 	"features": {
 		"ghcr.io/devcontainers-contrib/features/ffmpeg-apt-get:1": {}
 	},
-	"postCreateCommand": "pip install -r requirements_dev.txt && pre-commit install && pre-commit install-hooks",
+	"postCreateCommand": "sudo apt-get install -y libturbojpeg0 libpcap-dev && pip install -r requirements_dev.txt && pre-commit install && pre-commit install-hooks",
 	"containerEnv": {
 		"DEVCONTAINER": "1"
 	  },
