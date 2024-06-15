@@ -1,2 +1,2 @@
-homeassistant==2023.12.3
+homeassistant==2024.6.3
 pre-commit

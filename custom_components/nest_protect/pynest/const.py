@@ -1,4 +1,5 @@
 """Constants used by PyNest."""
+
 from .enums import BucketType, Environment
 from .models import NestEnvironment
 
@@ -32,6 +33,7 @@ NEST_REQUEST = {
         BucketType.STRUCTURE,
         BucketType.TOPAZ,
         BucketType.WHERE,
+        BucketType.USER,
     ],
     "known_bucket_versions": [],
 }

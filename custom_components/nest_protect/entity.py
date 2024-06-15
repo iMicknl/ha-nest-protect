@@ -1,4 +1,5 @@
 """Entity class for Nest Protect."""
+
 from __future__ import annotations
 
 from homeassistant.core import callback
@@ -27,7 +28,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self.client = client
-        self.area = areas[self.bucket.value["where_id"]]
+        self.area = areas.get(self.bucket.value["where_id"])
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
@@ -38,8 +39,10 @@ class NestEntity(Entity):
         """Generate device name."""
         if label := self.bucket.value.get("description"):
             name = label
-        else:
+        elif self.area:
             name = self.area
+        else:
+            name = ""
 
         if self.bucket.object_key.startswith("topaz."):
             return f"Nest Protect ({name})"
@@ -62,9 +65,9 @@ class NestEntity(Entity):
                 manufacturer="Google",
                 model=self.bucket.value["model"],
                 sw_version=self.bucket.value["software_version"],
-                hw_version="Wired"
-                if self.bucket.value["wired_or_battery"] == 0
-                else "Battery",
+                hw_version=(
+                    "Wired" if self.bucket.value["wired_or_battery"] == 0 else "Battery"
+                ),
                 suggested_area=self.area,
                 configuration_url="https://home.nest.com/protect/"
                 + self.bucket.value["structure_id"],  # TODO change url based on device

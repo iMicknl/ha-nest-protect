@@ -1,4 +1,5 @@
 """Adds config flow for Nest Protect."""
+
 from __future__ import annotations
 
 from typing import Any, cast
@@ -29,14 +30,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 3
 
-    _config_entry: ConfigEntry | None
-
-    def __init__(self) -> None:
-        """Initialize Nest Protect Config Flow."""
-        super().__init__()
-
-        self._config_entry = None
-        self._default_account_type = Environment.PRODUCTION
+    _config_entry: ConfigEntry | None = None
+    _default_account_type: Environment = Environment.PRODUCTION
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> list:
         """Validate user credentials."""
@@ -55,17 +50,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             auth = await client.get_access_token_from_cookies(issue_token, cookies)
         elif refresh_token:
             auth = await client.get_access_token_from_refresh_token(refresh_token)
-        else:
-            raise Exception(
-                "No cookies, issue token and refresh token, please provide issue_token and cookies or refresh_token"
-            )
 
-        response = await client.authenticate(auth.access_token)
+        nest = await client.authenticate(auth.access_token)
+        data = await client.get_first_data(nest.access_token, nest.userid)
 
-        # TODO change unique id to an id related to the nest account
-        await self.async_set_unique_id(user_input[CONF_ISSUE_TOKEN])
+        email = ""
+        for bucket in data.updated_buckets:
+            key = bucket.object_key
+            if key.startswith("user."):
+                email = bucket.value["email"]
 
-        return [issue_token, cookies, response.user]
+        # Set unique id to user_id (object.key: user.xxxx)
+        await self.async_set_unique_id(nest.user)
+
+        return [issue_token, cookies, email]
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -98,9 +96,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         if user_input:
+            user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
+
             try:
-                user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
-                [issue_token, cookies, user] = await self.async_validate_input(
+                [issue_token, cookies, email] = await self.async_validate_input(
                     user_input
                 )
                 user_input[CONF_ISSUE_TOKEN] = issue_token
@@ -130,13 +129,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
 
                     return self.async_create_entry(
-                        title="Nest Protect", data=user_input, description=user
+                        title=f"Nest Protect ({email})", data=user_input
                     )
 
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
-                    title="Nest Protect", data=user_input, description=user
+                    title=f"Nest Protect ({email})", data=user_input
                 )
 
         return self.async_show_form(

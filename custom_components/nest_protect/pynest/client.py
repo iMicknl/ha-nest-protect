@@ -1,11 +1,12 @@
 """PyNest API Client."""
+
 from __future__ import annotations
 
 import logging
 from random import randint
 import time
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
@@ -25,6 +26,8 @@ from .exceptions import (
     PynestException,
 )
 from .models import (
+    Bucket,
+    FirstDataAPIResponse,
     GoogleAuthResponse,
     GoogleAuthResponseForCookies,
     NestAuthResponse,
@@ -44,20 +47,26 @@ class NestClient:
     transport_url: str | None = None
     environment: NestEnvironment
 
+    # Legacy Auth
+    refresh_token: str | None = None
+    # Cookie Auth
+    cookies: str | None = None
+    issue_token: str | None = None
+
     def __init__(
         self,
         session: ClientSession | None = None,
-        refresh_token: str | None = None,
-        issue_token: str | None = None,
-        cookies: str | None = None,
+        # refresh_token: str | None = None,
+        # issue_token: str | None = None,
+        # cookies: str | None = None,
         environment: NestEnvironment = DEFAULT_NEST_ENVIRONMENT,
     ) -> None:
         """Initialize NestClient."""
 
         self.session = session if session else ClientSession()
-        self.refresh_token = refresh_token
-        self.issue_token = issue_token
-        self.cookies = cookies
+        # self.refresh_token = refresh_token
+        # self.issue_token = issue_token
+        # self.cookies = cookies
         self.environment = environment
 
     async def __aenter__(self) -> NestClient:
@@ -80,8 +89,6 @@ class NestClient:
             await self.get_access_token_from_refresh_token(self.refresh_token)
         elif self.issue_token and self.cookies:
             await self.get_access_token_from_cookies(self.issue_token, self.cookies)
-        else:
-            raise Exception("No credentials")
 
         return self.auth
 
@@ -123,7 +130,7 @@ class NestClient:
             return self.auth
 
     async def get_access_token_from_cookies(
-        self, issue_token: str | None = None, cookies: str | None = None
+        self, issue_token: str, cookies: str
     ) -> GoogleAuthResponse:
         """Get a Nest refresh token from an issue token and cookies."""
 
@@ -132,12 +139,6 @@ class NestClient:
 
         if cookies:
             self.cookies = cookies
-
-        if not self.issue_token:
-            raise Exception("No issue token")
-
-        if not self.cookies:
-            raise Exception("No cookies")
 
         async with self.session.get(
             issue_token,
@@ -152,8 +153,11 @@ class NestClient:
             result = await response.json()
 
             if "error" in result:
-                if result["error"] == "invalid_grant":
-                    raise BadCredentialsException(result["error"])
+                # Cookie method
+                if result["error"] == "USER_LOGGED_OUT":
+                    raise BadCredentialsException(
+                        f"{result["error"]} - {result["detail"]}"
+                    )
 
                 raise Exception(result["error"])
 
@@ -227,7 +231,9 @@ class NestClient:
 
             return self.nest_session
 
-    async def get_first_data(self, nest_access_token: str, user_id: str) -> Any:
+    async def get_first_data(
+        self, nest_access_token: str, user_id: str
+    ) -> FirstDataAPIResponse:
         """Get first data."""
         async with self.session.post(
             APP_LAUNCH_URL_FORMAT.format(host=self.environment.host, user_id=user_id),
@@ -240,10 +246,15 @@ class NestClient:
         ) as response:
             result = await response.json()
 
-            if result.get("error"):
-                _LOGGER.debug(result)
+            if result.get("2fa_enabled"):
+                result["_2fa_enabled"] = result.pop("2fa_enabled")
 
-            self.transport_url = result["service_urls"]["urls"]["transport_url"]
+            if result.get("error"):
+                _LOGGER.debug("Received error from Nest service", result)
+
+            result = FirstDataAPIResponse(**result)
+
+            self.transport_url = result.service_urls["urls"]["transport_url"]
 
             return result
 
@@ -255,16 +266,16 @@ class NestClient:
         updated_buckets: dict,
     ) -> Any:
         """Subscribe for data."""
-
         timeout = 3600 * 24
 
         objects = []
         for bucket in updated_buckets:
+            bucket = cast(Bucket, bucket)
             objects.append(
                 {
-                    "object_key": bucket["object_key"],
-                    "object_revision": bucket["object_revision"],
-                    "object_timestamp": bucket["object_timestamp"],
+                    "object_key": bucket.object_key,
+                    "object_revision": bucket.object_revision,
+                    "object_timestamp": bucket.object_timestamp,
                 }
             )
 
