@@ -56,9 +56,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         email = ""
         for bucket in data.updated_buckets:
-            key = bucket["object_key"]
+            key = bucket.object_key
             if key.startswith("user."):
-                email = bucket["value"]["email"]
+                email = bucket.value["email"]
 
         # Set unique id to user_id (object.key: user.xxxx)
         await self.async_set_unique_id(nest.user)
