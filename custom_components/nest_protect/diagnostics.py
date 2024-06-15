@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -18,6 +19,7 @@ TO_REDACT = [
     "aux_primary_fabric_id",
     "city",
     "country",
+    "email",
     "emergency_contact_description",
     "emergency_contact_phone",
     "ifj_primary_fabric_id",
@@ -27,6 +29,7 @@ TO_REDACT = [
     "name",
     "pairing_token",
     "postal_code",
+    "profile_image_url",
     "serial_number",
     "service_config",
     "state",
@@ -67,7 +70,11 @@ async def async_get_config_entry_diagnostics(
 
     nest = await client.authenticate(auth.access_token)
 
-    data = {"app_launch": await client.get_first_data(nest.access_token, nest.userid)}
+    data = {
+        "app_launch": dataclasses.asdict(
+            await client.get_first_data(nest.access_token, nest.userid)
+        )
+    }
 
     return async_redact_data(data, TO_REDACT)
 
@@ -102,7 +109,9 @@ async def async_get_device_diagnostics(
             "firmware": device.sw_version,
             "model": device.model,
         },
-        "app_launch": await client.get_first_data(nest.access_token, nest.userid),
+        "app_launch": dataclasses.asdict(
+            await client.get_first_data(nest.access_token, nest.userid)
+        ),
     }
 
     return async_redact_data(data, TO_REDACT)

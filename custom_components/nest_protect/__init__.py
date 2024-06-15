@@ -203,10 +203,9 @@ async def _async_subscribe_for_data(
         buckets = {d["object_key"]: d for d in result["objects"]}
 
         LOGGER.debug(buckets)
-        LOGGER.debug(data.updated_buckets)
 
         objects = [
-            dict(b, **buckets.get(b.object_key, {})) for b in data.updated_buckets
+            dict(b, **buckets.get(b.object_key, {})) for b in [data.updated_buckets]
         ]
 
         data.updated_buckets = objects
