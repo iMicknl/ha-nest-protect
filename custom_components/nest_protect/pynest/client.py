@@ -217,6 +217,10 @@ class NestClient:
             if nest_response.get("error"):
                 _LOGGER.error("Authentication error: %s", nest_response.get("error"))
 
+                raise PynestException(
+                    f"{response.status} error while authenticating - {nest_response}."
+                )
+
             try:
                 self.nest_session = NestResponse(**nest_response)
             except Exception as exception:
