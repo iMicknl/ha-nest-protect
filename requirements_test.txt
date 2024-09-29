@@ -1,6 +1,6 @@
 -r requirements_dev.txt
 
 pytest==7.4.3
-pytest-socket==0.6.0
+pytest-socket==0.7.0
 pytest-homeassistant-custom-component==0.13.135 # 2024.6.3
 pytest-timeout==2.1.0
