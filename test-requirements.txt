@@ -1,4 +1,4 @@
--r requirements_dev.txt
+-r dev-requirements.txt
 
 pytest==7.4.3
 pytest-socket==0.6.0
