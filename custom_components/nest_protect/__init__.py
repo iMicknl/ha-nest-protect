@@ -204,9 +204,9 @@ async def _async_subscribe_for_data(
 
         LOGGER.debug(buckets)
 
-        objects: list[Bucket] = []
-        for b in data.updated_buckets:
-            objects.append(b)
+        objects = [
+            dict(b, **buckets.get(b.object_key, {})) for b in [data.updated_buckets]
+        ]
 
         data.updated_buckets = objects
 
