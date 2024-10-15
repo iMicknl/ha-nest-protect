@@ -1,4 +1,5 @@
 """Select platform for Nest Protect."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
-from .entity import NestDescriptiveEntity, NestProtectDeviceClass
+from .entity import NestDescriptiveEntity
 
 
 @dataclass
@@ -24,11 +25,11 @@ PRESET_TO_BRIGHTNESS = {v: k for k, v in BRIGHTNESS_TO_PRESET.items()}
 SENSOR_DESCRIPTIONS: list[SelectEntityDescription] = [
     NestProtectSelectDescription(
         key="night_light_brightness",
+        translation_key="night_light_brightness",
         name="Brightness",
         icon="mdi:lightbulb-on",
         options=[*PRESET_TO_BRIGHTNESS],
         entity_category=EntityCategory.CONFIG,
-        device_class=NestProtectDeviceClass.NIGHT_LIGHT_BRIGHTNESS,
     ),
 ]
 
@@ -39,7 +40,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSelect] = []
 
-    SUPPORTED_KEYS = {
+    SUPPORTED_KEYS: dict[str, NestProtectSelectDescription] = {
         description.key: description for description in SENSOR_DESCRIPTIONS
     }
 
@@ -84,7 +85,6 @@ class NestProtectSelect(NestDescriptiveEntity, SelectEntity):
         ]
 
         if not self.client.nest_session or self.client.nest_session.is_expired():
-
             if not self.client.auth or self.client.auth.is_expired():
                 await self.client.get_access_token()
 

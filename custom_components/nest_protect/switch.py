@@ -1,4 +1,5 @@
 """Switch platform for Nest Protect."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -34,8 +35,8 @@ PRESET_TO_BRIGHTNESS = {v: k for k, v in BRIGHTNESS_TO_PRESET.items()}
 
 SWITCH_DESCRIPTIONS: list[SwitchEntityDescription] = [
     NestProtectSwitchDescription(
-        name="Pathlight",
         key="night_light_enable",
+        name="Pathlight",
         entity_category=EntityCategory.CONFIG,
         icon="mdi:weather-night",
     ),
@@ -66,7 +67,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSwitch] = []
 
-    SUPPORTED_KEYS = {
+    SUPPORTED_KEYS: dict[str, NestProtectSwitchDescription] = {
         description.key: description for description in SWITCH_DESCRIPTIONS
     }
 
@@ -105,7 +106,6 @@ class NestProtectSwitch(NestDescriptiveEntity, SwitchEntity):
         ]
 
         if not self.client.nest_session or self.client.nest_session.is_expired():
-
             if not self.client.auth or self.client.auth.is_expired():
                 await self.client.get_access_token()
 
@@ -133,7 +133,6 @@ class NestProtectSwitch(NestDescriptiveEntity, SwitchEntity):
         ]
 
         if not self.client.nest_session or self.client.nest_session.is_expired():
-
             if not self.client.auth or self.client.auth.is_expired():
                 await self.client.get_access_token()
 
