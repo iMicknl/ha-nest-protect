@@ -206,10 +206,19 @@ async def _async_subscribe_for_data(
         LOGGER.debug(buckets)
 
         objects = [
-            dict(b, **buckets.get(b.object_key, {})) for b in [data.updated_buckets]
+            dict(vars(b), **buckets.get(b.object_key, {})) for b in data.updated_buckets
         ]
 
-        data.updated_buckets = objects
+        data.updated_buckets = [
+            Bucket(
+                object_key=bucket["object_key"],
+                object_revision=bucket["object_revision"],
+                object_timestamp=bucket["object_timestamp"],
+                value=bucket["value"],
+                type=bucket["type"]
+        )
+        for bucket in objects
+        ]
 
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
