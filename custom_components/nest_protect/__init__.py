@@ -216,8 +216,8 @@ async def _async_subscribe_for_data(
                 object_timestamp=bucket["object_timestamp"],
                 value=bucket["value"],
                 type=bucket["type"]
-        )
-        for bucket in objects
+            )
+            for bucket in objects
         ]
 
         _register_subscribe_task(hass, entry, data)
