@@ -215,7 +215,7 @@ async def _async_subscribe_for_data(
                 object_revision=bucket["object_revision"],
                 object_timestamp=bucket["object_timestamp"],
                 value=bucket["value"],
-                type=bucket["type"]
+                type=bucket["type"],
             )
             for bucket in objects
         ]
