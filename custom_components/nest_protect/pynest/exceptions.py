@@ -35,3 +35,8 @@ class BadGatewayException(NestServiceException):
     """Raised when server returns Bad Gateway."""
 
     pass
+
+class EmptyResponseException(NestServiceException):
+    """Raised when server returns Status 200 (OK), but empty repsonse."""
+
+    pass
