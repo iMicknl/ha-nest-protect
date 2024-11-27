@@ -24,6 +24,7 @@ from .exceptions import (
     GatewayTimeoutException,
     NotAuthenticatedException,
     PynestException,
+    EmptyResponseException,
 )
 from .models import (
     Bucket,
@@ -313,6 +314,9 @@ class NestClient:
             if response.status == 502:
                 raise BadGatewayException(await response.text())
 
+            if response.status == 200 and response.content_type == "text/plain":
+                raise EmptyResponseException(await response.text())
+                
             try:
                 result = await response.json()
             except ContentTypeError as error:
