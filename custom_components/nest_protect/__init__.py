@@ -30,6 +30,7 @@ from .pynest.exceptions import (
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
+    EmptyResponseException,
 )
 from .pynest.models import Bucket, FirstDataAPIResponse, TopazBucket, WhereBucketValue
 
@@ -221,6 +222,10 @@ async def _async_subscribe_for_data(
 
     except ClientConnectorError:
         LOGGER.debug("Subscriber: cannot connect to host.")
+        _register_subscribe_task(hass, entry, data)
+
+    except EmptyResponseException:
+        LOGGER.debug("Subscriber: Nest Service sent empty response.")
         _register_subscribe_task(hass, entry, data)
 
     except NotAuthenticatedException:
