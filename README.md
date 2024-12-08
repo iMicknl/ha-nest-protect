@@ -39,16 +39,17 @@ Copy the `custom_components/nest_protect` to your custom_components folder. Rebo
 The values of "issue_token" and "cookies" are specific to your Google Account. To get them, follow these steps (only needs to be done once, as long as you stay logged into your Google Account).
 
 1. Open a Chrome/Edge browser tab in Incognito Mode (or clear your cookies).
-2. Open Developer Tools (View/Developer/Developer Tools).
-3. Click on **Network** tab. Make sure 'Preserve Log' is checked.
-4. In the **Filter** box, enter `issueToken`
-5. Go to home.nest.com, and click **Sign in with Google**. Log into your account.
-6. One network call (beginning with iframerpc) will appear in the Dev Tools window. Click on it.
-7. In the Headers tab, under General, copy the entire Request URL (beginning with https://accounts.google.com). This is your _'issue_token'_ in the configuration form.
-8. In the **Filter** box, enter `oauth2/iframe`
-9. Several network calls will appear in the Dev Tools window. Click on the last iframe call.
-10. In the **Headers** tab, under **Request Headers**, copy the entire cookie (include the whole string which is several lines long and has many field/value pairs - do not include the cookie: name). This is your _'cookies'_ in the configuration form.
-11. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
+2. Open Settings, select Privacy and Security, select Cookies and other site Data, select Allow all cookies
+3. Open Developer Tools (View/Developer/Developer Tools).
+4. Click on **Network** tab. Make sure 'Preserve Log' is checked.
+5. In the **Filter** box, enter `issueToken`
+6. Go to home.nest.com, and click **Sign in with Google**. Log into your account.
+7. One network call (beginning with iframerpc) will appear in the Dev Tools window. Click on it.
+8. In the Headers tab, under General, copy the entire Request URL (beginning with https://accounts.google.com). This is your _'issue_token'_ in the configuration form.
+9. In the **Filter** box, enter `oauth2/iframe`
+10. Several network calls will appear in the Dev Tools window. Click on the last iframe call.
+11. In the **Headers** tab, under **Request Headers**, copy the entire cookie (include the whole string which is several lines long and has many field/value pairs - do not include the cookie: name). This is your _'cookies'_ in the configuration form.
+12. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
 
 ## Advanced
 
