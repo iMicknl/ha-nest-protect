@@ -10,7 +10,7 @@ from custom_components.nest_protect.pynest.const import NEST_REQUEST
 
 @pytest.mark.enable_socket
 async def test_get_access_token_from_cookies_success(
-    socket_enabled, aiohttp_client, loop
+    socket_enabled, aiohttp_client, event_loop
 ):
     """Test getting an access token."""
 
@@ -38,7 +38,7 @@ async def test_get_access_token_from_cookies_success(
 
 @pytest.mark.enable_socket
 async def test_get_access_token_from_cookies_error(
-    socket_enabled, aiohttp_client, loop
+    socket_enabled, aiohttp_client, event_loop
 ):
     """Test failure while getting an access token."""
 
@@ -57,7 +57,7 @@ async def test_get_access_token_from_cookies_error(
 
 
 @pytest.mark.enable_socket
-async def test_get_first_data_success(socket_enabled, aiohttp_client, loop):
+async def test_get_first_data_success(socket_enabled, aiohttp_client, event_loop):
     """Test getting initial data from the API."""
 
     async def api_response(request):

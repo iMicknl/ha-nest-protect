@@ -1,4 +1,5 @@
 """Switch platform for Nest Protect."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -66,7 +67,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSwitch] = []
 
-    SUPPORTED_KEYS = {
+    SUPPORTED_KEYS: dict[str, NestProtectSwitchDescription] = {
         description.key: description for description in SWITCH_DESCRIPTIONS
     }
 

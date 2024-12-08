@@ -1,9 +1,12 @@
 """Models used by PyNest."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import datetime
 from typing import Any
+
+from .enums import BucketType
 
 
 @dataclass
@@ -69,9 +72,47 @@ class Bucket:
     """Class that reflects a Nest API response."""
 
     object_key: str
-    object_revision: str
-    object_timestamp: str
-    value: Any
+    object_revision: int
+    object_timestamp: int
+    # value: dict[str, Any]
+    value: dict[str, Any] | TopazBucketValue | WhereBucketValue
+    type: str = ""
+
+    def __post_init__(self):
+        """Set the bucket type during post init."""
+        self.type = BucketType(self.object_key.split(".")[0])
+
+        # if self.type == BucketType.TOPAZ:
+        #     self.value = TopazBucketValue(**self.value)
+        if self.type == BucketType.WHERE:
+            self.value = WhereBucketValue(**self.value)
+
+
+@dataclass
+class Where:
+    """TODO."""
+
+    name: str
+    where_id: str
+
+
+@dataclass
+class BucketValue:
+    """Nest Protect values."""
+
+    # def __iter__(self):
+    #     return (getattr(self, field.name) for field in fields(self))
+
+
+@dataclass
+class WhereBucketValue(BucketValue):
+    """Nest Protect values."""
+
+    wheres: list[Where] = field(default_factory=Where)
+
+    def __post_init__(self):
+        """TODO."""
+        self.wheres = [Where(**w) for w in self.wheres] if self.wheres else []
 
 
 @dataclass
@@ -81,11 +122,11 @@ class WhereBucket(Bucket):
     object_key: str
     object_revision: str
     object_timestamp: str
-    value: Any
+    value: WhereBucketValue = field(default_factory=WhereBucketValue)
 
 
 @dataclass
-class TopazBucketValue:
+class TopazBucketValue(BucketValue):
     """Nest Protect values."""
 
     spoken_where_id: str
@@ -159,6 +200,8 @@ class TopazBucketValue:
     component_wifi_test_passed: bool
     heads_up_enable: bool
     battery_level: int
+    last_audio_self_test_end_utc_secs: int
+    last_audio_self_test_start_utc_secs: int
 
 
 @dataclass
@@ -228,3 +271,80 @@ class NestEnvironment:
     name: str
     client_id: str
     host: str
+
+
+@dataclass
+class Weather:
+    """TODO."""
+
+    icon: str
+    sunrise: str
+    sunset: str
+    temp_c: str
+
+
+@dataclass
+class Location:
+    """TODO."""
+
+    city: str
+    country: str
+    state: str
+    zip: str
+
+
+@dataclass
+class WeatherForStructures:
+    """TODO."""
+
+    current: Weather
+    location: Location
+
+
+@dataclass
+class ServiceUrls:
+    """TODO."""
+
+    czfe_url: str
+    direct_transport_url: str
+    log_upload_url: str
+    rubyapi_url: str
+    support_url: str
+    transport_url: str
+    weather_url: str
+
+
+@dataclass
+class Weave:
+    """TODO."""
+
+    access_token: str
+    pairing_token: str
+    service_config: str
+
+
+@dataclass
+class Limits:
+    """TODO."""
+
+    smoke_detectors: int
+    smoke_detectors_per_structure: int
+    structures: int
+    thermostats: int
+    thermostats_per_structure: int
+
+
+@dataclass
+class FirstDataAPIResponse:
+    """TODO."""
+
+    weather_for_structures: dict[str, WeatherForStructures]
+    service_urls: dict[str, ServiceUrls | Weave | Limits]
+    _2fa_enabled: bool
+    updated_buckets: list[Bucket]
+
+    def __post_init__(self):
+        """TODO."""
+        self.updated_buckets = (
+            [Bucket(**b) for b in self.updated_buckets] if self.updated_buckets else []
+        )
