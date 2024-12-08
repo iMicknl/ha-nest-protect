@@ -99,6 +99,20 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
+        name="Last Audio Self Test",
+        key="last_audio_self_test_end_utc_secs",
+        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
+        device_class=SensorDeviceClass.DATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    NestProtectSensorDescription(
+        name="Last Manual Test",
+        key="latest_manual_test_end_utc_secs",
+        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
+        device_class=SensorDeviceClass.DATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    NestProtectSensorDescription(
         name="Temperature",
         key="current_temperature",
         value_fn=lambda state: round(state, 2),
