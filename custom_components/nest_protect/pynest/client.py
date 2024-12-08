@@ -21,6 +21,7 @@ from .const import (
 from .exceptions import (
     BadCredentialsException,
     BadGatewayException,
+    EmptyResponseException,
     GatewayTimeoutException,
     NotAuthenticatedException,
     PynestException,
@@ -312,6 +313,9 @@ class NestClient:
 
             if response.status == 502:
                 raise BadGatewayException(await response.text())
+
+            if response.status == 200 and response.content_type == "text/plain":
+                raise EmptyResponseException(await response.text())
 
             try:
                 result = await response.json()

@@ -27,6 +27,7 @@ from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import BucketType, Environment
 from .pynest.exceptions import (
     BadCredentialsException,
+    EmptyResponseException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
@@ -221,6 +222,10 @@ async def _async_subscribe_for_data(
 
     except ClientConnectorError:
         LOGGER.debug("Subscriber: cannot connect to host.")
+        _register_subscribe_task(hass, entry, data)
+
+    except EmptyResponseException:
+        LOGGER.debug("Subscriber: Nest Service sent empty response.")
         _register_subscribe_task(hass, entry, data)
 
     except NotAuthenticatedException:
