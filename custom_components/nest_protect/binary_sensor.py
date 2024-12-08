@@ -141,6 +141,14 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
+        key="removed_from_base",
+        name="Removed from Base",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:tray-remove",
+        value_fn=lambda state: state,
+    ),
+    NestProtectBinarySensorDescription(
         key="auto_away",
         name="Occupancy",
         device_class=BinarySensorDeviceClass.OCCUPANCY,
