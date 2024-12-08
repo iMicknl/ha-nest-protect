@@ -6,7 +6,7 @@ import logging
 from random import randint
 import time
 from types import TracebackType
-from typing import Any, cast
+from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
@@ -279,7 +279,14 @@ class NestClient:
 
         objects = []
         for bucket in updated_buckets:
-            bucket = cast(Bucket, bucket)
+
+            # TODO fix the underlying issue
+            # for some reason, the bucket is a dict instead of a Bucket object for `where` buckets, while the WhereBucketValue is present
+            if not isinstance(bucket, Bucket):
+                _LOGGER.debug("Incoming bucket is the wrong type")
+                _LOGGER.debug(bucket)
+                bucket = Bucket(**bucket)
+
             objects.append(
                 {
                     "object_key": bucket.object_key,
@@ -287,6 +294,9 @@ class NestClient:
                     "object_timestamp": bucket.object_timestamp,
                 }
             )
+
+            _LOGGER.debug("Objects to subscribe for:")
+            _LOGGER.debug(objects)
 
         # TODO throw better exceptions
         async with self.session.post(
