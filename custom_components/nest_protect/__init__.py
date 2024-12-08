@@ -27,10 +27,10 @@ from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import BucketType, Environment
 from .pynest.exceptions import (
     BadCredentialsException,
+    EmptyResponseException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
-    EmptyResponseException,
 )
 from .pynest.models import Bucket, FirstDataAPIResponse, TopazBucket, WhereBucketValue
 
