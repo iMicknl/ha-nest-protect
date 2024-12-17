@@ -85,7 +85,12 @@ class Bucket:
         # if self.type == BucketType.TOPAZ:
         #     self.value = TopazBucketValue(**self.value)
         if self.type == BucketType.WHERE:
-            self.value = WhereBucketValue(**self.value)
+            if isinstance(self.value, WhereBucketValue):
+                # It's already the correct type, no need to reinitialize
+                pass
+            else:
+                # Convert dictionary to WhereBucketValue instance
+                self.value = WhereBucketValue(**self.value)
 
 
 @dataclass
