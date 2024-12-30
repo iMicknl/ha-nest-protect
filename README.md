@@ -22,13 +22,13 @@ You can install this integration via [HACS](#hacs) or [manually](#manual).
 
 ### HACS
 
-Search for the Nest Protect integration and choose install, then Reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
+Search for the Nest Protect integration and choose install, then reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=nest_protect)
 
 ### Manual
 
-Copy the `custom_components/nest_protect` to your custom_components folder and Reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
+Copy the `custom_components/nest_protect` to your custom_components folder and reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=nest_protect)
 
