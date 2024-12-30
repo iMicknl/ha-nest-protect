@@ -15,7 +15,7 @@
         }
       },
       "account_link": {
-        "description": "Obtenha seu issue_token e cookies seguindo as instruções no [LEIA-ME](https://github.com/iMicknl/ha-nest-protect/tree/beta#retrieving-issue_token-and-cookies) de integração e cole-os abaixo.",
+        "description": "Obtenha seu issue_token e cookies seguindo as instruções no [LEIA-ME](https://github.com/iMicknl/ha-nest-protect/tree/#retrieving-issue_token-and-cookies) de integração e cole-os abaixo.",
         "data": {
           "issue_token": "issue_token",
           "cookies": "cookies"
