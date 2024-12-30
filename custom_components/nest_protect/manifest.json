@@ -14,5 +14,5 @@
     "iot_class": "cloud_polling",
     "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
     "requirements": [],
-    "version": "0.3.12"
+    "version": "0.4.0b9"
 }

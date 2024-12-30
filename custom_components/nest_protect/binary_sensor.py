@@ -1,4 +1,5 @@
 """Binary sensor platform for Nest Protect."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -38,121 +39,129 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="co_status",
         name="CO Status",
         device_class=BinarySensorDeviceClass.CO,
-        value_fn=lambda state: state == 3,
+        value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="smoke_status",
         name="Smoke Status",
         device_class=BinarySensorDeviceClass.SMOKE,
-        value_fn=lambda state: state == 3,
+        value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="heat_status",
         name="Heat Status",
         device_class=BinarySensorDeviceClass.HEAT,
-        value_fn=lambda state: state == 3,
+        value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="component_speaker_test_passed",
         name="Speaker Test",
-        value_fn=lambda state: not state,
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:speaker-wireless",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
         key="battery_health_state",
         name="Battery Health",
-        value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.BATTERY,
         entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state,
     ),
     NestProtectBinarySensorDescription(
-        key="component_wifi_test_passed",
+        key="is_online",
         name="Online",
-        value_fn=lambda state: state,
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda state: state,
     ),
     NestProtectBinarySensorDescription(
-        name="Smoke Test",
         key="component_smoke_test_passed",
-        value_fn=lambda state: not state,
+        name="Smoke Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:smoke",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="CO Test",
         key="component_co_test_passed",
-        value_fn=lambda state: not state,
+        name="CO Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:molecule-co",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="WiFi Test",
         key="component_wifi_test_passed",
-        value_fn=lambda state: not state,
+        name="WiFi Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:wifi",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="LED Test",
         key="component_led_test_passed",
-        value_fn=lambda state: not state,
+        name="LED Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:led-off",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="PIR Test",
         key="component_pir_test_passed",
-        value_fn=lambda state: not state,
+        name="PIR Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:run",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="Buzzer Test",
         key="component_buzzer_test_passed",
-        value_fn=lambda state: not state,
+        name="Buzzer Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:alarm-bell",
+        value_fn=lambda state: not state,
     ),
     # Disabled for now, since it seems like this state is not valid
     # NestProtectBinarySensorDescription(
-    #     name="Heat Test",
     #     key="component_heat_test_passed",
-    #     value_fn=lambda state: not state,
+    #     name="Heat Test",
     #     device_class=BinarySensorDeviceClass.PROBLEM,
     #     entity_category=EntityCategory.DIAGNOSTIC,
     #     icon="mdi:fire",
+    #     value_fn=lambda state: not state
     # ),
     NestProtectBinarySensorDescription(
-        name="Humidity Test",
         key="component_hum_test_passed",
-        value_fn=lambda state: not state,
+        name="Humidity Test",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:water-percent",
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="Occupancy",
+        key="removed_from_base",
+        name="Removed from Base",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:tray-remove",
+        value_fn=lambda state: state,
+    ),
+    NestProtectBinarySensorDescription(
         key="auto_away",
-        value_fn=lambda state: not state,
+        name="Occupancy",
         device_class=BinarySensorDeviceClass.OCCUPANCY,
         wired_only=True,
+        value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
-        name="Line Power",
         key="line_power_present",
-        value_fn=lambda state: state,
+        name="Line Power",
         device_class=BinarySensorDeviceClass.POWER,
         entity_category=EntityCategory.DIAGNOSTIC,
         wired_only=True,
+        value_fn=lambda state: state,
     ),
 ]
 
@@ -163,14 +172,13 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectBinarySensor] = []
 
-    SUPPORTED_KEYS = {
+    SUPPORTED_KEYS: dict[str, NestProtectBinarySensorDescription] = {
         description.key: description for description in BINARY_SENSOR_DESCRIPTIONS
     }
 
     for device in data.devices.values():
         for key in device.value:
             if description := SUPPORTED_KEYS.get(key):
-
                 # Not all entities are useful for battery powered Nest Protect devices
                 if description.wired_only and device.value["wired_or_battery"] != 0:
                     continue

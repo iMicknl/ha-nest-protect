@@ -1,9 +1,7 @@
 """Entity class for Nest Protect."""
+
 from __future__ import annotations
 
-from enum import unique
-
-from homeassistant.backports.enum import StrEnum
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -30,7 +28,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self.client = client
-        self.area = areas[self.bucket.value["where_id"]]
+        self.area = areas.get(self.bucket.value["where_id"])
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
@@ -41,8 +39,10 @@ class NestEntity(Entity):
         """Generate device name."""
         if label := self.bucket.value.get("description"):
             name = label
-        else:
+        elif self.area:
             name = self.area
+        else:
+            name = ""
 
         if self.bucket.object_key.startswith("topaz."):
             return f"Nest Protect ({name})"
@@ -65,9 +65,9 @@ class NestEntity(Entity):
                 manufacturer="Google",
                 model=self.bucket.value["model"],
                 sw_version=self.bucket.value["software_version"],
-                hw_version="Wired"
-                if self.bucket.value["wired_or_battery"] == 0
-                else "Battery",
+                hw_version=(
+                    "Wired" if self.bucket.value["wired_or_battery"] == 0 else "Battery"
+                ),
                 suggested_area=self.area,
                 configuration_url="https://home.nest.com/protect/"
                 + self.bucket.value["structure_id"],  # TODO change url based on device
@@ -99,6 +99,7 @@ class NestEntity(Entity):
     @callback
     def update_callback(self, bucket: Bucket):
         """Update the entities state."""
+
         self.bucket = bucket
         self.async_write_ha_state()
 
@@ -117,11 +118,3 @@ class NestDescriptiveEntity(NestEntity):
         super().__init__(bucket, description, areas, client)
         self._attr_name = f"{super().name} {self.entity_description.name}"
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
-
-
-# Used by state translations for sensor and select entities
-@unique
-class NestProtectDeviceClass(StrEnum):
-    """Device class for Nest Protect specific devices."""
-
-    NIGHT_LIGHT_BRIGHTNESS = "nest_protect__night_light_brightness"

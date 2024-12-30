@@ -1,25 +1,39 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "Account is already configured"
-        },
-        "error": {
-            "cannot_connect": "Failed to connect",
-            "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error"
-        },
-        "step": {
-            "user": {
-                "data": {
-                    "account_type": "Account Type"
-                }
-            },
-            "account_link": {
-                "description": "To link your Google account, [authorize your account]({url}).\n\nAfter authorization, copy-paste the provided Auth Token code below.",
-                "data": {
-                    "token": "Access Token"
-                }
-            }
+  "config": {
+    "abort": {
+      "already_configured": "Account is already configured"
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "step": {
+      "user": {
+        "description": "Select your Account Type. Most users will need to select Google Account. Field Test is only available for selected testers in the Google Field Test program.",
+        "data": {
+          "account_type": "Account Type"
         }
+      },
+      "account_link": {
+        "description": "Unfortunately, Google does not provide an official API for this integration. To get it working, you will need to manually retrieve your issue_token and cookies by following the instructions in the integration README (https://github.com/iMicknl/ha-nest-protect/tree/beta#retrieving-issue_token-and-cookies). Please paste them below.",
+        "data": {
+          "issue_token": "Issue_token",
+          "cookies": "Cookies"
+        }
+      }
     }
+  },
+  "entity": {
+    "select": {
+      "night_light_brightness": {
+        "name": "Night Light Brightness",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      }
+    }
+  }
 }
