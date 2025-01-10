@@ -2,5 +2,5 @@
 
 pytest
 pytest-socket
-pytest-homeassistant-custom-component==0.13.191
+pytest-homeassistant-custom-component==0.13.203
 pytest-timeout
