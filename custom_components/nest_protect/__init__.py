@@ -245,7 +245,7 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
 
     except BadCredentialsException as exception:
-        LOGGER.debug("Need to re-authenticate the integration")
+        LOGGER.debug("Bad credentials detected. Please re-authenticate the Nest Protect integration.")
         raise ConfigEntryAuthFailed from exception
 
     except NestServiceException:
