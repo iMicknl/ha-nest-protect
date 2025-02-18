@@ -190,8 +190,8 @@ async def _async_subscribe_for_data(
             if key.startswith("where."):
                 bucket_value = Bucket(**bucket).value
 
-                for area in bucket_value["wheres"]:
-                    entry_data.areas[area["where_id"]] = area["name"]
+                for area in bucket_value.wheres:
+                    entry_data.areas[area.where_id] = area.name
 
             # Temperature Sensors
             if key.startswith("kryptonite."):
