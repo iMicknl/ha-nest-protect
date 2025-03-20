@@ -15,7 +15,7 @@
         }
       },
       "account_link": {
-        "description": "Bitte holen Sie sich Ihr Issue_Token und Ihre Cookies gemäß den Anweisungen in der [Integrations-README](https://github.com/iMicknl/ha-nest-protect/tree/#retrieving-issue_token-and-cookies) und fügen Sie sie unten ein.",
+        "description": "Bitte holen Sie sich Ihr Issue_Token und Ihre Cookies gemäß den Anweisungen in der [Integrations-README](https://github.com/iMicknl/ha-nest-protect/#retrieving-issue_token-and-cookies) und fügen Sie sie unten ein.",
         "data": {
           "issue_token": "issue_token",
           "cookies": "cookies"
