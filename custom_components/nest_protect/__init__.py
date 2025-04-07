@@ -244,6 +244,12 @@ async def _async_subscribe_for_data(
         await entry_data.client.authenticate(entry_data.client.auth.access_token)
         _register_subscribe_task(hass, entry, data)
 
+    except BadCredentialsException as exception:
+        LOGGER.debug(
+            "Bad credentials detected. Please re-authenticate the Nest Protect integration."
+        )
+        raise ConfigEntryAuthFailed from exception
+
     except NestServiceException:
         LOGGER.debug("Subscriber: Nest Service error. Updates paused for 2 minutes.")
 
