@@ -275,7 +275,7 @@ class NestClient:
         updated_buckets: dict,
     ) -> Any:
         """Subscribe for data."""
-        timeout = 3600 * 24
+        timeout = 600
 
         objects = []
         for bucket in updated_buckets:
