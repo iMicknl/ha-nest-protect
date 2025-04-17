@@ -22,13 +22,15 @@ You can install this integration via [HACS](#hacs) or [manually](#manual).
 
 ### HACS
 
-Search for the Nest Protect integration and choose install, then reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
+Search for the Nest Protect integration and choose install, then reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
+
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=nest_protect)
 
 ### Manual
 
-Copy the `custom_components/nest_protect` to your custom_components folder and reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
+Copy the `custom_components/nest_protect` to your custom_components folder and reboot Home Assistant. Configure the Nest Protect integration either via the integrations page or press the blue button below.
+
 
 [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=nest_protect)
 
@@ -38,7 +40,7 @@ Copy the `custom_components/nest_protect` to your custom_components folder and r
 
 The values of "issue_token" and "cookies" are specific to your Google Account. To get them, follow these steps (only needs to be done once, as long as you stay logged into your Google Account).
 
-1. Open a Chrome/Edge browser tab in Incognito Mode (or clear your cookies).
+1. Open a Chrome/Edge browser tab in Incognito Mode.
 1. Allow third-party cookies in your browser settings to prevent the Nest website from entering a redirect loop. Follow these steps:
 
    - **In Chrome**: Go to Settings, select Privacy and Security -> Third-party cookies. Enable "Allow third-party cookies."
