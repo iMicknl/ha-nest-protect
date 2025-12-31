@@ -136,18 +136,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Cancel subscription task before unloading
-    if entry.entry_id in hass.data.get(DOMAIN, {}):
-        entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-        if entry_data.subscription_task:
-            entry_data.subscription_task.cancel()
-            try:
-                await entry_data.subscription_task
-            except asyncio.CancelledError:
-                pass
-
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
+        # Cancel subscription task only after successful platform unload
+        if entry.entry_id in hass.data.get(DOMAIN, {}):
+            entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+            if entry_data.subscription_task:
+                entry_data.subscription_task.cancel()
+                try:
+                    await entry_data.subscription_task
+                except asyncio.CancelledError:
+                    # Task cancellation is expected during unload; ignore.
+                    pass
+            hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
 
@@ -177,6 +177,9 @@ async def _async_subscribe_for_data(
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
     try:
+        # Check for cancellation early to avoid creating orphaned tasks
+        # if the entry is being unloaded
+        await asyncio.sleep(0)
         # TODO move refresh token logic to client
         if (
             not entry_data.client.nest_session
@@ -289,6 +292,11 @@ async def _async_subscribe_for_data(
         # Wait a minute before retrying
         await asyncio.sleep(60)
         _register_subscribe_task(hass, entry, data)
+
+    except asyncio.CancelledError:
+        # Task is being cancelled during unload; do not register a new task
+        LOGGER.debug("Subscriber: task cancelled, stopping subscription.")
+        raise
 
     except Exception:  # pylint: disable=broad-except
         # Wait 5 minutes before retrying

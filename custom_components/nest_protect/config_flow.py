@@ -35,17 +35,35 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
-        """Validate issue token format."""
-        return (
-            issue_token.startswith("https://accounts.google.com/o/oauth2/iframerpc")
-            and "action=issueToken" in issue_token
-        )
+        """Validate issue token format.
+
+        The issue token URL should be from Google OAuth iframerpc endpoint
+        with the issueToken action parameter.
+        """
+        if not issue_token.startswith("https://accounts.google.com/o/oauth2/iframerpc"):
+            return False
+        if "action=issueToken" not in issue_token:
+            return False
+        # Verify it looks like a proper URL with query parameters
+        if "?" not in issue_token:
+            return False
+        return True
 
     @staticmethod
     def _validate_cookies(cookies: str) -> bool:
-        """Validate cookies format."""
-        # Cookies should be substantial and contain typical Google auth markers
-        return len(cookies) > 100
+        """Validate cookies format.
+
+        Cookies should be substantial, contain key-value pairs,
+        and include typical Google auth cookie markers.
+        """
+        if len(cookies) <= 100:
+            return False
+        # Require at least one key=value pair
+        if "=" not in cookies:
+            return False
+        # Common Google auth cookie names expected in exported cookie headers
+        google_auth_markers = ("APISID=", "SAPISID=", "HSID=", "SSID=", "SID=")
+        return any(marker in cookies for marker in google_auth_markers)
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> list:
         """Validate user credentials."""
@@ -113,6 +131,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
             issue_token = user_input.get(CONF_ISSUE_TOKEN, "").strip()
             cookies = user_input.get(CONF_COOKIES, "").strip()
+            # Store stripped values back so downstream validation and API calls
+            # use the normalized credentials
+            user_input[CONF_ISSUE_TOKEN] = issue_token
+            user_input[CONF_COOKIES] = cookies
 
             # Validate input format before making API calls
             if not self._validate_issue_token(issue_token):
@@ -125,8 +147,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         user_input
                     )
-                    user_input[CONF_ISSUE_TOKEN] = issue_token
-                    user_input[CONF_COOKIES] = cookies
                 except (TimeoutError, ClientError):
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
