@@ -42,6 +42,7 @@ class HomeAssistantNestProtectData:
     devices: dict[str, Bucket]
     areas: list[str, str]
     client: NestClient
+    subscription_task: asyncio.Task | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -116,23 +117,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
+    entry_data = HomeAssistantNestProtectData(
         devices=devices,
         areas=areas,
         client=client,
     )
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Subscribe for real-time updates
-    # TODO cancel when closing HA / unloading entry
-    _register_subscribe_task(hass, entry, data)
+    entry_data.subscription_task = asyncio.create_task(
+        _async_subscribe_for_data(hass, entry, data)
+    )
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Cancel subscription task before unloading
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+        if entry_data.subscription_task:
+            entry_data.subscription_task.cancel()
+            try:
+                await entry_data.subscription_task
+            except asyncio.CancelledError:
+                pass
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id)
 
@@ -140,15 +153,27 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 def _register_subscribe_task(
-    hass: HomeAssistant, entry: ConfigEntry, data: _async_subscribe_for_data
-):
-    return asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
+    hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
+) -> asyncio.Task | None:
+    """Create a new subscription task and update the reference."""
+    # Check if entry is still loaded before creating new task
+    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+        return None
+
+    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    task = asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
+    entry_data.subscription_task = task
+    return task
 
 
 async def _async_subscribe_for_data(
     hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
 ):
     """Subscribe for new data."""
+    # Check if entry is still loaded
+    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+        return
+
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
     try:
