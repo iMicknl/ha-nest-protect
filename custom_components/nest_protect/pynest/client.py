@@ -251,7 +251,7 @@ class NestClient:
         ) as response:
             result = await response.json()
 
-            if result.get("2fa_enabled"):
+            if "2fa_enabled" in result:
                 result["_2fa_enabled"] = result.pop("2fa_enabled")
 
             if result.get("error"):
