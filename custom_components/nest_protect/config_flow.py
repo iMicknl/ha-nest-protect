@@ -128,9 +128,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         )
                     )
 
-                    return self.async_create_entry(
-                        title=f"Nest Protect ({email})", data=user_input
-                    )
+                    return self.async_abort(reason="reauth_successful")
 
                 self._abort_if_unique_id_configured()
 

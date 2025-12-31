@@ -49,11 +49,11 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     LOGGER.debug("Migrating from version %s", config_entry.version)
 
     if config_entry.version == 1:
-        entry_data = {**config_entry.data}
-        entry_data[CONF_ACCOUNT_TYPE] = Environment.PRODUCTION
-
-        config_entry.data = {**entry_data}
-        config_entry.version = 2
+        hass.config_entries.async_update_entry(
+            config_entry,
+            data={**config_entry.data, CONF_ACCOUNT_TYPE: Environment.PRODUCTION},
+            version=2,
+        )
 
     LOGGER.debug("Migration to version %s successful", config_entry.version)
 
