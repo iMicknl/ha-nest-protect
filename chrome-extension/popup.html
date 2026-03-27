@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 500px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      color: #333;
+      padding: 16px;
+      background: #fafafa;
+    }
+
+    h1 {
+      font-size: 16px;
+      margin-bottom: 4px;
+      color: #1a1a1a;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 16px;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status-bar.idle {
+      background: #f0f0f0;
+      color: #666;
+    }
+
+    .status-bar.listening {
+      background: #fff3e0;
+      color: #e65100;
+    }
+
+    .status-bar.complete {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .idle .dot { background: #bbb; }
+    .listening .dot { background: #ff9800; animation: pulse 1.5s infinite; }
+    .complete .dot { background: #4caf50; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: #1a73e8;
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: #1557b0;
+    }
+
+    .btn-secondary {
+      background: #e8e8e8;
+      color: #333;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #d0d0d0;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .field-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #555;
+    }
+
+    .copy-btn {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #e8e8e8;
+      color: #555;
+      border: none;
+      cursor: pointer;
+    }
+
+    .copy-btn:hover {
+      background: #d0d0d0;
+    }
+
+    .copy-btn.copied {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-family: "SF Mono", Monaco, "Cascadia Code", monospace;
+      font-size: 11px;
+      resize: vertical;
+      background: white;
+      color: #333;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #1a73e8;
+      box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.15);
+    }
+
+    .placeholder {
+      color: #bbb;
+      font-style: italic;
+    }
+
+    .instructions {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #f5f5f5;
+      border-radius: 8px;
+      font-size: 11px;
+      color: #666;
+      line-height: 1.5;
+    }
+
+    .instructions ol {
+      padding-left: 16px;
+    }
+
+    .instructions li {
+      margin-bottom: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Nest Token Extractor</h1>
+  <p class="subtitle">For Home Assistant Nest Protect integration</p>
+
+  <div id="statusBar" class="status-bar idle">
+    <span class="dot"></span>
+    <span id="statusText">Ready — click Start to begin</span>
+  </div>
+
+  <div class="actions">
+    <button id="startBtn" class="btn-primary">Start Capture</button>
+    <button id="stopBtn" class="btn-secondary" disabled>Stop</button>
+    <button id="resetBtn" class="btn-secondary">Reset</button>
+  </div>
+
+  <div class="field">
+    <div class="field-header">
+      <label>issue_token</label>
+      <button class="copy-btn" data-target="issueTokenField">Copy</button>
+    </div>
+    <textarea id="issueTokenField" rows="3" readonly placeholder="Will be captured automatically..."></textarea>
+  </div>
+
+  <div class="field">
+    <div class="field-header">
+      <label>cookies</label>
+      <button class="copy-btn" data-target="cookiesField">Copy</button>
+    </div>
+    <textarea id="cookiesField" rows="4" readonly placeholder="Will be captured automatically..."></textarea>
+  </div>
+
+  <div class="instructions">
+    <strong>How it works:</strong>
+    <ol>
+      <li>Click <b>Start Capture</b> — opens home.nest.com in a new tab</li>
+      <li>Click <b>Sign in with Google</b> and log into your account</li>
+      <li>Return here — values will be captured automatically</li>
+      <li>Copy both values into your Home Assistant config</li>
+    </ol>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
