@@ -57,6 +57,19 @@ The values of "issue_token" and "cookies" are specific to your Google Account. T
 1. In the **Headers** tab, under **Request Headers**, copy the entire cookie (include the whole string which is several lines long and has many field/value pairs - do not include the cookie: name). This is your _'cookies'_ in the configuration form.
 1. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
 
+### Alternative: Chrome Extension
+
+Instead of manually inspecting network requests, you can use the included Chrome extension in the [`chrome-extension/`](chrome-extension/) folder to capture both values automatically.
+
+1. Open `chrome://extensions/` in Chrome and enable **Developer mode** (top-right toggle).
+2. Click **Load unpacked** and select the `chrome-extension` folder from this repository.
+3. Click the extension icon in your toolbar and press **Start Capture**.
+4. A new tab will open to `home.nest.com` — click **Sign in with Google** and log into your account.
+5. Return to the extension popup — both `issue_token` and `cookies` will be captured automatically.
+6. Use the **Copy** buttons to paste the values into your Home Assistant configuration.
+
+> **Note:** As with the manual method, do not log out of home.nest.com after capturing your credentials.
+
 ## Advanced
 
 Feel free to [create an issue on GitHub](https://github.com/iMicknl/ha-nest-protect/issues/new/choose) if you find an issue or if you have a suggestion. It is always helpful to download the diagnostics information and to include debug logging.
