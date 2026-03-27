@@ -10,4 +10,6 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - uses: actions/checkout@v6
+      - name: Remove non-integration manifest files
+        run: rm -rf chrome-extension
       - uses: home-assistant/actions/hassfest@master
