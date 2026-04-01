@@ -6,6 +6,13 @@ let capturedData = {
   tabId: null
 };
 
+// Google session/auth cookie names that provide long-lived authentication.
+// These are the first-party cookies that Chrome won't send in cross-origin
+// request headers but which the Nest API needs for durable sessions.
+const FIRST_PARTY_AUTH_COOKIES = new Set([
+  "SID", "HSID", "SSID", "APISID", "SAPISID",
+]);
+
 // Start listening for network requests
 function startListening(tabId) {
   capturedData = {
@@ -15,19 +22,20 @@ function startListening(tabId) {
     tabId: tabId
   };
 
-  // Listen for iframerpc requests to capture the issue_token (full request URL)
+  // Listen for iframerpc requests — this fires after sign-in is complete.
+  // We capture the issue_token URL from onBeforeRequest and the cookies
+  // Chrome actually sends from onSendHeaders (proven to work for auth).
   if (!chrome.webRequest.onBeforeRequest.hasListener(captureIssueToken)) {
     chrome.webRequest.onBeforeRequest.addListener(
       captureIssueToken,
-      { urls: ["https://accounts.google.com/*"], types: ["xmlhttprequest", "sub_frame", "main_frame"] }
+      { urls: ["https://accounts.google.com/o/oauth2/iframerpc*"], types: ["xmlhttprequest", "sub_frame", "main_frame"] }
     );
   }
 
-  // Listen for oauth2/iframe requests to capture cookies from request headers
-  if (!chrome.webRequest.onSendHeaders.hasListener(captureCookies)) {
+  if (!chrome.webRequest.onSendHeaders.hasListener(captureRequestCookies)) {
     chrome.webRequest.onSendHeaders.addListener(
-      captureCookies,
-      { urls: ["https://accounts.google.com/*"], types: ["xmlhttprequest", "sub_frame", "main_frame"] },
+      captureRequestCookies,
+      { urls: ["https://accounts.google.com/o/oauth2/iframerpc*"], types: ["xmlhttprequest", "sub_frame", "main_frame"] },
       ["requestHeaders", "extraHeaders"]
     );
   }
@@ -38,30 +46,58 @@ function stopListening() {
   if (chrome.webRequest.onBeforeRequest.hasListener(captureIssueToken)) {
     chrome.webRequest.onBeforeRequest.removeListener(captureIssueToken);
   }
-  if (chrome.webRequest.onSendHeaders.hasListener(captureCookies)) {
-    chrome.webRequest.onSendHeaders.removeListener(captureCookies);
+  if (chrome.webRequest.onSendHeaders.hasListener(captureRequestCookies)) {
+    chrome.webRequest.onSendHeaders.removeListener(captureRequestCookies);
   }
 }
 
 function captureIssueToken(details) {
-  // Look for the iframerpc call that contains the issue token
-  if (details.url.includes("iframerpc")) {
+  if (details.url.includes("action=issueToken")) {
     capturedData.issueToken = details.url;
     checkComplete();
   }
 }
 
-function captureCookies(details) {
-  // Look for oauth2/iframe requests and keep the last one's cookies
-  if (details.url.includes("oauth2/iframe")) {
-    const cookieHeader = details.requestHeaders.find(
-      h => h.name.toLowerCase() === "cookie"
-    );
-    if (cookieHeader) {
-      capturedData.cookies = cookieHeader.value;
+function captureRequestCookies(details) {
+  // Capture the cookies Chrome actually sends with the iframerpc request.
+  // In a cross-origin context these are the __Secure-3P* cookies — enough
+  // for initial auth but short-lived. We then supplement with long-lived
+  // first-party cookies from the chrome.cookies API.
+  const cookieHeader = details.requestHeaders.find(
+    h => h.name.toLowerCase() === "cookie"
+  );
+  if (!cookieHeader) return;
+
+  const requestCookies = cookieHeader.value;
+
+  // Parse the request cookies into a map
+  const cookieMap = new Map();
+  requestCookies.split("; ").forEach(pair => {
+    const eqIdx = pair.indexOf("=");
+    if (eqIdx > 0) {
+      cookieMap.set(pair.substring(0, eqIdx), pair.substring(eqIdx + 1));
     }
+  });
+
+  // Supplement with first-party auth cookies from the cookies API.
+  // These (SID, HSID, SSID, APISID, SAPISID) are long-lived and survive
+  // restarts, but Chrome doesn't send them in cross-origin headers.
+  chrome.cookies.getAll({ url: "https://accounts.google.com" }, (cookies) => {
+    if (cookies) {
+      for (const c of cookies) {
+        if (FIRST_PARTY_AUTH_COOKIES.has(c.name) && !cookieMap.has(c.name)) {
+          cookieMap.set(c.name, c.value);
+        }
+      }
+    }
+
+    // Build final cookie string
+    capturedData.cookies = Array.from(cookieMap.entries())
+      .map(([name, value]) => `${name}=${value}`)
+      .join("; ");
+
     checkComplete();
-  }
+  });
 }
 
 function checkComplete() {

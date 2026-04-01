@@ -5,7 +5,8 @@
   "description": "Extracts issue_token and cookies from home.nest.com for Home Assistant Nest Protect integration.",
   "permissions": [
     "webRequest",
-    "tabs"
+    "tabs",
+    "cookies"
   ],
   "host_permissions": [
     "https://home.nest.com/*",
