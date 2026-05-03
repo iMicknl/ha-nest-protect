@@ -1,0 +1,118 @@
+[project]
+name = "ha-nest-protect"
+version = "0.4.2"
+requires-python = ">=3.14.2"
+
+[dependency-groups]
+dev = [
+    "homeassistant>=2026.4.4",
+    "prek>=0.2.27",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23.8",
+    "pytest-homeassistant-custom-component>=0.13.325",
+    "pytest-socket>=0.7",
+    "pytest-timeout>=2.3",
+    "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+timeout = 10
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    "W",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # ruff
+    "RUF",
+    # flake8-bandit (security)
+    "S",
+    # flake8-print
+    "T",
+    # flake8-comprehensions
+    "C4",
+    # pep8-naming
+    "N",
+    # flake8-pytest-style
+    "PT",
+    # flake8-logging
+    "LOG",
+    # flake8-async
+    "ASYNC",
+    # flynt
+    "FLY",
+    # flake8-implicit-str-concat
+    "ISC",
+    # pygrep-hooks
+    "PGH",
+    # flake8-self
+    "SLF",
+    # flake8-slots
+    "SLOT",
+    # tidy imports
+    "TID",
+    # import conventions
+    "ICN",
+    # flake8-logging-format
+    "G",
+    # blind exception
+    "BLE",
+    # tryceratops
+    "TRY",
+    # flake8-quotes
+    "Q",
+    # refurb
+    "FURB",
+    # perflint
+    "PERF",
+    # flake8-raise
+    "RSE",
+    # flake8-return
+    "RET",
+    # flake8-pie
+    "PIE",
+    # eradicate
+    "ERA",
+    # flake8-pathlib
+    "PTH",
+    # flake8-builtins
+    "A",
+    # pylint
+    "PL",
+]
+ignore = [
+    "E501",    # Line too long (formatter handles this)
+    "TRY003",  # Long exception messages
+    "PLR0913", # Too many arguments
+    "PLC0415", # Import not at top level (HA pattern)
+    "PLR0911", # Too many return statements
+    "PERF401", # Use list.extend (less readable with conditional appends)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "SLF001", "PLR2004"]
+"custom_components/nest_protect/__init__.py" = ["BLE001", "PLR0912", "PLR0915", "SIM102"]
+"custom_components/nest_protect/sensor.py" = ["ERA001", "PLR2004"]
+"custom_components/nest_protect/binary_sensor.py" = ["ERA001"]
+"custom_components/nest_protect/switch.py" = ["ERA001"]
+"custom_components/nest_protect/const.py" = ["S105"]
+"custom_components/nest_protect/config_flow.py" = ["BLE001", "PLR2004"]
+"custom_components/nest_protect/pynest/models.py" = ["N815", "ERA001"]
+"custom_components/nest_protect/pynest/client.py" = ["ERA001", "TRY002", "PLR2004", "S311"]
+"custom_components/nest_protect/pynest/const.py" = ["S105"]
+"custom_components/nest_protect/pynest/exceptions.py" = ["N818"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.nest_protect"]

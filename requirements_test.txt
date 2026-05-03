@@ -1,6 +1,0 @@
--r requirements_dev.txt
-
-pytest
-pytest-socket
-pytest-homeassistant-custom-component==0.13.325
-pytest-timeout
