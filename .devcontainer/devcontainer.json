@@ -21,7 +21,7 @@
 		}
 	},
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "sudo apt-get update && sudo apt-get install -y libturbojpeg0 libpcap-dev && pip install -r requirements_dev.txt && pre-commit install && pre-commit install-hooks",
+	"postCreateCommand": "sudo apt-get update && sudo apt-get install -y libturbojpeg0 libpcap-dev && uv sync --dev && uv run prek install",
 	"containerEnv": {
 		"DEVCONTAINER": "1"
 	},
@@ -29,19 +29,30 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-python.vscode-pylance",
 				"ms-python.python",
+				"ms-python.vscode-pylance",
+				"charliermarsh.ruff",
 				"redhat.vscode-yaml",
 				"esbenp.prettier-vscode",
 				"GitHub.vscode-pull-request-github",
-				"GitHub.copilot"
+				"GitHub.copilot",
+				"github.vscode-github-actions"
 			],
 			"settings": {
 				"python.pythonPath": "/usr/local/bin/python",
-				"editor.formatOnPaste": false,
 				"editor.formatOnSave": true,
-				"editor.formatOnType": true,
-				"files.trimTrailingWhitespace": true
+				"files.trimTrailingWhitespace": true,
+				"[python]": {
+					"editor.defaultFormatter": "charliermarsh.ruff",
+					"editor.codeActionsOnSave": {
+						"source.organizeImports.ruff": "explicit"
+					}
+				},
+				"python.testing.pytestArgs": [
+					"tests"
+				],
+				"python.testing.unittestEnabled": false,
+				"python.testing.pytestEnabled": true
 			}
 		}
 	}
