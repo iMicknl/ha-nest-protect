@@ -24,6 +24,12 @@ from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import Environment
 from .pynest.exceptions import BadCredentialsException
 
+DESCRIPTION_PLACEHOLDERS = {
+    "nest_url": "https://home.nest.com",
+    "issue_token_prefix": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken",
+    "accounts_url": "https://accounts.google.com/",
+}
+
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Nest Protect."""
@@ -186,6 +192,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_COOKIES): str,
                 }
             ),
+            description_placeholders=DESCRIPTION_PLACEHOLDERS,
             errors=errors,
             last_step=True,
         )
