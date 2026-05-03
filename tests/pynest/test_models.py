@@ -11,7 +11,7 @@ from custom_components.nest_protect.pynest.models import NestResponse
 def nest_response():
     """Create a sample NestResponse."""
     return NestResponse(
-        access_token="test-token",  # noqa: S106
+        access_token="test-token",
         email="test@example.com",
         expires_in="Sat, 03-May-2026 20:00:00 GMT",
         userid="user123",
@@ -71,7 +71,7 @@ def test_nest_response_is_expired_with_buffer():
     expires_str = future.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     response = NestResponse(
-        access_token="t",  # noqa: S106
+        access_token="t",
         email="e",
         expires_in=expires_str,
         userid="u",
@@ -94,7 +94,7 @@ def test_nest_response_is_expired_without_buffer():
     expires_str = past.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     response = NestResponse(
-        access_token="t",  # noqa: S106
+        access_token="t",
         email="e",
         expires_in=expires_str,
         userid="u",
