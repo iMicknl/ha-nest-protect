@@ -82,32 +82,76 @@ The ONLY challenge is obtaining that initial Google access_token with `nest-acco
 
 ## Auth Method Comparison
 
-| Method | Can Get New Tokens? | Longevity | Automation | Notes |
-|--------|--------------------:|-----------|------------|-------|
-| Cookie + issueToken (current) | Yes | Hours-days | Manual | Depends on Google session cookies |
-| iOS refresh_token (legacy) | No (OOB dead) | Indefinite | Full | Only existing tokens work |
-| Web client code flow | Yes | Indefinite (refresh_token) | Semi | Needs client_secret |
-| GIS implicit flow (loopback) | Yes | 1 hour | Semi | Access token only, no refresh |
-| PKCE with custom client | Unknown | Indefinite | Full | Requires Google Cloud project |
+| Method | Can Get New Tokens? | Longevity | Automation | HA Compatible | Notes |
+|--------|--------------------:|-----------|------------|:---:|-------|
+| Cookie + issueToken (current) | Yes | Hours-days | Manual | Yes | Depends on Google session cookies |
+| iOS refresh_token (legacy) | No (OOB dead) | Indefinite | Full | Yes | Only existing tokens work |
+| Web client code flow | Yes | Indefinite (refresh_token) | Semi | No | Needs client_secret (server-side) |
+| GIS implicit flow (loopback) | No | N/A | N/A | No | **REJECTED**: origin must be registered |
+| Reverse proxy of home.nest.com | No | N/A | N/A | No | **REJECTED**: origin check still fails |
+| Token extraction from home.nest.com | Yes | 1 hour | Semi | **Yes** | **RECOMMENDED** - proven working |
+| PKCE with custom client | No | N/A | N/A | No | nest-account scope is first-party only |
 
-## Recommended Approach: Local OAuth Server
+## Approaches Tested and Results
 
-Since the web client's implicit/GIS flow returns access tokens directly (no client_secret needed), we can:
+### REJECTED: Local OAuth Page (gapi.auth2)
 
-1. Start a local HTTP server on `http://localhost:<port>`
-2. Open browser to Google OAuth with the web client_id + `response_type=token`
-3. Receive the access_token via fragment redirect
-4. Use `issue_jwt` → `/session` flow
+Attempted: Serve a local HTML page using Google's `gapi.auth2.authorize()` with the Nest web client_id.
 
-**Problem**: The web client only has `https://home.nest.com/login/callback` as registered redirect_uri. We cannot add localhost.
+**Result**: `idpiframe_initialization_failed` - "Not a valid origin for the client: http://localhost:9876 has not been registered for client ID 733249279899-..."
 
-**Alternative**: Use the GIS JavaScript library approach:
-1. Serve a minimal HTML page locally
-2. Use Google's `accounts.google.com/gsi/client` library  
-3. Request tokens with `prompt: 'consent'` and `access_type: 'offline'`
-4. The GIS library handles the OAuth popup/redirect internally
+Google OAuth requires the JavaScript origin to be registered in the client's console project. The Nest client only allows `https://home.nest.com`. There is no way to add localhost or any other origin.
 
-**Best option found**: Intercept the existing home.nest.com callback flow by navigating to the OAuth URL and capturing the code/token from the redirect. The PoC validates this approach.
+### REJECTED: Reverse Proxy (AuthCaptureProxy pattern)
+
+Attempted: Proxy `home.nest.com` through a local server and intercept the `issue_jwt` call.
+
+**Result**: Even though we successfully proxied the page content and rewrote URLs, the OAuth iframe still checks the browser's actual origin (`http://localhost:9876`), not the proxied target. Google rejects the OAuth initialization with the same origin error.
+
+### REJECTED: PKCE with Custom OAuth Client
+
+The `nest-account` scope is restricted to Google's own first-party applications. A custom Google Cloud project cannot request this scope, so creating our own OAuth client is not possible.
+
+## Recommended Approach: Token Extraction
+
+**Proven working** - validated end-to-end on 2026-05-03.
+
+The approach:
+1. User opens `home.nest.com` and signs in (or is already signed in)
+2. The authenticated page has `gapi.auth2.getAuthInstance()` with a valid access token
+3. A bookmarklet/console script extracts the token: `gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse(true).access_token`
+4. Token is sent to HA's local callback via redirect/fetch
+5. HA validates: `access_token` → `issue_jwt` → `/session`
+
+For Home Assistant integration:
+- Config flow uses `async_external_step()` to open an instruction page
+- Instruction page tells user to log in to `home.nest.com`
+- After login, user uses bookmarklet or console paste to send token
+- Config flow receives token, validates, stores credentials
+- Token refresh uses `issue_jwt` (token valid 1 hour, Nest session longer)
+
+### Token Refresh Strategy
+
+After initial authentication:
+1. Store the Google access token (1 hour validity)
+2. Use `issue_jwt` to get a JWT (also ~1 hour)
+3. Use `/session` to get transport_url + session token
+4. The Nest session itself lasts longer than the access token
+5. For re-auth: user must repeat the extraction process
+
+### Improving UX: Auto-extraction via Service Worker or Extension
+
+For better UX, future work could explore:
+- A companion browser extension that auto-extracts tokens
+- A PWA/Service Worker on `home.nest.com` (not feasible due to same-origin)
+- The `issueToken` iframe approach (current method) as a fallback
+
+## Files
+
+- `poc_auth.py` - Original PoC testing all auth approaches (CDP-based)
+- `poc_oauth_page.py` - REJECTED: Local OAuth page approach (origin check fails)
+- `poc_proxy_auth.py` - REJECTED: Reverse proxy approach (origin check fails)
+- `poc_token_extraction.py` - **RECOMMENDED**: Token extraction from home.nest.com (proven working)
 
 ## Files
 
