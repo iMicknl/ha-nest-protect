@@ -47,20 +47,65 @@ class NestResponse:
     user: str
     is_staff: bool
     error: dict | None = None
-    urls: NestUrls = field(default_factory=NestUrls)
-    limits: NestLimits = field(default_factory=NestLimits)
+    urls: NestUrls | None = None
+    limits: NestLimits | None = None
 
     _2fa_state: str = None
     _2fa_enabled: bool = None
     _2fa_state_changed: str = None
 
-    def is_expired(self):
-        """Check if session is expired."""
-        # Tue, 01-Mar-2022 23:15:55 GMT
+    def is_expired(self, buffer_seconds: int = 0):
+        """Check if session is expired, with optional early-expiry buffer."""
         expiry_date = datetime.datetime.strptime(
             self.expires_in, "%a, %d-%b-%Y %H:%M:%S %Z"
         )
-        return expiry_date <= datetime.datetime.now()
+        return expiry_date <= datetime.datetime.now() + datetime.timedelta(
+            seconds=buffer_seconds
+        )
+
+    def to_dict(self) -> dict:
+        """Serialize session fields needed for persistence."""
+        return {
+            "access_token": self.access_token,
+            "email": self.email,
+            "expires_in": self.expires_in,
+            "userid": self.userid,
+            "is_superuser": self.is_superuser,
+            "language": self.language,
+            "weave": self.weave,
+            "user": self.user,
+            "is_staff": self.is_staff,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> NestResponse | None:
+        """Deserialize from persisted dict. Returns None if data is invalid."""
+        if not data:
+            return None
+        required = (
+            "access_token",
+            "email",
+            "expires_in",
+            "userid",
+            "is_superuser",
+            "language",
+            "weave",
+            "user",
+            "is_staff",
+        )
+        if not all(key in data for key in required):
+            return None
+        return cls(
+            access_token=data["access_token"],
+            email=data["email"],
+            expires_in=data["expires_in"],
+            userid=data["userid"],
+            is_superuser=data["is_superuser"],
+            language=data["language"],
+            weave=data["weave"],
+            user=data["user"],
+            is_staff=data["is_staff"],
+        )
 
 
 @dataclass
