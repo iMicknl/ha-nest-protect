@@ -18,8 +18,10 @@ YieldFixture = Generator[T]
 
 
 REFRESH_TOKEN = "some-refresh-token"
-ISSUE_TOKEN = "some-issue-token"
-COOKIES = "some-cookies"
+ISSUE_TOKEN = (
+    "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&fake=true"
+)
+COOKIES = "SID=test-sid; HSID=test-hsid; APISID=test-apisid; SAPISID=test-sapisid; SSID=test-ssid"
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +33,10 @@ def auto_enable_custom_integrations(enable_custom_integrations) -> None:
 @pytest.fixture
 async def config_entry_with_refresh_token() -> MockConfigEntry:
     """Fixture to initialize a MockConfigEntry."""
-    return MockConfigEntry(domain=DOMAIN, data={"refresh_token": REFRESH_TOKEN})
+    return MockConfigEntry(
+        domain=DOMAIN,
+        data={"refresh_token": REFRESH_TOKEN, "account_type": "production"},
+    )
 
 
 @pytest.fixture
@@ -58,7 +63,12 @@ async def component_setup_with_refresh_token(
 async def config_entry_with_cookies() -> MockConfigEntry:
     """Fixture to initialize a MockConfigEntry."""
     return MockConfigEntry(
-        domain=DOMAIN, data={"issue_token": ISSUE_TOKEN, "cookies": COOKIES}
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
     )
 
 
