@@ -5,6 +5,11 @@
       "resolved": "ghcr.io/devcontainers-extra/features/apt-packages@sha256:55c54412112da81b9381e470cdbbe55278564950d1ff536ce925b1e8e096babd",
       "integrity": "sha256:55c54412112da81b9381e470cdbbe55278564950d1ff536ce925b1e8e096babd"
     },
+    "ghcr.io/devcontainers-extra/features/gh-release:1": {
+      "version": "1.0.26",
+      "resolved": "ghcr.io/devcontainers-extra/features/gh-release@sha256:09be4373c696a6a457dad170233c76934ae250edfda0e126f8617fcb41bdd418",
+      "integrity": "sha256:09be4373c696a6a457dad170233c76934ae250edfda0e126f8617fcb41bdd418"
+    },
     "ghcr.io/devcontainers/features/github-cli:1": {
       "version": "1.1.0",
       "resolved": "ghcr.io/devcontainers/features/github-cli@sha256:d22f50b70ed75339b4eed1ba9ecde3a1791f90e88d37936517e3bace0bbad671",
