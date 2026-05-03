@@ -8,7 +8,9 @@
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli:1": {},
 		"ghcr.io/va-h/devcontainers-features/uv:1": {},
-		"ghcr.io/devcontainers-extra/features/ffmpeg-apt-get:1": {}
+		"ghcr.io/devcontainers-extra/features/apt-packages:1": {
+            "packages": "ffmpeg,libturbojpeg0,libpcap-dev"
+        }
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	"forwardPorts": [
@@ -21,7 +23,7 @@
 		}
 	},
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "sudo apt-get update && sudo apt-get install -y libturbojpeg0 libpcap-dev && uv sync --all-groups && uv run prek install",
+	"postCreateCommand": "uv sync --all-groups && uv run prek install",
 	"containerEnv": {
 		"DEVCONTAINER": "1"
 	},
