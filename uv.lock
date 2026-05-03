@@ -861,12 +861,14 @@ source = { virtual = "." }
 dev = [
     { name = "homeassistant" },
     { name = "prek" },
+    { name = "ruff" },
+]
+test = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-homeassistant-custom-component" },
     { name = "pytest-socket" },
     { name = "pytest-timeout" },
-    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -875,12 +877,14 @@ dev = [
 dev = [
     { name = "homeassistant", specifier = ">=2026.4.4" },
     { name = "prek", specifier = ">=0.2.27" },
+    { name = "ruff", specifier = ">=0.12.0" },
+]
+test = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.8" },
     { name = "pytest-homeassistant-custom-component", specifier = ">=0.13.325" },
     { name = "pytest-socket", specifier = ">=0.7" },
     { name = "pytest-timeout", specifier = ">=2.3" },
-    { name = "ruff", specifier = ">=0.12.0" },
 ]
 
 [[package]]

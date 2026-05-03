@@ -21,7 +21,7 @@
 		}
 	},
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "sudo apt-get update && sudo apt-get install -y libturbojpeg0 libpcap-dev && uv sync --dev && uv run prek install",
+	"postCreateCommand": "sudo apt-get update && sudo apt-get install -y libturbojpeg0 libpcap-dev && uv sync --all-groups && uv run prek install",
 	"containerEnv": {
 		"DEVCONTAINER": "1"
 	},
