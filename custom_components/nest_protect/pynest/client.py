@@ -39,6 +39,29 @@ from .models import (
 _LOGGER = logging.getLogger(__package__)
 
 
+def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
+    """Merge new cookie values into an existing cookie header string.
+
+    New values override existing cookies with the same name.
+    Preserves cookies not present in new_cookies.
+    We don't use aiohttp's cookie jar because the user-provided cookie string
+    spans multiple Google domains/paths that the jar's scoping would break.
+    """
+    if not new_cookies:
+        return original
+
+    parsed: dict[str, str] = {}
+    for raw_part in original.split(";"):
+        cookie_part = raw_part.strip()
+        if "=" in cookie_part:
+            name, value = cookie_part.split("=", 1)
+            parsed[name.strip()] = value.strip()
+
+    parsed.update(new_cookies)
+
+    return "; ".join(f"{k}={v}" for k, v in parsed.items())
+
+
 class NestClient:
     """Interface class for the Nest API."""
 
@@ -53,6 +76,9 @@ class NestClient:
     # Cookie Auth
     cookies: str | None = None
     issue_token: str | None = None
+    # Set after successful cookie auth if Google returned refreshed cookies.
+    # Only Google OAuth cookies matter for re-auth; Nest uses Bearer tokens.
+    refreshed_cookies: str | None = None
 
     def __init__(
         self,
@@ -141,6 +167,8 @@ class NestClient:
         if cookies:
             self.cookies = cookies
 
+        self.refreshed_cookies = None
+
         async with self.session.get(
             issue_token,
             headers={
@@ -151,6 +179,14 @@ class NestClient:
                 "cookie": cookies,
             },
         ) as response:
+            # Capture refreshed cookies from Google's response
+            new_cookies: dict[str, str] = {}
+            for cookie in response.cookies.values():
+                new_cookies[cookie.key] = cookie.value
+
+            if new_cookies:
+                self.refreshed_cookies = merge_cookies(cookies, new_cookies)
+
             result = await response.json()
 
             if "error" in result:

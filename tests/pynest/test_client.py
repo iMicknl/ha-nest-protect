@@ -6,7 +6,7 @@ import pytest
 from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
-from custom_components.nest_protect.pynest.client import NestClient
+from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
 
 
@@ -120,3 +120,93 @@ async def test_get_first_data_success(socket_enabled):
         result.service_urls["urls"]["transport_url"]
         == "https://xxxx.transport.home.nest.com"
     )
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_captures_refreshed_cookies(socket_enabled):
+    """Test that Set-Cookie headers from Google are captured."""
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+        response.set_cookie("SID", "new-sid-value")
+        response.set_cookie("HSID", "new-hsid-value")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        auth = await nest_client.get_access_token_from_cookies(
+            str(url), "SID=old-sid; HSID=old-hsid; APISID=keep-me"
+        )
+        assert auth.access_token == "new-access-token"
+        # Refreshed cookies should be stored on the client
+        assert nest_client.refreshed_cookies is not None
+        assert "SID=new-sid-value" in nest_client.refreshed_cookies
+        assert "HSID=new-hsid-value" in nest_client.refreshed_cookies
+        assert "APISID=keep-me" in nest_client.refreshed_cookies
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_no_set_cookie_headers(socket_enabled):
+    """Test that refreshed_cookies is None when no Set-Cookie headers present."""
+
+    async def make_token_response(request):
+        return web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        await nest_client.get_access_token_from_cookies(str(url), "SID=old-sid")
+        assert nest_client.refreshed_cookies is None
+
+
+def test_merge_cookies_overrides_existing():
+    """Test that merge_cookies replaces existing cookie values."""
+    original = "SID=old; HSID=keep; OTHER=val"
+    new_cookies = {"SID": "new"}
+    result = merge_cookies(original, new_cookies)
+    assert "SID=new" in result
+    assert "HSID=keep" in result
+    assert "OTHER=val" in result
+
+
+def test_merge_cookies_adds_new():
+    """Test that merge_cookies adds new cookies."""
+    original = "SID=old"
+    new_cookies = {"NEWSID": "fresh"}
+    result = merge_cookies(original, new_cookies)
+    assert "SID=old" in result
+    assert "NEWSID=fresh" in result
+
+
+def test_merge_cookies_empty_new():
+    """Test that merge_cookies returns original when no new cookies."""
+    original = "SID=old; HSID=val"
+    result = merge_cookies(original, {})
+    assert result == original
