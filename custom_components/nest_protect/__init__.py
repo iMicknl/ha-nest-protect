@@ -233,6 +233,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clean up persisted session data when the config entry is removed."""
+    store = Store(
+        hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
+    )
+    await store.async_remove()
+
+
 def _register_subscribe_task(
     hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
 ) -> asyncio.Task | None:
