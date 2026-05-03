@@ -112,47 +112,104 @@ Attempted: Proxy `home.nest.com` through a local server and intercept the `issue
 
 The `nest-account` scope is restricted to Google's own first-party applications. A custom Google Cloud project cannot request this scope, so creating our own OAuth client is not possible.
 
-## Recommended Approach: Token Extraction
+### REJECTED: Google Login Proxy (Cookie Capture)
 
-**Proven working** - validated end-to-end on 2026-05-03.
+Attempted: Proxy `accounts.google.com` login page to capture Set-Cookie headers during authentication.
 
-The approach:
-1. User opens `home.nest.com` and signs in (or is already signed in)
-2. The authenticated page has `gapi.auth2.getAuthInstance()` with a valid access token
-3. A bookmarklet/console script extracts the token: `gapi.auth2.getAuthInstance().currentUser.get().getAuthResponse(true).access_token`
-4. Token is sent to HA's local callback via redirect/fetch
-5. HA validates: `access_token` → `issue_jwt` → `/session`
+**Result**: The page loads (1.2MB SPA) but the internal XHR calls for email validation and password submission don't execute properly through the proxy. Google's login SPA has integrity checks and dynamic endpoint calls that break under URL rewriting.
 
-For Home Assistant integration:
-- Config flow uses `async_external_step()` to open an instruction page
-- Instruction page tells user to log in to `home.nest.com`
-- After login, user uses bookmarklet or console paste to send token
-- Config flow receives token, validates, stores credentials
-- Token refresh uses `issue_jwt` (token valid 1 hour, Nest session longer)
+## Recommended Approach: Guided Setup with Cookie-Based Refresh
 
-### Token Refresh Strategy
+**Proven working** - full chain validated end-to-end on 2026-05-03.
 
-After initial authentication:
-1. Store the Google access token (1 hour validity)
-2. Use `issue_jwt` to get a JWT (also ~1 hour)
-3. Use `/session` to get transport_url + session token
-4. The Nest session itself lasts longer than the access token
-5. For re-auth: user must repeat the extraction process
+### Key Discovery: issueToken + Minimal Cookies
 
-### Improving UX: Auto-extraction via Service Worker or Extension
+The `issueToken` endpoint at `accounts.google.com/o/oauth2/iframerpc` can generate fresh access tokens given:
+1. **4 Google session cookies** (last 1+ year)
+2. **An opaque `login_hint`** (stable per user, extracted from `gapi.auth2`)
 
-For better UX, future work could explore:
-- A companion browser extension that auto-extracts tokens
-- A PWA/Service Worker on `home.nest.com` (not feasible due to same-origin)
-- The `issueToken` iframe approach (current method) as a fallback
+Minimal required cookies (all from `accounts.google.com`):
+| Cookie | HttpOnly | Expires |
+|--------|----------|---------|
+| `SID` | No | ~1 year |
+| `LSID` | Yes | ~1 year |
+| `__Secure-1PSIDTS` | Yes | ~1 year |
+| `__Secure-3PSID` | Yes | ~1 year |
+
+### Setup Flow for HA Users
+
+```
+Step 1: Token Extraction (automated via bookmarklet)
+  - User opens home.nest.com and signs in
+  - Bookmarklet extracts: access_token + login_hint + email
+  - Sent to HA callback, validates full chain
+  
+Step 2: Cookie Provision (semi-manual, one-time)
+  - User opens DevTools on accounts.google.com → Cookies
+  - Copies 4 specific cookie values into HA's setup page
+  - HA validates by calling issueToken with cookies + login_hint
+  
+Result: HA stores issue_token_url + cookies
+  - Automated refresh for 1+ year
+  - Uses existing NestClient.get_access_token_from_cookies()
+```
+
+### Bookmarklet (runs on home.nest.com)
+
+```javascript
+(function() {
+    var a = gapi.auth2.getAuthInstance().currentUser.get();
+    var r = a.getAuthResponse(true);
+    window.location = 'http://HA_URL/callback?data=' + 
+        encodeURIComponent(JSON.stringify({
+            access_token: r.access_token,
+            login_hint: r.login_hint,
+            email: a.getBasicProfile().getEmail()
+        }));
+})();
+```
+
+### issue_token URL Construction
+
+```
+https://accounts.google.com/o/oauth2/iframerpc
+  ?action=issueToken
+  &response_type=token id_token
+  &login_hint=<opaque_login_hint>
+  &client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com
+  &origin=https://home.nest.com
+  &scope=openid profile email https://www.googleapis.com/auth/nest-account
+  &ss_domain=https://home.nest.com
+```
+
+### What This Improves Over Current Setup
+
+| Aspect | Current | Improved |
+|--------|---------|----------|
+| issue_token URL | User finds in Network tab | Auto-constructed from login_hint |
+| Cookies | User finds in request headers | Guided: "paste these 4 values" |
+| Validation | None during setup | Validates full chain before saving |
+| Instructions | Generic wiki page | Interactive setup page in HA |
+
+### Token Refresh Chain (same as current, now automated setup)
+
+```
+Stored: issue_token_url + cookies
+  ↓ (every ~55 minutes)
+issueToken(cookies, login_hint) → Google access_token (1hr)
+  ↓
+issue_jwt(access_token) → Nest JWT (1hr)
+  ↓  
+/session(jwt) → transport_url + session (30 days metadata)
+  ↓
+Transport API calls with JWT auth
+```
 
 ## Files
 
 - `poc_auth.py` - Original PoC testing all auth approaches (CDP-based)
 - `poc_oauth_page.py` - REJECTED: Local OAuth page approach (origin check fails)
 - `poc_proxy_auth.py` - REJECTED: Reverse proxy approach (origin check fails)
-- `poc_token_extraction.py` - **RECOMMENDED**: Token extraction from home.nest.com (proven working)
-
-## Files
-
-- `poc_auth.py` - Proof of concept testing all auth approaches
+- `poc_cookie_proxy.py` - REJECTED: Google login proxy (SPA too complex to proxy)
+- `poc_token_extraction.py` - Token extraction from home.nest.com (proven working)
+- `poc_guided_setup.py` - **RECOMMENDED**: Complete guided setup with cookie refresh (proven working)
