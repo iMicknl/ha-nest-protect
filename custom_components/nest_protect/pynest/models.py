@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import datetime
+from dataclasses import dataclass, field
 from typing import Any
 
 from .enums import BucketType
@@ -60,11 +60,7 @@ class NestResponse:
         expiry_date = datetime.datetime.strptime(
             self.expires_in, "%a, %d-%b-%Y %H:%M:%S %Z"
         )
-
-        if expiry_date <= datetime.datetime.now():
-            return True
-
-        return False
+        return expiry_date <= datetime.datetime.now()
 
 
 @dataclass
@@ -235,10 +231,7 @@ class GoogleAuthResponse:
 
     def is_expired(self):
         """Check if access token is expired."""
-        if self.expiry_date <= datetime.datetime.now():
-            return True
-
-        return False
+        return self.expiry_date <= datetime.datetime.now()
 
 
 @dataclass

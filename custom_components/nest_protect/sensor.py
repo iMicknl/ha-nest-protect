@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
-import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -84,7 +84,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
     NestProtectSensorDescription(
         key="battery_level",
         name="Battery Level",
-        value_fn=lambda state: milli_volt_to_percentage(state),
+        value_fn=milli_volt_to_percentage,
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
@@ -94,21 +94,21 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
     NestProtectSensorDescription(
         name="Replace By",
         key="replace_by_date_utc_secs",
-        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
+        value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
         name="Last Audio Self Test",
         key="last_audio_self_test_end_utc_secs",
-        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
+        value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
         name="Last Manual Test",
         key="latest_manual_test_end_utc_secs",
-        value_fn=lambda state: datetime.datetime.utcfromtimestamp(state),
+        value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
@@ -133,15 +133,14 @@ async def async_setup_entry(hass, entry, async_add_devices):
     entities: list[NestProtectSensor] = []
 
     for device in data.devices.values():
-
-        SUPPORTED_KEYS: dict[str, NestProtectSensorDescription] = {
+        supported_keys: dict[str, NestProtectSensorDescription] = {
             description.key: description
             for description in SENSOR_DESCRIPTIONS
             if (not description.bucket_type or device.type == description.bucket_type)
         }
 
         for key in device.value:
-            if description := SUPPORTED_KEYS.get(key):
+            if description := supported_keys.get(key):
                 entities.append(
                     NestProtectSensor(device, description, data.areas, data.client)
                 )

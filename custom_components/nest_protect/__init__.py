@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 
 from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
@@ -100,11 +101,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     areas: dict[str, str] = {}
 
     for bucket in data.updated_buckets:
-        # Nest Protect
-        if bucket.type == BucketType.TOPAZ:
-            device_buckets.append(bucket)
-        # Temperature Sensors
-        elif bucket.type == BucketType.KRYPTONITE:
+        # Nest Protect and Temperature Sensors
+        if bucket.type in {BucketType.TOPAZ, BucketType.KRYPTONITE}:
             device_buckets.append(bucket)
 
         # Areas
@@ -142,11 +140,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
             if entry_data.subscription_task:
                 entry_data.subscription_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await entry_data.subscription_task
-                except asyncio.CancelledError:
-                    # Task cancellation is expected during unload; ignore.
-                    pass
             hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok

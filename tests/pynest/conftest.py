@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations():
     """Override the parent fixture to disable HA for pure client tests."""
-    yield
+    return
 
 
 @pytest.fixture(autouse=True)
@@ -20,4 +20,4 @@ def verify_cleanup():
     strict for these tests - it fails on the _run_safe_shutdown_loop thread
     from asyncio executor shutdown, which is normal cleanup behavior.
     """
-    yield
+    return

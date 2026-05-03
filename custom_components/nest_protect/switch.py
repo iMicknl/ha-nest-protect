@@ -67,13 +67,13 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSwitch] = []
 
-    SUPPORTED_KEYS: dict[str, NestProtectSwitchDescription] = {
+    supported_keys: dict[str, NestProtectSwitchDescription] = {
         description.key: description for description in SWITCH_DESCRIPTIONS
     }
 
     for device in data.devices.values():
         for key in device.value:
-            if description := SUPPORTED_KEYS.get(key):
+            if description := supported_keys.get(key):
                 entities.append(
                     NestProtectSwitch(device, description, data.areas, data.client)
                 )
@@ -89,9 +89,7 @@ class NestProtectSwitch(NestDescriptiveEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True if entity is on."""
-        state = self.bucket.value.get(self.entity_description.key)
-
-        return state
+        return self.bucket.value.get(self.entity_description.key)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""

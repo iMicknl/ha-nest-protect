@@ -40,13 +40,13 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectSelect] = []
 
-    SUPPORTED_KEYS: dict[str, NestProtectSelectDescription] = {
+    supported_keys: dict[str, NestProtectSelectDescription] = {
         description.key: description for description in SENSOR_DESCRIPTIONS
     }
 
     for device in data.devices.values():
         for key in device.value:
-            if description := SUPPORTED_KEYS.get(key):
+            if description := supported_keys.get(key):
                 entities.append(
                     NestProtectSelect(device, description, data.areas, data.client)
                 )

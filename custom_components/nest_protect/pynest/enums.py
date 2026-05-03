@@ -1,7 +1,7 @@
 """Enums for Nest Protect."""
 
-from enum import StrEnum, unique
 import logging
+from enum import StrEnum, unique
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,8 +45,8 @@ class BucketType(StrEnum):
     UNKNOWN = "unknown"
 
     @classmethod
-    def _missing_(cls, value):  # type: ignore
-        _LOGGER.warning(f"Unsupported value {value} has been returned for {cls}")
+    def _missing_(cls, value):  # type: ignore[override]
+        _LOGGER.warning("Unsupported value %s has been returned for %s", value, cls)
 
         return cls.UNKNOWN
 

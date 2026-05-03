@@ -1,8 +1,9 @@
 """Tests for NestClient."""
+
 from unittest.mock import patch
 
-from aiohttp import web
 import pytest
+from aiohttp import web
 
 from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
@@ -108,4 +109,7 @@ async def test_get_first_data_success(socket_enabled, aiohttp_client):
     assert headers.get("X-nl-user-id") == "example-user"
     assert json_request == NEST_REQUEST
     assert result.updated_buckets == []
-    assert result.service_urls["urls"]["transport_url"] == "https://xxxx.transport.home.nest.com"
+    assert (
+        result.service_urls["urls"]["transport_url"]
+        == "https://xxxx.transport.home.nest.com"
+    )

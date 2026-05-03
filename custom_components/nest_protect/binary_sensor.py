@@ -172,13 +172,13 @@ async def async_setup_entry(hass, entry, async_add_devices):
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     entities: list[NestProtectBinarySensor] = []
 
-    SUPPORTED_KEYS: dict[str, NestProtectBinarySensorDescription] = {
+    supported_keys: dict[str, NestProtectBinarySensorDescription] = {
         description.key: description for description in BINARY_SENSOR_DESCRIPTIONS
     }
 
     for device in data.devices.values():
         for key in device.value:
-            if description := SUPPORTED_KEYS.get(key):
+            if description := supported_keys.get(key):
                 # Not all entities are useful for battery powered Nest Protect devices
                 if description.wired_only and device.value["wired_or_battery"] != 0:
                     continue

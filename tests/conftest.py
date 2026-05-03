@@ -3,10 +3,10 @@
 from collections.abc import Awaitable, Callable, Generator
 from typing import TypeVar
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect.const import DOMAIN
@@ -14,7 +14,7 @@ from custom_components.nest_protect.const import DOMAIN
 # Typing helpers
 ComponentSetup = Callable[[], Awaitable[None]]
 T = TypeVar("T")
-YieldFixture = Generator[T, None, None]
+YieldFixture = Generator[T]
 
 
 REFRESH_TOKEN = "some-refresh-token"
@@ -25,7 +25,7 @@ COOKIES = "some-cookies"
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations) -> None:
     """Enable custom integration."""
-    yield
+    return
 
 
 @pytest.fixture

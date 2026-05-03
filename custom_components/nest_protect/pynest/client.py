@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from random import randint
 import time
+from random import randint
 from types import TracebackType
 from typing import Any, cast
 
@@ -64,7 +64,7 @@ class NestClient:
     ) -> None:
         """Initialize NestClient."""
 
-        self.session = session if session else ClientSession()
+        self.session = session or ClientSession()
         # self.refresh_token = refresh_token
         # self.issue_token = issue_token
         # self.cookies = cookies
@@ -157,7 +157,7 @@ class NestClient:
                 # Cookie method
                 if result["error"] == "USER_LOGGED_OUT":
                     raise BadCredentialsException(
-                        f"{result["error"]} - {result["detail"]}"
+                        f"{result['error']} - {result['detail']}"
                     )
 
                 raise Exception(result["error"])
@@ -193,7 +193,7 @@ class NestClient:
             headers={
                 "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="
-                + (nest_auth.jwt if nest_auth.jwt else ""),
+                + (nest_auth.jwt or ""),
             },
         ) as response:
             try:
@@ -228,7 +228,7 @@ class NestClient:
                 nest_response = await response.text()
 
                 if result.get("error"):
-                    _LOGGER.error("Could not interpret Nest response")
+                    _LOGGER.exception("Could not interpret Nest response")
 
                 raise PynestException(
                     f"{response.status} error while authenticating - {nest_response}. Please create an issue on GitHub."
@@ -255,7 +255,9 @@ class NestClient:
                 result["_2fa_enabled"] = result.pop("2fa_enabled")
 
             if result.get("error"):
-                _LOGGER.debug("Received error from Nest service", await response.text())
+                _LOGGER.debug(
+                    "Received error from Nest service: %s", await response.text()
+                )
 
                 raise PynestException(
                     f"{response.status} error while subscribing - {result}"
@@ -359,12 +361,12 @@ class NestClient:
 
             try:
                 result = await response.json()
-            except ContentTypeError:
+            except ContentTypeError as err:
                 result = await response.text()
 
                 raise PynestException(
                     f"{response.status} error while subscribing - {result}"
-                )
+                ) from err
 
             # TODO type object
 
