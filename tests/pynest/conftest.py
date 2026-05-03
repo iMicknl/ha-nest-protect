@@ -4,6 +4,7 @@ These tests are pure API client tests and don't need Home Assistant fixtures.
 """
 
 import pytest
+from aiohttp import ClientTimeout
 
 
 @pytest.fixture(autouse=True)
@@ -21,3 +22,13 @@ def verify_cleanup():
     from asyncio executor shutdown, which is normal cleanup behavior.
     """
     return
+
+
+@pytest.fixture
+def no_timeout_client(aiohttp_client):
+    """Wrap aiohttp_client to disable timeouts (Python 3.14.4 compat)."""
+
+    async def go(app):
+        return await aiohttp_client(app, timeout=ClientTimeout(total=None))
+
+    return go
