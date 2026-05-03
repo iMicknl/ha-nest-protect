@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Retrieve version from tag name
+        id: retrieve-version
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          version_number="${tag#v}"
+          echo "version: $version_number"
+          echo "version=$version_number" >> "$GITHUB_OUTPUT"
+
+      - name: Bump version in manifest.json
+        run: |
+          VERSION=${{ steps.retrieve-version.outputs.version }}
+          jq --arg v "$VERSION" '.version = $v' custom_components/nest_protect/manifest.json > tmp.json
+          mv tmp.json custom_components/nest_protect/manifest.json
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+          git add custom_components/nest_protect/manifest.json
+          git commit -m "Bump version to ${{ steps.retrieve-version.outputs.version }}"
+
+          git tag -f -a ${{ github.event.release.tag_name }} -m "Release ${{ steps.retrieve-version.outputs.version }}"
+          git push origin HEAD:main
+          git push origin -f ${{ github.event.release.tag_name }}
