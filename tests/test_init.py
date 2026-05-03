@@ -94,7 +94,7 @@ async def test_access_token_failure_with_cookies(
 ):
     """Test failure when getting an access token."""
     with patch(
-        "custom_components.nest_protect.NestClient.get_access_token_from_refresh_token",
+        "custom_components.nest_protect.NestClient.get_access_token_from_cookies",
         side_effect=aiohttp.ClientError(),
     ):
         await component_setup_with_cookies()
@@ -110,7 +110,7 @@ async def test_authenticate_failure_with_cookies(
     """Test failure when authenticating."""
     with (
         patch(
-            "custom_components.nest_protect.NestClient.get_access_token_from_refresh_token"
+            "custom_components.nest_protect.NestClient.get_access_token_from_cookies"
         ),
         patch(
             "custom_components.nest_protect.NestClient.authenticate",
