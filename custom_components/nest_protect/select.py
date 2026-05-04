@@ -10,6 +10,7 @@ from homeassistant.helpers.entity import EntityCategory
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
 from .entity import NestDescriptiveEntity
+from .pynest.exceptions import NotAuthenticatedException
 
 
 @dataclass
@@ -84,17 +85,30 @@ class NestProtectSelect(NestDescriptiveEntity, SelectEntity):
             }
         ]
 
+        result = await self._async_update_objects(objects)
+        LOGGER.debug(result)
+
+    async def _async_update_objects(self, objects: list[dict]) -> dict:
+        """Update objects with automatic re-auth on 401."""
         if not self.client.nest_session or self.client.nest_session.is_expired():
             if not self.client.auth or self.client.auth.is_expired():
                 await self.client.get_access_token()
-
             await self.client.authenticate(self.client.auth.access_token)
 
-        result = await self.client.update_objects(
-            self.client.nest_session.access_token,
-            self.client.nest_session.userid,
-            self.client.transport_url,
-            objects,
-        )
-
-        LOGGER.debug(result)
+        try:
+            return await self.client.update_objects(
+                self.client.nest_session.access_token,
+                self.client.nest_session.userid,
+                self.client.transport_url,
+                objects,
+            )
+        except NotAuthenticatedException:
+            LOGGER.debug("Session expired during update, re-authenticating")
+            await self.client.get_access_token()
+            await self.client.authenticate(self.client.auth.access_token)
+            return await self.client.update_objects(
+                self.client.nest_session.access_token,
+                self.client.nest_session.userid,
+                self.client.transport_url,
+                objects,
+            )
