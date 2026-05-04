@@ -138,7 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                     restored_session.access_token, restored_session.userid
                 )
                 nest = restored_session
-            except NotAuthenticatedException, PynestException:
+            except (NotAuthenticatedException, PynestException):
                 LOGGER.debug(
                     "Persisted session rejected by Nest, falling through to cookie auth"
                 )
@@ -365,9 +365,8 @@ async def _async_subscribe_for_data(
                 "Subscriber: %d consecutive auth failures, triggering re-authentication",
                 entry_data._consecutive_failures,
             )
-            raise ConfigEntryAuthFailed(
-                f"{entry_data._consecutive_failures} consecutive authentication failures"
-            )
+            entry.async_start_reauth(hass)
+            return
 
         backoff = BACKOFF_INTERVALS[
             min(entry_data._consecutive_failures - 1, len(BACKOFF_INTERVALS) - 1)
@@ -391,11 +390,12 @@ async def _async_subscribe_for_data(
 
         _register_subscribe_task(hass, entry, data)
 
-    except BadCredentialsException as exception:
-        LOGGER.debug(
+    except BadCredentialsException:
+        LOGGER.warning(
             "Bad credentials detected. Please re-authenticate the Nest Protect integration."
         )
-        raise ConfigEntryAuthFailed from exception
+        entry.async_start_reauth(hass)
+        return
 
     except NestServiceException:
         LOGGER.debug("Subscriber: Nest Service error. Updates paused for 2 minutes.")

@@ -58,10 +58,10 @@ class NestResponse:
         """Check if session is expired, with optional early-expiry buffer."""
         expiry_date = datetime.datetime.strptime(
             self.expires_in, "%a, %d-%b-%Y %H:%M:%S %Z"
-        )
-        return expiry_date <= datetime.datetime.now() + datetime.timedelta(
-            seconds=buffer_seconds
-        )
+        ).replace(tzinfo=datetime.timezone.utc)
+        return expiry_date <= datetime.datetime.now(
+            datetime.timezone.utc
+        ) + datetime.timedelta(seconds=buffer_seconds)
 
     def to_dict(self) -> dict:
         """Serialize session fields needed for persistence."""
