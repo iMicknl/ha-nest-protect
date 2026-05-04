@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import EntityCategory
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
 from .entity import NestDescriptiveEntity
-from .pynest.exceptions import NotAuthenticatedException
+from .session import NestSessionManager
 
 
 @dataclass
@@ -49,7 +49,13 @@ async def async_setup_entry(hass, entry, async_add_devices):
         for key in device.value:
             if description := supported_keys.get(key):
                 entities.append(
-                    NestProtectSelect(device, description, data.areas, data.client)
+                    NestProtectSelect(
+                        device,
+                        description,
+                        data.areas,
+                        data.client,
+                        data.session_manager,
+                    )
                 )
 
     async_add_devices(entities)
@@ -59,6 +65,18 @@ class NestProtectSelect(NestDescriptiveEntity, SelectEntity):
     """Representation of a Nest Protect Select."""
 
     entity_description: NestProtectSelectDescription
+
+    def __init__(
+        self,
+        bucket,
+        description,
+        areas,
+        client,
+        session_manager: NestSessionManager,
+    ) -> None:
+        """Initialize the select."""
+        super().__init__(bucket, description, areas, client)
+        self.session_manager = session_manager
 
     @property
     def current_option(self) -> str:
@@ -89,26 +107,11 @@ class NestProtectSelect(NestDescriptiveEntity, SelectEntity):
         LOGGER.debug(result)
 
     async def _async_update_objects(self, objects: list[dict]) -> dict:
-        """Update objects with automatic re-auth on 401."""
-        if not self.client.nest_session or self.client.nest_session.is_expired():
-            if not self.client.auth or self.client.auth.is_expired():
-                await self.client.get_access_token()
-            await self.client.authenticate(self.client.auth.access_token)
-
-        try:
-            return await self.client.update_objects(
-                self.client.nest_session.access_token,
-                self.client.nest_session.userid,
-                self.client.transport_url,
-                objects,
-            )
-        except NotAuthenticatedException:
-            LOGGER.debug("Session expired during update, re-authenticating")
-            await self.client.get_access_token()
-            await self.client.authenticate(self.client.auth.access_token)
-            return await self.client.update_objects(
-                self.client.nest_session.access_token,
-                self.client.nest_session.userid,
-                self.client.transport_url,
-                objects,
-            )
+        """Update objects with automatic session refresh."""
+        await self.session_manager.ensure_session()
+        return await self.client.update_objects(
+            self.client.nest_session.access_token,
+            self.client.nest_session.userid,
+            self.client.transport_url,
+            objects,
+        )
