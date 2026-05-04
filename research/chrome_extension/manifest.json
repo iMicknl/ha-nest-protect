@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Nest Protect Auth Helper",
+  "version": "1.1.0",
+  "description": "One-click authentication setup for ha-nest-protect Home Assistant integration",
+  "permissions": [
+    "webRequest",
+    "cookies",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://home.nest.com/*",
+    "https://accounts.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icon.png"
+    }
+  }
+}

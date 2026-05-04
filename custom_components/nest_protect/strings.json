@@ -2,13 +2,18 @@
   "config": {
     "step": {
       "user": {
-        "description": "Select your Account Type. Most users will need to select Google Account. Field Test is only available for selected testers in the Google Field Test program.",
+        "description": "Select your account type and setup method.",
         "data": {
-          "account_type": "Account Type"
+          "account_type": "Account Type",
+          "setup_method": "Setup Method"
         }
       },
+      "extension_wait": {
+        "title": "Waiting for Chrome Extension",
+        "description": "1. Install the **Nest Protect Auth Helper** Chrome extension\n2. Open [home.nest.com]({nest_url}) and sign in\n3. Click the extension icon and enter this Home Assistant URL\n4. Click **Extract & Send to Home Assistant**\n\nThis page will update automatically when credentials are received."
+      },
       "account_link": {
-        "title": "Connect Your Nest Account",
+        "title": "Connect Your Nest Account (Manual)",
         "description": "Follow these steps to get your credentials:\n\n1. Open an **Incognito/Private** browser window\n2. Enable **third-party cookies** in browser settings\n3. Go to [home.nest.com]({nest_url}) and sign in with Google\n4. Open **Developer Tools** (F12) → **Network** tab → Check **Preserve Log**\n5. In the filter box, type `issueToken` and copy the full **Request URL**\n6. In the filter box, type `oauth2/iframe`, click the last request, and copy the entire **Cookie** header value\n\n⚠️ Do not log out of home.nest.com after copying credentials",
         "data": {
           "issue_token": "Issue Token URL",
@@ -29,7 +34,11 @@
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
-      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "extension_timeout": "Timed out waiting for the Chrome extension. Please try again.",
+      "invalid_auth": "The credentials received from the extension were invalid. Please try again.",
+      "cannot_connect": "Could not connect to Nest servers. Please try again.",
+      "unknown": "An unexpected error occurred. Please check the logs."
     }
   },
   "entity": {

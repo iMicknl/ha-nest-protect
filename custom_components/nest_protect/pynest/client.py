@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from random import randint
@@ -145,13 +146,22 @@ class NestClient:
             issue_token,
             headers={
                 "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-Dest": "empty",
                 "User-Agent": USER_AGENT,
                 "X-Requested-With": "XmlHttpRequest",
                 "Referer": "https://accounts.google.com/o/oauth2/iframe",
+                "Origin": "https://accounts.google.com",
                 "cookie": cookies,
             },
         ) as response:
-            result = await response.json()
+            raw = await response.text()
+            _LOGGER.debug(
+                "issueToken response status=%s body=%s", response.status, raw[:200]
+            )
+            if raw.startswith(")]}'"):
+                raw = raw[4:].strip()
+            result = json.loads(raw)
 
             if "error" in result:
                 # Cookie method

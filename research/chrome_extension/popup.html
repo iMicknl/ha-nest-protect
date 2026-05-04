@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {
+  width: 360px;
+  padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: #333;
+}
+h2 { margin: 0 0 8px; font-size: 16px; }
+p { margin: 8px 0; line-height: 1.5; }
+.status {
+  padding: 12px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+.status.info { background: #e3f2fd; color: #1565c0; }
+.status.success { background: #e8f5e9; color: #2e7d32; }
+.status.error { background: #fbe9e7; color: #c62828; }
+.status.waiting { background: #fff3e0; color: #e65100; }
+label {
+  display: block;
+  margin: 12px 0 4px;
+  font-weight: 500;
+  font-size: 13px;
+}
+input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-size: 13px;
+}
+button {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button:hover { background: #1565c0; }
+button:disabled { background: #bbb; cursor: not-allowed; }
+</style>
+</head>
+<body>
+  <h2>Nest Protect Auth Setup</h2>
+  <p>Connect your Nest account to Home Assistant.</p>
+
+  <label for="ha_url">Home Assistant URL</label>
+  <input type="text" id="ha_url" placeholder="http://homeassistant.local:8123">
+
+  <button id="go_btn">Connect</button>
+
+  <div id="status_area"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
