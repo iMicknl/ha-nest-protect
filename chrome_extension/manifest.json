@@ -1,14 +1,22 @@
 {
   "manifest_version": 3,
-  "name": "Nest Protect Auth Helper",
+  "name": "Nest Auth Helper",
   "version": "1.0.0",
-  "description": "Extract authentication cookies for the ha-nest-protect Home Assistant integration",
+  "description": "Extract authentication credentials for the ha-nest-protect Home Assistant integration",
   "permissions": [
-    "cookies"
+    "cookies",
+    "activeTab"
   ],
   "host_permissions": [
     "https://home.nest.com/*",
-    "https://accounts.google.com/*"
+    "https://*.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://home.nest.com/*"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
   ],
   "action": {
     "default_popup": "popup.html",

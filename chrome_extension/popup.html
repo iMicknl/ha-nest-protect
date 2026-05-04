@@ -10,13 +10,12 @@ body {
   font-size: 14px;
   color: #333;
 }
-h2 { margin: 0 0 8px; font-size: 16px; }
+h2 { margin: 0 0 12px; font-size: 16px; }
 p { margin: 8px 0; line-height: 1.5; }
 .status {
   padding: 12px;
   border-radius: 8px;
   margin: 12px 0;
-  word-break: break-all;
 }
 .status.info { background: #e3f2fd; color: #1565c0; }
 .status.success { background: #e8f5e9; color: #2e7d32; }
@@ -32,14 +31,15 @@ p { margin: 8px 0; line-height: 1.5; }
 }
 .output-area textarea {
   width: 100%;
-  height: 80px;
+  height: 100px;
   padding: 8px;
   border: 1px solid #ccc;
   border-radius: 4px;
   box-sizing: border-box;
   font-family: monospace;
-  font-size: 12px;
+  font-size: 11px;
   resize: vertical;
+  word-break: break-all;
 }
 button {
   margin-top: 12px;
@@ -59,32 +59,26 @@ button.copy-btn {
   margin-top: 8px;
 }
 button.copy-btn:hover { background: #388e3c; }
-ol {
-  padding-left: 20px;
-  margin: 8px 0;
+.warning {
+  font-size: 12px;
+  color: #e65100;
+  margin-top: 8px;
 }
-li { margin: 4px 0; line-height: 1.4; }
 </style>
 </head>
 <body>
-  <h2>Nest Protect Auth Helper</h2>
-  <p>Extract cookies needed for the <strong>ha-nest-protect</strong> Home Assistant integration.</p>
+  <h2>Nest Auth Helper</h2>
+  <p>Extract credentials for the <strong>ha-nest-protect</strong> Home Assistant integration.</p>
 
-  <ol>
-    <li>Sign in to <a href="https://home.nest.com" target="_blank">home.nest.com</a></li>
-    <li>Click the button below to extract cookies</li>
-    <li>Copy the result into your Home Assistant configuration</li>
-  </ol>
-
-  <button id="extract_btn">Extract Cookies</button>
+  <button id="extract_btn">Extract Credentials</button>
 
   <div id="status_area"></div>
+
   <div id="output_area" class="output-area" style="display:none;">
-    <label for="issue_token">Issue Token URL</label>
-    <textarea id="issue_token" readonly></textarea>
-    <label for="cookies" style="margin-top:8px;">Cookies</label>
-    <textarea id="cookies" readonly></textarea>
-    <button id="copy_btn" class="copy-btn">Copy to Clipboard</button>
+    <label for="auth_code">Your Authentication Code</label>
+    <textarea id="auth_code" readonly></textarea>
+    <button id="copy_btn" class="copy-btn">Copy Code</button>
+    <p class="warning">Do not share this code — it contains your Google session credentials.</p>
   </div>
 
   <script src="popup.js"></script>
