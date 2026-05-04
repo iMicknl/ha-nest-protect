@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
 from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
 )
@@ -306,3 +307,82 @@ async def test_ensure_session_none_refreshes():
     store.async_save.assert_called_once()
     # Should have set the new session on the client
     assert client.nest_session == new_session
+
+
+@pytest.mark.asyncio
+async def test_record_failure_increments_counter():
+    """record_failure increments the consecutive failure counter."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    assert manager.consecutive_failures == 0
+    manager.record_failure()
+    assert manager.consecutive_failures == 1
+    manager.record_failure()
+    assert manager.consecutive_failures == 2
+
+
+@pytest.mark.asyncio
+async def test_record_success_resets_counter():
+    """record_success resets the failure counter."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    manager.record_failure()
+    manager.record_failure()
+    assert manager.consecutive_failures == 2
+
+    manager.record_success()
+    assert manager.consecutive_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_should_reauth_after_max_failures():
+    """should_trigger_reauth returns True after MAX_AUTH_FAILURES."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    # Should be False initially
+    assert manager.should_trigger_reauth is False
+
+    # Record failures up to threshold
+    for _ in range(MAX_AUTH_FAILURES - 1):
+        manager.record_failure()
+    assert manager.should_trigger_reauth is False
+
+    # One more failure should trigger reauth
+    manager.record_failure()
+    assert manager.should_trigger_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_backoff_interval_increases():
+    """backoff_interval returns increasing values."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    # At 0 failures, should return the first interval
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+    # Each failure should increase the backoff
+    manager.record_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+    manager.record_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[1]
+
+    manager.record_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[2]
+
+    # Should cap at the last interval
+    for _ in range(10):
+        manager.record_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[-1]

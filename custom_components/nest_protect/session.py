@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from homeassistant.helpers.storage import Store
 
-from .const import LOGGER, SESSION_EXPIRY_BUFFER_SECONDS
+from .const import (
+    BACKOFF_INTERVALS,
+    LOGGER,
+    MAX_AUTH_FAILURES,
+    SESSION_EXPIRY_BUFFER_SECONDS,
+)
 from .pynest.client import NestClient
 from .pynest.exceptions import NotAuthenticatedException, PynestException
 from .pynest.models import FirstDataAPIResponse, NestResponse
@@ -33,11 +38,38 @@ class NestSessionManager:
         self._issue_token = issue_token
         self._cookies = cookies
         self._refresh_token = refresh_token
+        self._consecutive_failures: int = 0
 
     @property
     def refreshed_cookies(self) -> str | None:
         """Proxy to client's refreshed_cookies property."""
         return self._client.refreshed_cookies
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Return the number of consecutive failures."""
+        return self._consecutive_failures
+
+    @property
+    def should_trigger_reauth(self) -> bool:
+        """Return True if failures exceed the threshold."""
+        return self._consecutive_failures >= MAX_AUTH_FAILURES
+
+    @property
+    def backoff_interval(self) -> int:
+        """Return the current backoff interval in seconds."""
+        if self._consecutive_failures == 0:
+            return BACKOFF_INTERVALS[0]
+        idx = min(self._consecutive_failures - 1, len(BACKOFF_INTERVALS) - 1)
+        return BACKOFF_INTERVALS[idx]
+
+    def record_failure(self) -> None:
+        """Record a consecutive failure."""
+        self._consecutive_failures += 1
+
+    def record_success(self) -> None:
+        """Reset failure counter on success."""
+        self._consecutive_failures = 0
 
     async def async_setup(self) -> FirstDataAPIResponse | None:
         """Set up authentication using three-tier fallback.
