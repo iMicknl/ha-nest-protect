@@ -39,3 +39,22 @@ jobs:
           git tag -f -a ${{ github.event.release.tag_name }} -m "Release ${{ steps.retrieve-version.outputs.version }}"
           git push origin HEAD:main
           git push origin -f ${{ github.event.release.tag_name }}
+
+  package-extension:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create extension zip
+        run: |
+          cd chrome_extension
+          zip -r ../nest-auth-helper.zip .
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: nest-auth-helper.zip
