@@ -68,11 +68,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.action.setBadgeText({ text: "..." });
     chrome.action.setBadgeBackgroundColor({ color: "#FF9800" });
 
-    // Only open home.nest.com if no existing tab is already on it
+    // Only open home.nest.com if no existing tab is on it;
+    // otherwise focus and force a full navigation to re-trigger OAuth iframe
     chrome.tabs.query({ url: "https://home.nest.com/*" }, (tabs) => {
       if (tabs && tabs.length > 0) {
-        chrome.tabs.update(tabs[0].id, { active: true });
-        chrome.tabs.reload(tabs[0].id);
+        chrome.tabs.update(tabs[0].id, {
+          active: true,
+          url: "https://home.nest.com/",
+        });
       } else {
         chrome.tabs.create({ url: "https://home.nest.com/" });
       }
