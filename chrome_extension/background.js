@@ -4,6 +4,10 @@ let capturedData = {
   listening: false,
 };
 
+const FIRST_PARTY_AUTH_COOKIES = new Set([
+  "SID", "HSID", "SSID", "APISID", "SAPISID",
+]);
+
 function startListening() {
   capturedData = { issueToken: null, cookies: null, listening: true };
 
@@ -51,8 +55,29 @@ function captureRequestCookies(details) {
   );
   if (!cookieHeader) return;
 
-  capturedData.cookies = cookieHeader.value;
-  checkComplete();
+  const cookieMap = new Map();
+  cookieHeader.value.split("; ").forEach((pair) => {
+    const eqIdx = pair.indexOf("=");
+    if (eqIdx > 0) {
+      cookieMap.set(pair.substring(0, eqIdx), pair.substring(eqIdx + 1));
+    }
+  });
+
+  chrome.cookies.getAll({ url: "https://accounts.google.com" }, (cookies) => {
+    if (cookies) {
+      for (const c of cookies) {
+        if (FIRST_PARTY_AUTH_COOKIES.has(c.name) && !cookieMap.has(c.name)) {
+          cookieMap.set(c.name, c.value);
+        }
+      }
+    }
+
+    capturedData.cookies = Array.from(cookieMap.entries())
+      .map(([name, value]) => `${name}=${value}`)
+      .join("; ");
+
+    checkComplete();
+  });
 }
 
 function checkComplete() {
