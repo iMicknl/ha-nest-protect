@@ -206,3 +206,103 @@ async def test_no_persisted_session_uses_cookies():
     client.authenticate.assert_called_once_with("google-token")
     # Should have persisted the session
     store.async_save.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_valid():
+    """ensure_session is a no-op when session is still valid."""
+    valid_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = valid_session
+    client.auth = None
+    client.get_access_token = AsyncMock()
+    client.authenticate = AsyncMock()
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=store,
+        refresh_token="test-refresh-token",
+    )
+
+    await manager.ensure_session()
+
+    # Should NOT have refreshed anything
+    client.get_access_token.assert_not_called()
+    client.authenticate.assert_not_called()
+    store.async_save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_expired_refreshes():
+    """ensure_session refreshes when session is expired."""
+    expired_session = _make_nest_response(expired=True)
+    new_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = expired_session
+    client.auth = MagicMock(access_token="existing-google-token")
+    client.auth.is_expired = MagicMock(return_value=False)
+    client.authenticate = AsyncMock(return_value=new_session)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=store,
+        refresh_token="test-refresh-token",
+    )
+
+    await manager.ensure_session()
+
+    # Should have authenticated with the existing Google token
+    client.authenticate.assert_called_once_with("existing-google-token")
+    # Should have persisted the new session
+    store.async_save.assert_called_once()
+    # Should have set the new session on the client
+    assert client.nest_session == new_session
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_none_refreshes():
+    """ensure_session refreshes when no session exists."""
+    new_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = None
+    client.auth = None
+    client.get_access_token = AsyncMock(
+        return_value=MagicMock(access_token="new-google-token")
+    )
+    client.authenticate = AsyncMock(return_value=new_session)
+
+    # After get_access_token is called, auth should be set
+    def set_auth(*args, **kwargs):
+        client.auth = MagicMock(access_token="new-google-token")
+        client.auth.is_expired = MagicMock(return_value=False)
+
+    client.get_access_token.side_effect = set_auth
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=store,
+        refresh_token="test-refresh-token",
+    )
+
+    await manager.ensure_session()
+
+    # Should have fetched a new Google token
+    client.get_access_token.assert_called_once()
+    # Should have authenticated with the new Google token
+    client.authenticate.assert_called_once_with("new-google-token")
+    # Should have persisted the new session
+    store.async_save.assert_called_once()
+    # Should have set the new session on the client
+    assert client.nest_session == new_session
