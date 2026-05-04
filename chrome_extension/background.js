@@ -67,7 +67,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     startListening();
     chrome.action.setBadgeText({ text: "..." });
     chrome.action.setBadgeBackgroundColor({ color: "#FF9800" });
-    chrome.tabs.create({ url: "https://home.nest.com/" }, () => {
+
+    // Only open home.nest.com if no existing tab is already on it
+    chrome.tabs.query({ url: "https://home.nest.com/*" }, (tabs) => {
+      if (tabs && tabs.length > 0) {
+        chrome.tabs.update(tabs[0].id, { active: true });
+        chrome.tabs.reload(tabs[0].id);
+      } else {
+        chrome.tabs.create({ url: "https://home.nest.com/" });
+      }
       sendResponse({ status: "started" });
     });
     return true;
