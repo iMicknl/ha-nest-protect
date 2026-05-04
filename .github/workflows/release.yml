@@ -41,6 +41,7 @@ jobs:
           git push origin -f ${{ github.event.release.tag_name }}
 
   package-extension:
+    needs: bump-version
     runs-on: ubuntu-latest
 
     permissions:
@@ -48,6 +49,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Create extension zip
         run: |

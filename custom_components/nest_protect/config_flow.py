@@ -314,4 +314,4 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
 
-        return await self.async_step_auth_method()
+        return await self.async_step_auth_method(user_input)
