@@ -143,7 +143,7 @@ async def test_startup_reuses_persisted_session(
     config_entry_with_cookies: MockConfigEntry,
 ):
     """Test that a valid persisted session skips Google re-auth."""
-    future = datetime.datetime.now() + datetime.timedelta(minutes=30)
+    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30)
     expires_str = future.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     stored_data = {
@@ -189,7 +189,7 @@ async def test_startup_falls_through_on_expired_session(
     config_entry_with_cookies: MockConfigEntry,
 ):
     """Test that an expired persisted session triggers cookie re-auth."""
-    past = datetime.datetime.now() - datetime.timedelta(minutes=10)
+    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)
     expires_str = past.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     stored_data = {
@@ -244,7 +244,7 @@ async def test_startup_falls_through_on_401_from_persisted_session(
     config_entry_with_cookies: MockConfigEntry,
 ):
     """Test that a 401 from persisted session triggers cookie re-auth."""
-    future = datetime.datetime.now() + datetime.timedelta(minutes=30)
+    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30)
     expires_str = future.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     stored_data = {

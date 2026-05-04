@@ -53,7 +53,7 @@ class HomeAssistantNestProtectData:
     """Nest Protect data stored in the Home Assistant data object."""
 
     devices: dict[str, Bucket]
-    areas: list[str, str]
+    areas: dict[str, str]
     client: NestClient
     store: Store
     subscription_task: asyncio.Task | None = None
@@ -110,6 +110,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     account_type = entry.data.get(CONF_ACCOUNT_TYPE, Environment.PRODUCTION)
     client = NestClient(session=session, environment=NEST_ENVIRONMENTS[account_type])
 
+    # Assign credentials so client.get_access_token() works for later re-auth
+    client.issue_token = issue_token
+    client.cookies = cookies
+    client.refresh_token = refresh_token
+
     store = Store(
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
@@ -160,6 +165,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 raise ConfigEntryAuthFailed("No credentials available")
 
             nest = await client.authenticate(auth.access_token)
+            client.nest_session = nest
 
             LOGGER.debug(
                 "Cookie auth succeeded, cookies refreshed: %s",
@@ -290,9 +296,13 @@ async def _async_subscribe_for_data(
 
             if not entry_data.client.auth or entry_data.client.auth.is_expired():
                 LOGGER.debug("Subscriber: retrieving new Google access token")
-                auth = await entry_data.client.get_access_token()
-                entry_data.client.nest_session = await entry_data.client.authenticate(
-                    auth.access_token
+                await entry_data.client.get_access_token()
+
+            if entry_data.client.auth:
+                entry_data.client.nest_session = (
+                    await entry_data.client.authenticate(
+                        entry_data.client.auth.access_token
+                    )
                 )
 
                 # Persist refreshed session for next restart
