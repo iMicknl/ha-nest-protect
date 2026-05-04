@@ -9,6 +9,7 @@
       "invalid_auth": "Invalid authentication",
       "invalid_issue_token": "Invalid issue token URL. Must start with {accounts_url} and contain the issueToken action.",
       "invalid_cookies": "Invalid cookies format. Ensure you copied the complete cookie header from the oauth2/iframe request.",
+      "invalid_code": "Invalid authentication code. Make sure you copied the complete code from the extension.",
       "unknown": "Unexpected error"
     },
     "step": {
@@ -16,6 +17,23 @@
         "description": "Select your Account Type. Most users will need to select Google Account. Field Test is only available for selected testers in the Google Field Test program.",
         "data": {
           "account_type": "Account Type"
+        }
+      },
+      "auth_method": {
+        "title": "Authentication Method",
+        "description": "Choose how to connect your Nest account. The Chrome Extension method is recommended for most users.",
+        "data": {
+          "method": "Method"
+        }
+      },
+      "extension": {
+        "title": "Connect with Chrome Extension",
+        "description": "1. [Download the Nest Auth Helper extension]({extension_download_url})\n2. Unzip and load it in Chrome (chrome://extensions → Developer Mode → Load Unpacked)\n3. Sign in to [home.nest.com]({nest_url})\n4. Click the extension icon → click **Extract Credentials**\n5. Copy the code and paste it below\n\n⚠️ Do not share this code — it contains your session credentials.",
+        "data": {
+          "auth_code": "Authentication Code"
+        },
+        "data_description": {
+          "auth_code": "The code displayed by the Nest Auth Helper extension"
         }
       },
       "account_link": {
