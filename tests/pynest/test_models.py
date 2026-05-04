@@ -67,7 +67,7 @@ def test_nest_response_from_dict_returns_none_on_invalid():
 def test_nest_response_is_expired_with_buffer():
     """Test that is_expired respects the buffer parameter."""
     # Session expires in 4 minutes - within the 5 minute buffer
-    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=4)
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=4)
     expires_str = future.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     response = NestResponse(
@@ -90,7 +90,7 @@ def test_nest_response_is_expired_with_buffer():
 
 def test_nest_response_is_expired_without_buffer():
     """Test that is_expired works without buffer (past expiry)."""
-    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=10)
     expires_str = past.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT"
 
     response = NestResponse(

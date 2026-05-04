@@ -143,7 +143,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                     restored_session.access_token, restored_session.userid
                 )
                 nest = restored_session
-            except (NotAuthenticatedException, PynestException):
+            except (NotAuthenticatedException, PynestException):  # fmt: skip
                 LOGGER.debug(
                     "Persisted session rejected by Nest, falling through to cookie auth"
                 )
@@ -299,10 +299,8 @@ async def _async_subscribe_for_data(
                 await entry_data.client.get_access_token()
 
             if entry_data.client.auth:
-                entry_data.client.nest_session = (
-                    await entry_data.client.authenticate(
-                        entry_data.client.auth.access_token
-                    )
+                entry_data.client.nest_session = await entry_data.client.authenticate(
+                    entry_data.client.auth.access_token
                 )
 
                 # Persist refreshed session for next restart
