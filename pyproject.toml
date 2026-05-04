@@ -105,7 +105,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "SLF001", "PLR2004"]
-"custom_components/nest_protect/__init__.py" = ["BLE001", "PLR0912", "PLR0915", "SIM102", "TRY301", "SLF001", "B904"]
+"custom_components/nest_protect/__init__.py" = ["BLE001", "PLR0912", "PLR0915", "SIM102"]
 "custom_components/nest_protect/sensor.py" = ["ERA001", "PLR2004"]
 "custom_components/nest_protect/binary_sensor.py" = ["ERA001"]
 "custom_components/nest_protect/switch.py" = ["ERA001"]
