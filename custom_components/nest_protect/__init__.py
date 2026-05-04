@@ -150,8 +150,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # --- Tier 2: Re-authenticate with Google cookies ---
     if nest is None:
         try:
+            # Using user-retrieved cookies for authentication
             if issue_token and cookies:
                 auth = await client.get_access_token_from_cookies(issue_token, cookies)
+            # Using refresh_token from legacy authentication method
             elif refresh_token:
                 auth = await client.get_access_token_from_refresh_token(refresh_token)
             else:
@@ -178,7 +180,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             raise ConfigEntryNotReady from exception
         except BadCredentialsException as exception:
             raise ConfigEntryAuthFailed from exception
-        except Exception as exception:
+        except Exception as exception:  # pylint: disable=broad-except
             LOGGER.exception("Unknown exception.")
             raise ConfigEntryNotReady from exception
 
@@ -189,9 +191,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     areas: dict[str, str] = {}
 
     for bucket in data.updated_buckets:
+        # Nest Protect and Temperature Sensors
         if bucket.type in {BucketType.TOPAZ, BucketType.KRYPTONITE}:
             device_buckets.append(bucket)
 
+        # Areas
         if bucket.type == BucketType.WHERE and isinstance(
             bucket.value, WhereBucketValue
         ):
@@ -222,6 +226,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        # Cancel subscription task only after successful platform unload
         if entry.entry_id in hass.data.get(DOMAIN, {}):
             entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
             if entry_data.subscription_task:
@@ -245,6 +250,7 @@ def _register_subscribe_task(
     hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
 ) -> asyncio.Task | None:
     """Create a new subscription task and update the reference."""
+    # Check if entry is still loaded before creating new task
     if entry.entry_id not in hass.data.get(DOMAIN, {}):
         return None
 
@@ -262,14 +268,18 @@ async def _async_subscribe_for_data(
     Uses exponential backoff on repeated failures and raises
     ConfigEntryAuthFailed after MAX_AUTH_FAILURES consecutive auth errors.
     """
+    # Check if entry is still loaded
     if entry.entry_id not in hass.data.get(DOMAIN, {}):
         return
 
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
 
     try:
+        # Check for cancellation early to avoid creating orphaned tasks
+        # if the entry is being unloaded
         await asyncio.sleep(0)
 
+        # TODO move refresh token logic to client
         if (
             not entry_data.client.nest_session
             or entry_data.client.nest_session.is_expired(
@@ -292,6 +302,7 @@ async def _async_subscribe_for_data(
                     entry_data.client.transport_url,
                 )
 
+        # Subscribe to Google Nest subscribe endpoint
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
             entry_data.client.nest_session.userid,
@@ -302,24 +313,32 @@ async def _async_subscribe_for_data(
         # Reset failure counter on success
         entry_data._consecutive_failures = 0
 
+        # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
             key = bucket["object_key"]
 
+            # Nest Protect
             if key.startswith("topaz."):
                 topaz = TopazBucket(**bucket)
                 entry_data.devices[key] = topaz
+
+                # TODO investigate if we want to use dispatcher, or get data from entry data in sensors
                 async_dispatcher_send(hass, key, topaz)
 
+            # Areas
             if key.startswith("where."):
                 bucket_value = Bucket(**bucket).value
                 for area in bucket_value.wheres:
                     entry_data.areas[area.where_id] = area.name
 
+            # Temperature Sensors
             if key.startswith("kryptonite."):
                 kryptonite = Bucket(**bucket)
                 entry_data.devices[key] = kryptonite
+
                 async_dispatcher_send(hass, key, kryptonite)
 
+        # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
 
         LOGGER.debug(buckets)
@@ -358,6 +377,7 @@ async def _async_subscribe_for_data(
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
+        # Renewing access token
         entry_data._consecutive_failures += 1
 
         if entry_data._consecutive_failures >= MAX_AUTH_FAILURES:
@@ -406,14 +426,17 @@ async def _async_subscribe_for_data(
         LOGGER.exception(
             "Unknown pynest exception. Please create an issue on GitHub with your logfile. Updates paused for 1 minute."
         )
+
+        # Wait a minute before retrying
         await asyncio.sleep(60)
         _register_subscribe_task(hass, entry, data)
 
     except asyncio.CancelledError:
+        # Task is being cancelled during unload; do not register a new task
         LOGGER.debug("Subscriber: task cancelled, stopping subscription.")
         raise
 
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         entry_data._consecutive_failures += 1
         backoff = BACKOFF_INTERVALS[
             min(entry_data._consecutive_failures - 1, len(BACKOFF_INTERVALS) - 1)
