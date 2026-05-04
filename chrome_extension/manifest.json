@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Nest Protect Auth Helper",
+  "version": "1.0.0",
+  "description": "Extract authentication cookies for the ha-nest-protect Home Assistant integration",
+  "permissions": [
+    "cookies"
+  ],
+  "host_permissions": [
+    "https://home.nest.com/*",
+    "https://accounts.google.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
