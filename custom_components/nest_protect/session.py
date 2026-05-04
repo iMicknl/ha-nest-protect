@@ -28,16 +28,10 @@ class NestSessionManager:
         self,
         client: NestClient,
         store: Store,
-        issue_token: str | None = None,
-        cookies: str | None = None,
-        refresh_token: str | None = None,
     ) -> None:
         """Initialize the session manager."""
         self._client = client
         self._store = store
-        self._issue_token = issue_token
-        self._cookies = cookies
-        self._refresh_token = refresh_token
         self._consecutive_failures: int = 0
 
     @property
@@ -76,13 +70,11 @@ class NestSessionManager:
 
         Returns FirstDataAPIResponse on success, None if no credentials available.
         """
-        # --- Tier 1: Try reusing persisted Nest session ---
         nest_session = await self._async_try_persisted_session()
 
         if nest_session is not None:
             return nest_session
 
-        # --- Tier 2: Re-authenticate with Google credentials ---
         return await self._async_authenticate_and_fetch()
 
     async def _async_try_persisted_session(self) -> FirstDataAPIResponse | None:
@@ -134,11 +126,8 @@ class NestSessionManager:
             return None
 
         self._client.nest_session = nest_response
-
-        # Persist the new session for next restart
         await self._async_persist(nest_response)
 
-        # Fetch first data
         return await self._client.get_first_data(
             nest_response.access_token, nest_response.userid
         )
@@ -149,13 +138,13 @@ class NestSessionManager:
         Returns a NestResponse on success, None if no credentials are available.
         Raises authentication exceptions from the underlying client on failure.
         """
-        if self._issue_token and self._cookies:
+        if self._client.issue_token and self._client.cookies:
             auth = await self._client.get_access_token_from_cookies(
-                self._issue_token, self._cookies
+                self._client.issue_token, self._client.cookies
             )
-        elif self._refresh_token:
+        elif self._client.refresh_token:
             auth = await self._client.get_access_token_from_refresh_token(
-                self._refresh_token
+                self._client.refresh_token
             )
         else:
             return None

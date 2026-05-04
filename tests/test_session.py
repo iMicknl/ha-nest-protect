@@ -55,6 +55,9 @@ async def test_restore_valid_session():
     }
 
     client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
     client.get_first_data = AsyncMock(return_value=_make_first_data())
     client.get_access_token_from_cookies = AsyncMock()
     client.get_access_token_from_refresh_token = AsyncMock()
@@ -63,12 +66,7 @@ async def test_restore_valid_session():
     store.async_load = AsyncMock(return_value=stored_data)
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        issue_token="https://accounts.google.com/issue",
-        cookies="SID=test",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     result = await manager.async_setup()
 
@@ -95,6 +93,9 @@ async def test_restore_expired_session_falls_through():
     new_nest_session = _make_nest_response(expired=False)
 
     client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
     client.get_access_token_from_cookies = AsyncMock(
         return_value=MagicMock(access_token="new-google-token")
     )
@@ -108,12 +109,7 @@ async def test_restore_expired_session_falls_through():
     store.async_load = AsyncMock(return_value=stored_data)
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        issue_token="https://accounts.google.com/issue",
-        cookies="SID=test",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     result = await manager.async_setup()
 
@@ -137,6 +133,9 @@ async def test_restore_rejected_session_falls_through():
     new_nest_session = _make_nest_response(expired=False)
 
     client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
     # First call with persisted token raises 401, second call succeeds
     client.get_first_data = AsyncMock(
         side_effect=[
@@ -156,12 +155,7 @@ async def test_restore_rejected_session_falls_through():
     store.async_load = AsyncMock(return_value=stored_data)
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        issue_token="https://accounts.google.com/issue",
-        cookies="SID=test",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     result = await manager.async_setup()
 
@@ -179,6 +173,9 @@ async def test_no_persisted_session_uses_cookies():
     new_nest_session = _make_nest_response(expired=False)
 
     client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
     client.get_access_token_from_cookies = AsyncMock(
         return_value=MagicMock(access_token="google-token")
     )
@@ -192,12 +189,7 @@ async def test_no_persisted_session_uses_cookies():
     store.async_load = AsyncMock(return_value=None)
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        issue_token="https://accounts.google.com/issue",
-        cookies="SID=test",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     result = await manager.async_setup()
 
@@ -217,17 +209,14 @@ async def test_ensure_session_valid():
     client = MagicMock()
     client.nest_session = valid_session
     client.auth = None
+    client.refresh_token = "test-refresh-token"
     client.get_access_token = AsyncMock()
     client.authenticate = AsyncMock()
 
     store = MagicMock()
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        refresh_token="test-refresh-token",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     await manager.ensure_session()
 
@@ -245,6 +234,7 @@ async def test_ensure_session_expired_refreshes():
 
     client = MagicMock()
     client.nest_session = expired_session
+    client.refresh_token = "test-refresh-token"
     client.auth = MagicMock(access_token="existing-google-token")
     client.auth.is_expired = MagicMock(return_value=False)
     client.authenticate = AsyncMock(return_value=new_session)
@@ -252,11 +242,7 @@ async def test_ensure_session_expired_refreshes():
     store = MagicMock()
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        refresh_token="test-refresh-token",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     await manager.ensure_session()
 
@@ -276,6 +262,7 @@ async def test_ensure_session_none_refreshes():
     client = MagicMock()
     client.nest_session = None
     client.auth = None
+    client.refresh_token = "test-refresh-token"
     client.get_access_token = AsyncMock(
         return_value=MagicMock(access_token="new-google-token")
     )
@@ -291,11 +278,7 @@ async def test_ensure_session_none_refreshes():
     store = MagicMock()
     store.async_save = AsyncMock()
 
-    manager = NestSessionManager(
-        client=client,
-        store=store,
-        refresh_token="test-refresh-token",
-    )
+    manager = NestSessionManager(client=client, store=store)
 
     await manager.ensure_session()
 

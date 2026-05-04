@@ -90,13 +90,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
 
-    session_manager = NestSessionManager(
-        client=client,
-        store=store,
-        issue_token=issue_token,
-        cookies=cookies,
-        refresh_token=refresh_token,
-    )
+    session_manager = NestSessionManager(client=client, store=store)
 
     try:
         data = await session_manager.async_setup()

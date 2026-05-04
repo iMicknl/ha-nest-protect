@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -10,6 +12,9 @@ from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
 from .pynest.models import Bucket
+
+if TYPE_CHECKING:
+    from .session import NestSessionManager
 
 
 class NestEntity(Entity):
@@ -118,3 +123,29 @@ class NestDescriptiveEntity(NestEntity):
         super().__init__(bucket, description, areas, client)
         self._attr_name = f"{super().name} {self.entity_description.name}"
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
+
+
+class NestUpdatableEntity(NestDescriptiveEntity):
+    """Entity that can push state updates to Nest with session management."""
+
+    def __init__(
+        self,
+        bucket: Bucket,
+        description: EntityDescription,
+        areas: dict[str, str],
+        client: NestClient,
+        session_manager: NestSessionManager,
+    ) -> None:
+        """Initialize the updatable entity."""
+        super().__init__(bucket, description, areas, client)
+        self.session_manager = session_manager
+
+    async def _async_update_objects(self, objects: list[dict]) -> dict:
+        """Update objects with automatic session refresh."""
+        await self.session_manager.ensure_session()
+        return await self.client.update_objects(
+            self.client.nest_session.access_token,
+            self.client.nest_session.userid,
+            self.client.transport_url,
+            objects,
+        )

@@ -10,8 +10,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN, LOGGER
-from .entity import NestDescriptiveEntity
-from .session import NestSessionManager
+from .entity import NestUpdatableEntity
 
 
 @dataclass
@@ -88,22 +87,10 @@ async def async_setup_entry(hass, entry, async_add_devices):
     async_add_devices(entities)
 
 
-class NestProtectSwitch(NestDescriptiveEntity, SwitchEntity):
+class NestProtectSwitch(NestUpdatableEntity, SwitchEntity):
     """Representation of a Nest Protect Switch."""
 
     entity_description: NestProtectSwitchDescription
-
-    def __init__(
-        self,
-        bucket,
-        description,
-        areas,
-        client,
-        session_manager: NestSessionManager,
-    ) -> None:
-        """Initialize the switch."""
-        super().__init__(bucket, description, areas, client)
-        self.session_manager = session_manager
 
     @property
     def is_on(self) -> bool | None:
@@ -139,13 +126,3 @@ class NestProtectSwitch(NestDescriptiveEntity, SwitchEntity):
 
         result = await self._async_update_objects(objects)
         LOGGER.debug(result)
-
-    async def _async_update_objects(self, objects: list[dict]) -> dict:
-        """Update objects with automatic session refresh."""
-        await self.session_manager.ensure_session()
-        return await self.client.update_objects(
-            self.client.nest_session.access_token,
-            self.client.nest_session.userid,
-            self.client.transport_url,
-            objects,
-        )
