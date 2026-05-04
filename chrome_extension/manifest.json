@@ -5,19 +5,16 @@
   "description": "Extract authentication credentials for the ha-nest-protect Home Assistant integration",
   "permissions": [
     "cookies",
-    "activeTab"
+    "webRequest",
+    "tabs"
   ],
   "host_permissions": [
     "https://home.nest.com/*",
-    "https://*.google.com/*"
+    "https://accounts.google.com/*"
   ],
-  "content_scripts": [
-    {
-      "matches": ["https://home.nest.com/*"],
-      "js": ["content_script.js"],
-      "run_at": "document_idle"
-    }
-  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
