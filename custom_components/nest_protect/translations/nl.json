@@ -133,7 +133,7 @@
         "name": "Lichtpad"
       },
       "ntp_green_led_enable": {
-        "name": "Nachtbelofte"
+        "name": "Nachtwacht"
       },
       "heads_up_enable": {
         "name": "Let op-meldingen"
