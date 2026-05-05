@@ -67,7 +67,7 @@ class NestEntity(Entity):
                 ),
                 suggested_area=self.area,
                 configuration_url="https://home.nest.com/protect/"
-                + self.bucket.value["structure_id"],
+                + self.bucket.value["structure_id"],  # TODO change url based on device
             )
 
         if self.bucket.object_key.startswith("kryptonite."):
@@ -77,7 +77,9 @@ class NestEntity(Entity):
 
             return DeviceInfo(
                 identifiers={(DOMAIN, identifier)},
-                name=f"Nest Temperature Sensor ({label})" if label else "Nest Temperature Sensor",
+                name=f"Nest Temperature Sensor ({label})"
+                if label
+                else "Nest Temperature Sensor",
                 manufacturer="Google",
                 model=self.bucket.value.get("model"),
                 suggested_area=self.area,

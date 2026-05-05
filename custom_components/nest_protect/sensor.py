@@ -71,6 +71,16 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         bucket_type=BucketType.KRYPTONITE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # TODO Due to duplicate keys, this sensor is not available yet
+    # NestProtectSensorDescription(
+    #     key="battery_level",
+    #     name="Battery Voltage",
+    #     value_fn=lambda state: round(state / 1000, 3),
+    #     device_class=SensorDeviceClass.BATTERY,
+    #     native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+    #     entity_category=EntityCategory.DIAGNOSTIC,
+    #     bucket_type=BucketType.TOPAZ,
+    # ),
     NestProtectSensorDescription(
         key="battery_level",
         translation_key="battery_level",
@@ -110,6 +120,9 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # TODO Add Color Status (gray, green, yellow, red)
+    # TODO Smoke Status (OK, Warning, Emergency)
+    # TODO CO Status (OK, Warning, Emergency)
 ]
 
 
