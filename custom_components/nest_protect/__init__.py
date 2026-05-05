@@ -6,7 +6,12 @@ import asyncio
 import contextlib
 from dataclasses import dataclass
 
-from aiohttp import ClientConnectorError, ClientError, ServerDisconnectedError
+from aiohttp import (
+    ClientConnectorError,
+    ClientError,
+    ClientOSError,
+    ServerDisconnectedError,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -265,6 +270,10 @@ async def _async_subscribe_for_data(
 
     except ClientConnectorError:
         LOGGER.debug("Subscriber: cannot connect to host.")
+        _register_subscribe_task(hass, entry, data)
+
+    except ClientOSError:
+        LOGGER.debug("Subscriber: connection reset.")
         _register_subscribe_task(hass, entry, data)
 
     except EmptyResponseException:

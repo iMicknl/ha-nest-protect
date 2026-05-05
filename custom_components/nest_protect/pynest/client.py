@@ -23,6 +23,7 @@ from .exceptions import (
     BadGatewayException,
     EmptyResponseException,
     GatewayTimeoutException,
+    NestServiceException,
     NotAuthenticatedException,
     PynestException,
 )
@@ -360,7 +361,7 @@ class NestClient:
             except ContentTypeError as error:
                 result = await response.text()
 
-                raise PynestException(
+                raise NestServiceException(
                     f"{response.status} error while subscribing - {result}"
                 ) from error
 
