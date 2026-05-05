@@ -106,7 +106,7 @@
         "name": "Batterijniveau"
       },
       "replace_by_date_utc_secs": {
-        "name": "Vervangen voor"
+        "name": "Vervangdatum"
       },
       "last_audio_self_test_end_utc_secs": {
         "name": "Laatste geluidscheck"
