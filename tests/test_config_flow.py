@@ -2,7 +2,7 @@
 
 import base64
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -89,6 +89,7 @@ async def test_extension_step_creates_entry(hass: HomeAssistant) -> None:
 
     with patch(
         "custom_components.nest_protect.config_flow.ConfigFlow.async_validate_input",
+        new_callable=AsyncMock,
         return_value=[issue_token, cookies, "user@example.com"],
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -148,6 +149,7 @@ async def test_extension_step_auth_failure(hass: HomeAssistant) -> None:
 
     with patch(
         "custom_components.nest_protect.config_flow.ConfigFlow.async_validate_input",
+        new_callable=AsyncMock,
         side_effect=BadCredentialsException("expired"),
     ):
         result = await hass.config_entries.flow.async_configure(

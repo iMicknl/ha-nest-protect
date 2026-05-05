@@ -23,9 +23,10 @@ A Chrome extension that extracts the authentication credentials needed to config
 
 This extension requests the minimum permissions needed:
 
-- **cookies** — to read Google authentication cookies (SID, HSID, SSID, APISID, SAPISID)
-- **activeTab** — to communicate with the content script on home.nest.com
-- **Host access** — scoped to `home.nest.com` and `*.google.com` only
+- **cookies** — to read Google authentication cookies (SID, HSID, SSID, APISID, SAPISID) as a fallback
+- **webRequest** — to intercept the OAuth token request and capture cookies from request headers
+- **tabs** — to open and navigate to home.nest.com for credential extraction
+- **Host access** — scoped to `home.nest.com` and `accounts.google.com` only
 
 The extension does not transmit any data externally. All values are displayed locally for you to copy.
 
