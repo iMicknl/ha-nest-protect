@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import voluptuous as vol
 from aiohttp import ClientError
@@ -34,24 +34,26 @@ DESCRIPTION_PLACEHOLDERS = {
     "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip",
 }
 
-REQUIRED_COOKIE_NAMES: set[str] = {
-    "NID",
-    "__Secure-3PSID",
-    "__Secure-3PAPISID",
-    "__Host-3PLSID",
-    "__Secure-3PSIDCC",
-    "APISID",
-    "SAPISID",
-    "HSID",
-    "SSID",
-    "SID",
-    "__Secure-1PSID",
-    "__Secure-1PAPISID",
-    "__Host-1PLSID",
-    "__Secure-1PSIDCC",
-    "SIDCC",
-    "LSID",
-}
+REQUIRED_COOKIE_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "NID",
+        "__Secure-3PSID",
+        "__Secure-3PAPISID",
+        "__Host-3PLSID",
+        "__Secure-3PSIDCC",
+        "APISID",
+        "SAPISID",
+        "HSID",
+        "SSID",
+        "SID",
+        "__Secure-1PSID",
+        "__Secure-1PAPISID",
+        "__Host-1PLSID",
+        "__Secure-1PSIDCC",
+        "SIDCC",
+        "LSID",
+    }
+)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -210,7 +212,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 issue_token = decoded["issue_token"]
                 cookies = self._clean_cookies(decoded["cookies"])
-            except (ValueError, KeyError, json.JSONDecodeError):
+            except ValueError, KeyError, json.JSONDecodeError:
                 errors[CONF_AUTH_CODE] = "invalid_code"
 
             if not errors and (
@@ -229,7 +231,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         validation_input
                     )
-                except (TimeoutError, ClientError):
+                except TimeoutError, ClientError:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
@@ -298,7 +300,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         user_input
                     )
-                except (TimeoutError, ClientError):
+                except TimeoutError, ClientError:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
