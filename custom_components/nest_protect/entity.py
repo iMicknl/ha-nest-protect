@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class NestEntity(Entity):
     """Class to describe an Nest entity and link it to a device."""
 
+    _attr_has_entity_name = True
     _attr_should_poll = False
 
     def __init__(
@@ -37,28 +38,19 @@ class NestEntity(Entity):
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
-        self._attr_name = self.device_name()
         self._attr_device_info = self.generate_device_info()
 
-    def device_name(self) -> str | None:
-        """Generate device name."""
+    def _device_label(self) -> str:
+        """Generate device label from description or area."""
         if label := self.bucket.value.get("description"):
-            name = label
-        elif self.area:
-            name = self.area
-        else:
-            name = ""
-
-        if self.bucket.object_key.startswith("topaz."):
-            return f"Nest Protect ({name})"
-
-        if self.bucket.object_key.startswith("kryptonite."):
-            return f"Nest Temperature Sensor ({name})"
-
-        return None
+            return label
+        if self.area:
+            return self.area
+        return ""
 
     def generate_device_info(self) -> DeviceInfo | None:
         """Generate device info."""
+        label = self._device_label()
 
         if self.bucket.object_key.startswith("topaz."):
             return DeviceInfo(
@@ -66,7 +58,7 @@ class NestEntity(Entity):
                     (dr.CONNECTION_NETWORK_MAC, self.bucket.value["wifi_mac_address"])
                 },
                 identifiers={(DOMAIN, self.bucket.value["serial_number"])},
-                name=self._attr_name,
+                name=f"Nest Protect ({label})" if label else "Nest Protect",
                 manufacturer="Google",
                 model=self.bucket.value["model"],
                 sw_version=self.bucket.value["software_version"],
@@ -75,7 +67,7 @@ class NestEntity(Entity):
                 ),
                 suggested_area=self.area,
                 configuration_url="https://home.nest.com/protect/"
-                + self.bucket.value["structure_id"],  # TODO change url based on device
+                + self.bucket.value["structure_id"],
             )
 
         if self.bucket.object_key.startswith("kryptonite."):
@@ -85,7 +77,7 @@ class NestEntity(Entity):
 
             return DeviceInfo(
                 identifiers={(DOMAIN, identifier)},
-                name=self._attr_name,
+                name=f"Nest Temperature Sensor ({label})" if label else "Nest Temperature Sensor",
                 manufacturer="Google",
                 model=self.bucket.value.get("model"),
                 suggested_area=self.area,
@@ -121,7 +113,6 @@ class NestDescriptiveEntity(NestEntity):
     ) -> None:
         """Initialize the device."""
         super().__init__(bucket, description, areas, client)
-        self._attr_name = f"{super().name} {self.entity_description.name}"
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
 
 

@@ -37,25 +37,25 @@ class NestProtectBinarySensorDescription(
 BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     NestProtectBinarySensorDescription(
         key="co_status",
-        name="CO Status",
+        translation_key="co_status",
         device_class=BinarySensorDeviceClass.CO,
         value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="smoke_status",
-        name="Smoke Status",
+        translation_key="smoke_status",
         device_class=BinarySensorDeviceClass.SMOKE,
         value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="heat_status",
-        name="Heat Status",
+        translation_key="heat_status",
         device_class=BinarySensorDeviceClass.HEAT,
         value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
         key="component_speaker_test_passed",
-        name="Speaker Test",
+        translation_key="component_speaker_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:speaker-wireless",
@@ -63,21 +63,21 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="battery_health_state",
-        name="Battery Health",
+        translation_key="battery_health_state",
         device_class=BinarySensorDeviceClass.BATTERY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda state: state,
     ),
     NestProtectBinarySensorDescription(
         key="is_online",
-        name="Online",
+        translation_key="is_online",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda state: state,
     ),
     NestProtectBinarySensorDescription(
         key="component_smoke_test_passed",
-        name="Smoke Test",
+        translation_key="component_smoke_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:smoke",
@@ -85,7 +85,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="component_co_test_passed",
-        name="CO Test",
+        translation_key="component_co_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:molecule-co",
@@ -93,7 +93,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="component_wifi_test_passed",
-        name="WiFi Test",
+        translation_key="component_wifi_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:wifi",
@@ -101,7 +101,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="component_led_test_passed",
-        name="LED Test",
+        translation_key="component_led_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:led-off",
@@ -109,7 +109,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="component_pir_test_passed",
-        name="PIR Test",
+        translation_key="component_pir_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:run",
@@ -117,7 +117,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="component_buzzer_test_passed",
-        name="Buzzer Test",
+        translation_key="component_buzzer_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:alarm-bell",
@@ -134,7 +134,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     # ),
     NestProtectBinarySensorDescription(
         key="component_hum_test_passed",
-        name="Humidity Test",
+        translation_key="component_hum_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:water-percent",
@@ -142,7 +142,7 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="removed_from_base",
-        name="Removed from Base",
+        translation_key="removed_from_base",
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:tray-remove",
@@ -150,14 +150,14 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
     NestProtectBinarySensorDescription(
         key="auto_away",
-        name="Occupancy",
+        translation_key="auto_away",
         device_class=BinarySensorDeviceClass.OCCUPANCY,
         wired_only=True,
         value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
         key="line_power_present",
-        name="Line Power",
+        translation_key="line_power_present",
         device_class=BinarySensorDeviceClass.POWER,
         entity_category=EntityCategory.DIAGNOSTIC,
         wired_only=True,

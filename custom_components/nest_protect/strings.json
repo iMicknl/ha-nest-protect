@@ -51,14 +51,95 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "co_status": {
+        "name": "CO status"
+      },
+      "smoke_status": {
+        "name": "Smoke status"
+      },
+      "heat_status": {
+        "name": "Heat status"
+      },
+      "component_speaker_test_passed": {
+        "name": "Speaker test"
+      },
+      "battery_health_state": {
+        "name": "Battery health"
+      },
+      "is_online": {
+        "name": "Online"
+      },
+      "component_smoke_test_passed": {
+        "name": "Smoke test"
+      },
+      "component_co_test_passed": {
+        "name": "CO test"
+      },
+      "component_wifi_test_passed": {
+        "name": "Wi-Fi test"
+      },
+      "component_led_test_passed": {
+        "name": "LED test"
+      },
+      "component_pir_test_passed": {
+        "name": "PIR test"
+      },
+      "component_buzzer_test_passed": {
+        "name": "Buzzer test"
+      },
+      "component_hum_test_passed": {
+        "name": "Humidity test"
+      },
+      "removed_from_base": {
+        "name": "Removed from base"
+      },
+      "auto_away": {
+        "name": "Occupancy"
+      },
+      "line_power_present": {
+        "name": "Line power"
+      }
+    },
+    "sensor": {
+      "battery_level": {
+        "name": "Battery level"
+      },
+      "replace_by_date_utc_secs": {
+        "name": "Replace by"
+      },
+      "last_audio_self_test_end_utc_secs": {
+        "name": "Last audio self-test"
+      },
+      "latest_manual_test_end_utc_secs": {
+        "name": "Last manual test"
+      },
+      "current_temperature": {
+        "name": "Temperature"
+      }
+    },
     "select": {
       "night_light_brightness": {
-        "name": "Night Light Brightness",
+        "name": "Night light brightness",
         "state": {
           "low": "Low",
           "medium": "Medium",
           "high": "High"
         }
+      }
+    },
+    "switch": {
+      "night_light_enable": {
+        "name": "Pathlight"
+      },
+      "ntp_green_led_enable": {
+        "name": "Nightly promise"
+      },
+      "heads_up_enable": {
+        "name": "Heads-Up"
+      },
+      "steam_detection_enable": {
+        "name": "Steam check"
       }
     }
   }

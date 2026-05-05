@@ -64,26 +64,16 @@ class NestProtectSensorDescription(SensorEntityDescription):
 SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
     NestProtectSensorDescription(
         key="battery_level",
-        name="Battery Level",
+        translation_key="battery_level",
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         bucket_type=BucketType.KRYPTONITE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    # TODO Due to duplicate keys, this sensor is not available yet
-    # NestProtectSensorDescription(
-    #     key="battery_level",
-    #     name="Battery Voltage",
-    #     value_fn=lambda state: round(state / 1000, 3),
-    #     device_class=SensorDeviceClass.BATTERY,
-    #     native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-    #     entity_category=EntityCategory.DIAGNOSTIC,
-    #     bucket_type=BucketType.TOPAZ,
-    # ),
     NestProtectSensorDescription(
         key="battery_level",
-        name="Battery Level",
+        translation_key="battery_level",
         value_fn=milli_volt_to_percentage,
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
@@ -92,37 +82,34 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         state_class=SensorStateClass.MEASUREMENT,
     ),
     NestProtectSensorDescription(
-        name="Replace By",
         key="replace_by_date_utc_secs",
+        translation_key="replace_by_date_utc_secs",
         value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
-        name="Last Audio Self Test",
         key="last_audio_self_test_end_utc_secs",
+        translation_key="last_audio_self_test_end_utc_secs",
         value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
-        name="Last Manual Test",
         key="latest_manual_test_end_utc_secs",
+        translation_key="latest_manual_test_end_utc_secs",
         value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
-        name="Temperature",
         key="current_temperature",
+        translation_key="current_temperature",
         value_fn=lambda state: round(state, 2),
         device_class=SensorDeviceClass.TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    # TODO Add Color Status (gray, green, yellow, red)
-    # TODO Smoke Status (OK, Warning, Emergency)
-    # TODO CO Status (OK, Warning, Emergency)
 ]
 
 

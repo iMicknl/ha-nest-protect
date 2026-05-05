@@ -26,7 +26,6 @@ SENSOR_DESCRIPTIONS: list[SelectEntityDescription] = [
     NestProtectSelectDescription(
         key="night_light_brightness",
         translation_key="night_light_brightness",
-        name="Brightness",
         icon="mdi:lightbulb-on",
         options=[*PRESET_TO_BRIGHTNESS],
         entity_category=EntityCategory.CONFIG,

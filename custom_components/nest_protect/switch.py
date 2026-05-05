@@ -36,25 +36,25 @@ PRESET_TO_BRIGHTNESS = {v: k for k, v in BRIGHTNESS_TO_PRESET.items()}
 SWITCH_DESCRIPTIONS: list[SwitchEntityDescription] = [
     NestProtectSwitchDescription(
         key="night_light_enable",
-        name="Pathlight",
+        translation_key="night_light_enable",
         entity_category=EntityCategory.CONFIG,
         icon="mdi:weather-night",
     ),
     NestProtectSwitchDescription(
         key="ntp_green_led_enable",
-        name="Nightly Promise",
+        translation_key="ntp_green_led_enable",
         entity_category=EntityCategory.CONFIG,
         icon="mdi:led-off",
     ),
     NestProtectSwitchDescription(
         key="heads_up_enable",
-        name="Heads-Up",
+        translation_key="heads_up_enable",
         entity_category=EntityCategory.CONFIG,
         icon="mdi:exclamation-thick",
     ),
     NestProtectSwitchDescription(
         key="steam_detection_enable",
-        name="Steam Check",
+        translation_key="steam_detection_enable",
         entity_category=EntityCategory.CONFIG,
         icon="mdi:pot-steam",
     ),
