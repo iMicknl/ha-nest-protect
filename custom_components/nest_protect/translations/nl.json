@@ -7,8 +7,8 @@
     "error": {
       "cannot_connect": "Kan niet verbinden",
       "invalid_auth": "Ongeldige authenticatie",
-      "invalid_issue_token": "Ongeldige issue token URL. Moet beginnen met {accounts_url} en de issueToken actie bevatten.",
-      "invalid_cookies": "Ongeldig cookies-formaat. Zorg ervoor dat je de volledige cookie-header van het oauth2/iframe-verzoek hebt gekopieerd.",
+      "invalid_issue_token": "Ongeldige issue token URL. Moet beginnen met {accounts_url} en de issueToken-actie bevatten.",
+      "invalid_cookies": "Ongeldig cookie-formaat. Zorg ervoor dat je de volledige cookie-header van het oauth2/iframe-verzoek hebt gekopieerd.",
       "invalid_code": "Ongeldige authenticatiecode. Controleer of je de volledige code van de extensie hebt gekopieerd.",
       "unknown": "Onverwachte fout"
     },
@@ -38,7 +38,7 @@
       },
       "account_link": {
         "title": "Verbind je Nest-account",
-        "description": "Volg deze stappen om je inloggegevens te verkrijgen:\n\n1. Open een **Incognito/Privé** browservenster\n2. Schakel **cookies van derden** in bij de browserinstellingen\n3. Ga naar [home.nest.com]({nest_url}) en log in met Google\n4. Open **Ontwikkelaarstools** (F12) → tabblad **Netwerk** → Vink **Logboek bewaren** aan\n5. Typ `issueToken` in het filtervak en kopieer de volledige **Aanvraag-URL**\n6. Typ `oauth2/iframe` in het filtervak, klik op het laatste verzoek en kopieer de volledige **Cookie**-headerwaarde\n\n⚠️ Log niet uit bij home.nest.com na het kopiëren van de inloggegevens",
+        "description": "Volg deze stappen om je inloggegevens te verkrijgen:\n\n1. Open een **Incognito/Privé** browservenster\n2. Schakel **cookies van derden** in bij de browserinstellingen\n3. Ga naar [home.nest.com]({nest_url}) en log in met Google\n4. Open **DevTools** (F12) → tabblad **Network** → Vink **Preserve log** aan\n5. Typ `issueToken` in het filtervak en kopieer de volledige **Request URL**\n6. Typ `oauth2/iframe` in het filtervak, klik op het laatste verzoek en kopieer de volledige **Cookie**-headerwaarde\n\n⚠️ Log niet uit bij home.nest.com na het kopiëren van de inloggegevens",
         "data": {
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
@@ -59,10 +59,10 @@
         "name": "Rookstatus"
       },
       "heat_status": {
-        "name": "Hittestatus"
+        "name": "Warmtestatus"
       },
       "component_speaker_test_passed": {
-        "name": "Luidsprekerstest"
+        "name": "Speakertest"
       },
       "battery_health_state": {
         "name": "Batterijstatus"
@@ -77,7 +77,7 @@
         "name": "CO-test"
       },
       "component_wifi_test_passed": {
-        "name": "Wi-Fi-test"
+        "name": "Wifi-test"
       },
       "component_led_test_passed": {
         "name": "LED-test"
@@ -86,7 +86,7 @@
         "name": "PIR-test"
       },
       "component_buzzer_test_passed": {
-        "name": "Zoemertest"
+        "name": "Sirenetest"
       },
       "component_hum_test_passed": {
         "name": "Vochtigheidstest"
@@ -109,10 +109,10 @@
         "name": "Vervangen voor"
       },
       "last_audio_self_test_end_utc_secs": {
-        "name": "Laatste audio-zelftest"
+        "name": "Laatste geluidscheck"
       },
       "latest_manual_test_end_utc_secs": {
-        "name": "Laatste handmatige test"
+        "name": "Laatste veiligheidscontrole"
       },
       "current_temperature": {
         "name": "Temperatuur"
@@ -120,7 +120,7 @@
     },
     "select": {
       "night_light_brightness": {
-        "name": "Nachtlamp helderheid",
+        "name": "Lichtpad helderheid",
         "state": {
           "low": "Laag",
           "medium": "Gemiddeld",
@@ -130,13 +130,13 @@
     },
     "switch": {
       "night_light_enable": {
-        "name": "Padverlichting"
+        "name": "Lichtpad"
       },
       "ntp_green_led_enable": {
         "name": "Nachtbelofte"
       },
       "heads_up_enable": {
-        "name": "Heads-Up"
+        "name": "Let op"
       },
       "steam_detection_enable": {
         "name": "Stoomcontrole"
