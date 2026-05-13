@@ -111,14 +111,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         raise ConfigEntryAuthFailed("No credentials available")
 
     # Update cookies in config entry if Google returned refreshed ones
-    if (
-        session_manager.refreshed_cookies
-        and session_manager.refreshed_cookies != cookies
-    ):
-        hass.config_entries.async_update_entry(
-            entry,
-            data={**entry.data, CONF_COOKIES: session_manager.refreshed_cookies},
-        )
+    _persist_refreshed_cookies(hass, entry, client, session_manager)
 
     device_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
@@ -174,6 +167,31 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
     await store.async_remove()
+
+
+def _persist_refreshed_cookies(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    client: NestClient,
+    sm: NestSessionManager,
+) -> None:
+    """Persist Google-rotated cookies back to the config entry and client.
+
+    Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
+    Without writing them back, a HA restart would use stale cookies and force
+    re-authentication; the in-memory client also needs the update so the next
+    refresh in the same HA session uses fresh cookies.
+    """
+    new_cookies = sm.refreshed_cookies
+    if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
+        return
+
+    LOGGER.debug("Persisting refreshed Nest cookies")
+    hass.config_entries.async_update_entry(
+        entry,
+        data={**entry.data, CONF_COOKIES: new_cookies},
+    )
+    client.cookies = new_cookies
 
 
 def _register_subscribe_task(
@@ -266,6 +284,7 @@ async def _async_subscribe_for_data(
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
+        sm.record_success()
         _register_subscribe_task(hass, entry, data)
 
     except ClientConnectorError:
@@ -300,6 +319,13 @@ async def _async_subscribe_for_data(
         await asyncio.sleep(sm.backoff_interval)
 
         await sm.async_refresh_session()
+
+        # Entry may have been unloaded during the backoff sleep
+        if entry.entry_id not in hass.data.get(DOMAIN, {}):
+            return
+
+        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+
         _register_subscribe_task(hass, entry, data)
 
     except BadCredentialsException:
