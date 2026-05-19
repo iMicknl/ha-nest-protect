@@ -1,0 +1,35 @@
+{
+  "manifest_version": 2,
+  "name": "Nest Auth Helper",
+  "version": "1.0.0",
+  "description": "Extract authentication credentials for the ha-nest-protect Home Assistant integration",
+  "permissions": [
+    "cookies",
+    "webRequest",
+    "webRequestBlocking",
+    "tabs",
+    "https://home.nest.com/*",
+    "https://accounts.google.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nest-auth-helper@ha-nest-protect",
+      "strict_min_version": "109.0"
+    }
+  }
+}
