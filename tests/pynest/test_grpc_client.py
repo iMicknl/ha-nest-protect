@@ -17,9 +17,6 @@ from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
     description_pb2 as weave_description_pb2,
 )
 from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
-    heartbeat_pb2 as weave_heartbeat_pb2,
-)
-from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
     power_pb2 as weave_power_pb2,
 )
 from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
@@ -77,10 +74,9 @@ def test_extract_lock_state_locked():
     assert lock is not None
     assert lock.resource_id == "DEVICE_X"
     assert lock.bolt_state == LockBoltState.LOCKED
-    # Fallback values when description/liveness/battery traits absent
+    # Fallback values when description / battery traits absent
     assert lock.serial_number == "DEVICE_X"
     assert lock.name == "Nest x Yale Lock"
-    assert lock.online is True
     assert lock.battery_level is None
 
 
@@ -130,8 +126,6 @@ def test_extract_lock_state_with_description_and_battery():
     identity.softwareVersion = "1.2-7"
     label = weave_description_pb2.LabelSettingsTrait()
     label.label = "Front Door"
-    liveness = weave_heartbeat_pb2.LivenessTrait()
-    liveness.status = weave_heartbeat_pb2.LivenessTrait.LIVENESS_DEVICE_STATUS_ONLINE
     battery = weave_power_pb2.BatteryPowerSourceTrait()
     battery.remaining.remainingPercent.value = 0.85
 
@@ -141,14 +135,12 @@ def test_extract_lock_state_with_description_and_battery():
             weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name: bolt,
             weave_description_pb2.DeviceIdentityTrait.DESCRIPTOR.full_name: identity,
             weave_description_pb2.LabelSettingsTrait.DESCRIPTOR.full_name: label,
-            weave_heartbeat_pb2.LivenessTrait.DESCRIPTOR.full_name: liveness,
             weave_power_pb2.BatteryPowerSourceTrait.DESCRIPTOR.full_name: battery,
         },
     )
     assert lock.serial_number == "ABC123"
     assert lock.software_version == "1.2-7"
     assert lock.name == "Front Door"
-    assert lock.online is True
     assert lock.battery_level == pytest.approx(85.0)
 
 

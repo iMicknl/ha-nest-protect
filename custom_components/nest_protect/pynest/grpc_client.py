@@ -21,7 +21,6 @@ from aiohttp import ClientTimeout
 from .lock_models import LockBoltState, LockState
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
 from .protobuf_gen.weave.trait import description_pb2 as weave_description_pb2
-from .protobuf_gen.weave.trait import heartbeat_pb2 as weave_heartbeat_pb2
 from .protobuf_gen.weave.trait import power_pb2 as weave_power_pb2
 from .protobuf_gen.weave.trait import security_pb2 as weave_security_pb2
 
@@ -53,7 +52,6 @@ _LOCK_TRAITS: tuple[type, ...] = (
     weave_security_pb2.BoltLockTrait,
     weave_description_pb2.DeviceIdentityTrait,
     weave_description_pb2.LabelSettingsTrait,
-    weave_heartbeat_pb2.LivenessTrait,
     weave_power_pb2.BatteryPowerSourceTrait,
 )
 _TRAIT_NAME_TO_CLASS: dict[str, type] = {
@@ -111,14 +109,6 @@ def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState |
     label = traits.get(weave_description_pb2.LabelSettingsTrait.DESCRIPTOR.full_name)
     name = label.label if label and label.label else "Nest x Yale Lock"
 
-    liveness = traits.get(weave_heartbeat_pb2.LivenessTrait.DESCRIPTOR.full_name)
-    online = (
-        liveness.status
-        == weave_heartbeat_pb2.LivenessTrait.LIVENESS_DEVICE_STATUS_ONLINE
-        if liveness
-        else True
-    )
-
     battery_level: float | None = None
     battery_trait = traits.get(
         weave_power_pb2.BatteryPowerSourceTrait.DESCRIPTOR.full_name
@@ -133,7 +123,6 @@ def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState |
         name=name,
         serial_number=serial,
         bolt_state=bolt_state,
-        online=online,
         software_version=software_version,
         battery_level=battery_level,
     )

@@ -26,6 +26,5 @@ class LockState:
     name: str
     serial_number: str
     bolt_state: LockBoltState
-    online: bool
     software_version: str | None = None
     battery_level: float | None = None
