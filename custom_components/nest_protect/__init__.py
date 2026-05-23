@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aiohttp import (
     ClientConnectorError,
@@ -26,7 +26,6 @@ from .const import (
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
-    LOCK_PLATFORM,
     LOGGER,
     PLATFORMS,
     STORAGE_KEY_FORMAT,
@@ -62,10 +61,10 @@ class HomeAssistantNestProtectData:
     areas: dict[str, str]
     client: NestClient
     session_manager: NestSessionManager
+    grpc_lock_client: GrpcLockClient
     subscription_task: asyncio.Task | None = None
-    grpc_lock_client: GrpcLockClient | None = None
     lock_observe_task: asyncio.Task | None = None
-    lock_state_cache: dict[str, LockState] | None = None
+    lock_state_cache: dict[str, LockState] = field(default_factory=dict)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -141,14 +140,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         areas=areas,
         client=client,
         session_manager=session_manager,
+        grpc_lock_client=GrpcLockClient(client),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
-    entry_data.lock_state_cache = {}
-    entry_data.grpc_lock_client = GrpcLockClient(client)
-    platforms = [*PLATFORMS, LOCK_PLATFORM]
-
-    await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry_data.subscription_task = asyncio.create_task(
         _async_subscribe_for_data(hass, entry, data)
@@ -164,13 +160,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Consume the gRPC observe stream and dispatch lock updates."""
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    grpc_client = entry_data.grpc_lock_client
     cache = entry_data.lock_state_cache
-    if grpc_client is None or cache is None:
-        return
 
     try:
-        async for batch in grpc_client.observe_locks():
+        async for batch in entry_data.grpc_lock_client.observe_locks():
             new_locks: dict[str, LockState] = {}
             for resource_id, lock_state in batch.items():
                 previous = cache.get(resource_id)
@@ -189,8 +182,7 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    platforms = [*PLATFORMS, LOCK_PLATFORM]
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, platforms):
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         # Cancel background tasks only after successful platform unload
         if entry.entry_id in hass.data.get(DOMAIN, {}):
             entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
