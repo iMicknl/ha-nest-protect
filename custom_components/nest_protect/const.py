@@ -24,6 +24,7 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
     Platform.SWITCH,
 ]
+LOCK_PLATFORM: Platform = Platform.LOCK
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"

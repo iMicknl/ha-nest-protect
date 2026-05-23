@@ -17,10 +17,15 @@ from homeassistant.const import PERCENTAGE, UnitOfTemperature
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
+from homeassistant.core import callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
 from .entity import NestDescriptiveEntity
+from .lock import NestLockBatterySensor, discovery_signal
 from .pynest.enums import BucketType
+from .pynest.lock_models import LockState
 
 
 def milli_volt_to_percentage(state: int):
@@ -146,6 +151,31 @@ async def async_setup_entry(hass, entry, async_add_devices):
                 )
 
     async_add_devices(entities)
+
+    # Wire battery sensors for any discovered Nest x Yale locks. The same
+    # discovery_signal that creates lock entities also triggers battery sensors.
+    known_lock_batteries: set[str] = set()
+
+    @callback
+    def _on_locks_discovered(locks: dict[str, LockState]) -> None:
+        new_sensors: list[NestLockBatterySensor] = []
+        for resource_id, lock_state in locks.items():
+            if resource_id in known_lock_batteries:
+                continue
+            known_lock_batteries.add(resource_id)
+            new_sensors.append(NestLockBatterySensor(lock_state))
+        if new_sensors:
+            async_add_devices(new_sensors)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass, discovery_signal(entry.entry_id), _on_locks_discovered
+        )
+    )
+
+    seed: dict[str, LockState] | None = getattr(data, "lock_state_cache", None)
+    if seed:
+        _on_locks_discovered(seed)
 
 
 class NestProtectSensor(NestDescriptiveEntity, SensorEntity):

@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+package weave.trait.heartbeat;
+
+message LivenessTrait {
+    LivenessDeviceStatus status = 1;
+    google.protobuf.Timestamp timeStatusChanged = 2;
+    google.protobuf.Duration maxInactivityDuration = 3;
+    LivenessDeviceStatus heartbeatStatus = 4;
+    google.protobuf.Timestamp timeHeartbeatStatusChanged = 5;
+    google.protobuf.BoolValue notifyRequestUnresponsiveness = 6;
+    google.protobuf.Timestamp notifyRequestUnresponsivenessTimeStatusChanged = 7;
+    google.protobuf.BoolValue commandRequestUnresponsiveness = 8;
+    google.protobuf.Timestamp commandRequestUnresponsivenessTimeStatusChanged = 9;
+    google.protobuf.StringValue publisherName = 10;
+    google.protobuf.BoolValue tunnelDisconnected = 11;
+    google.protobuf.Timestamp tunnelDisconnectedTimeStatusChanged = 12;
+    google.protobuf.Timestamp lastContactedTime = 13;
+    google.protobuf.Timestamp lastWdmHeartbeatTime = 14;
+    google.protobuf.Timestamp tunnelClosedTime = 15;
+    repeated DeviceFrontendType frontend = 16;
+    google.protobuf.BoolValue disconnected = 17;
+    google.protobuf.Timestamp disconnectedTimeStatusChanged = 18;
+    google.protobuf.Timestamp connectionClosedTime = 19;
+
+    enum LivenessDeviceStatus {
+        LIVENESS_DEVICE_STATUS_UNSPECIFIED = 0;
+        LIVENESS_DEVICE_STATUS_ONLINE = 1;
+        LIVENESS_DEVICE_STATUS_UNREACHABLE = 2;
+        LIVENESS_DEVICE_STATUS_UNINITIALIZED = 3;
+        LIVENESS_DEVICE_STATUS_REBOOTING = 4;
+        LIVENESS_DEVICE_STATUS_UPGRADING = 5;
+        LIVENESS_DEVICE_STATUS_SCHEDULED_DOWN = 6;
+    }
+
+    enum DeviceFrontendType {
+        DEVICE_FRONTEND_TYPE_UNSPECIFIED = 0;
+        DEVICE_FRONTEND_TYPE_LYCRA = 1;
+        DEVICE_FRONTEND_TYPE_WEAVE_FE_1 = 2;
+    }
+
+    message LivenessChangeEvent {
+        LivenessDeviceStatus status = 1;
+        LivenessDeviceStatus heartbeatStatus = 2;
+        google.protobuf.BoolValue notifyRequestUnresponsiveness = 3;
+        google.protobuf.BoolValue commandRequestUnresponsiveness = 4;
+        LivenessDeviceStatus prevStatus = 5;
+        google.protobuf.BoolValue tunnelDisconnected = 6;
+        google.protobuf.Timestamp lastContactedTime = 7;
+        google.protobuf.Timestamp lastWdmHeartbeatTime = 8;
+        google.protobuf.Timestamp tunnelClosedTime = 9;
+        google.protobuf.Timestamp timeStatusChanged = 10;
+        google.protobuf.Timestamp timePrevStatusChanged = 11;
+        repeated DeviceFrontendType frontend = 12;
+        google.protobuf.BoolValue disconnected = 13;
+        google.protobuf.Timestamp disconnectedTimeStatusChanged = 14;
+        google.protobuf.Timestamp connectionClosedTime = 15;
+        google.protobuf.StringValue traitLabel = 16;
+    }
+
+    message LivenessConnectedSignalEvent {
+        string connectionId = 1;
+        DeviceFrontendType frontend = 2;
+        google.protobuf.Timestamp occurrenceTime = 3;
+        google.protobuf.StringValue connectionTag = 4;
+    }
+
+    message LivenessDisconnectedSignalEvent {
+        string connectionId = 1;
+        DeviceFrontendType frontend = 2;
+        google.protobuf.Timestamp occurrenceTime = 3;
+        google.protobuf.StringValue connectionTag = 4;
+    }
+}

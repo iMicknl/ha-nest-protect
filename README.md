@@ -10,6 +10,25 @@ Custom component for Home Assistant to interact with Nest Protect devices via an
 
 This integration will add the most important sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired (to main power). In addition, it will expose several diagnostic and configuration entities. All sensor values will be updated real-time.
 
+It also exposes any Nest x Yale locks on the same account as `lock` entities (with `lock` / `unlock` actions and a battery sensor). See [Nest x Yale lock support](#nest-x-yale-lock-support).
+
+## Nest x Yale lock support
+
+If your Nest account has a Nest x Yale lock, the integration auto-discovers it on setup — no extra configuration required. Each lock surfaces as:
+
+- `lock.<name>` — current state (`locked` / `unlocked` / `locking` / `unlocking` / `jammed`) and `lock` / `unlock` service actions
+- `sensor.<name>_battery` — battery percentage (diagnostic)
+
+State updates are pushed in near-real-time from a streaming `GatewayService.Observe` connection to `grpc-web.production.nest.com`, alongside the existing REST `v6/subscribe` loop the integration already maintains. Lock commands go through `ResourceApi.SendCommand` with actor `BOLT_LOCK_ACTOR_METHOD_REMOTE_USER_EXPLICIT`.
+
+### Known limitations for locks
+
+- The lock entity name defaults to "Nest x Yale Lock" because Google's `LabelSettingsTrait` is empty for most users — rename it in Home Assistant's device page if needed.
+- Auto-relock duration and toggle are not yet exposed (planned follow-up).
+- Commands require the lock to be reachable to the Nest cloud (a `LIVENESS_DEVICE_STATUS_UNREACHABLE` lock typically has a dead battery).
+
+This support is tracked against upstream issue [#494](https://github.com/iMicknl/ha-nest-protect/issues/494) and the older observation in [#61](https://github.com/iMicknl/ha-nest-protect/issues/61).
+
 ## Known limitations
 
 - Only Google Accounts are supported, there is no plan to support legacy Nest accounts
