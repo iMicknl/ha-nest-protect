@@ -14,11 +14,10 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
-from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers.typing import StateType
-
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN

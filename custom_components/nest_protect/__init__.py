@@ -161,9 +161,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     return True
 
 
-async def _async_observe_locks_loop(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Consume the gRPC observe stream and dispatch lock updates."""
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     grpc_client = entry_data.grpc_lock_client
@@ -180,16 +178,12 @@ async def _async_observe_locks_loop(
                 if previous is None:
                     new_locks[resource_id] = lock_state
                 else:
-                    async_dispatcher_send(
-                        hass, lock_signal(resource_id), lock_state
-                    )
+                    async_dispatcher_send(hass, lock_signal(resource_id), lock_state)
             if new_locks:
-                async_dispatcher_send(
-                    hass, discovery_signal(entry.entry_id), new_locks
-                )
+                async_dispatcher_send(hass, discovery_signal(entry.entry_id), new_locks)
     except asyncio.CancelledError:
         raise
-    except Exception:  # noqa: BLE001
+    except Exception:
         LOGGER.exception("Lock observe loop failed unexpectedly")
 
 

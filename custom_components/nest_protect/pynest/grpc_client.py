@@ -18,12 +18,12 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientTimeout
 
+from .lock_models import LockBoltState, LockState
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
 from .protobuf_gen.weave.trait import description_pb2 as weave_description_pb2
 from .protobuf_gen.weave.trait import heartbeat_pb2 as weave_heartbeat_pb2
 from .protobuf_gen.weave.trait import power_pb2 as weave_power_pb2
 from .protobuf_gen.weave.trait import security_pb2 as weave_security_pb2
-from .lock_models import LockBoltState, LockState
 
 if TYPE_CHECKING:
     from .client import NestClient
@@ -41,6 +41,11 @@ _CONNECT_TIMEOUT = 60
 _SEND_COMMAND_TIMEOUT = 30
 _RECONNECT_INITIAL_DELAY = 1.0
 _RECONNECT_MAX_DELAY = 60.0
+
+# Protobuf wire-type for length-delimited fields. The Observe stream wraps
+# each ObserveResponse in a length-delimited field (tag wire-type == 2);
+# any other wire-type means the buffer is out of sync and must be reset.
+_WIRE_TYPE_LENGTH_DELIMITED = 2
 
 # The lock-relevant trait types we ask the server to stream. Limited set keeps
 # bandwidth and parsing cost down vs subscribing to the entire trait surface.
@@ -84,9 +89,7 @@ _LOCKED_STATE_MAP: dict[int, LockBoltState] = {
 }
 
 
-def _extract_lock_state(
-    resource_id: str, traits: dict[str, Any]
-) -> LockState | None:
+def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState | None:
     """Build a LockState from a per-resource trait dict, or None if not a lock."""
     bolt_trait: weave_security_pb2.BoltLockTrait | None = traits.get(
         weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name
@@ -99,7 +102,9 @@ def _extract_lock_state(
         _LOCKED_STATE_MAP.get(bolt_trait.lockedState, LockBoltState.UNKNOWN),
     )
 
-    identity = traits.get(weave_description_pb2.DeviceIdentityTrait.DESCRIPTOR.full_name)
+    identity = traits.get(
+        weave_description_pb2.DeviceIdentityTrait.DESCRIPTOR.full_name
+    )
     serial = identity.serialNumber if identity else resource_id
     software_version = identity.softwareVersion if identity else None
 
@@ -137,7 +142,9 @@ def _extract_lock_state(
 class GrpcLockClient:
     """gRPC-web client scoped to Nest x Yale lock observe + command."""
 
-    def __init__(self, nest_client: NestClient, grpc_host: str = "grpc-web.production.nest.com") -> None:
+    def __init__(
+        self, nest_client: NestClient, grpc_host: str = "grpc-web.production.nest.com"
+    ) -> None:
         """Initialize.
 
         `nest_client` is ha-nest-protect's existing NestClient — we read
@@ -199,9 +206,7 @@ class GrpcLockClient:
             touched.add(resource_id)
         return touched
 
-    def _parse_observe_buffer(
-        self, buffer: bytearray
-    ) -> list[set[str]]:
+    def _parse_observe_buffer(self, buffer: bytearray) -> list[set[str]]:
         """Drain complete frames from `buffer`, returning lists of touched resource sets."""
         results: list[set[str]] = []
         while buffer:
@@ -210,7 +215,7 @@ class GrpcLockClient:
                 break
 
             wire_type = tag & 0x07
-            if wire_type != 2:
+            if wire_type != _WIRE_TYPE_LENGTH_DELIMITED:
                 _LOGGER.debug(
                     "Unexpected wire type %s in observe stream; resetting buffer",
                     wire_type,
@@ -236,7 +241,7 @@ class GrpcLockClient:
             outer = v2_pb2.ObserveResponse()
             try:
                 outer.ParseFromString(frame_data)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Failed to parse outer ObserveResponse")
                 continue
 
@@ -338,9 +343,7 @@ class GrpcLockClient:
         ) as response:
             if not response.ok:
                 text = await response.text()
-                raise RuntimeError(
-                    f"SendCommand HTTP {response.status}: {text[:200]}"
-                )
+                raise RuntimeError(f"SendCommand HTTP {response.status}: {text[:200]}")
             raw = await response.read()
 
         resp = v1_pb2.SendCommandResponse()
