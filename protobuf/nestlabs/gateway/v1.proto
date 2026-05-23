@@ -261,7 +261,7 @@ message BatchUpdateStateRequest {
 }
 
 message BatchUpdateStateResponse {
-    message TraitOperationStateResponse {   
+    message TraitOperationStateResponse {
         repeated TraitOperation traitOperations = 1;
     }
     repeated TraitOperationStateResponse  batchUpdateStateResponse = 1;
