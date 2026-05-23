@@ -24,15 +24,19 @@ def generate_protos() -> None:
     base_dir = Path(__file__).parent
     proto_dir = base_dir / "protobuf"
     output_dir = (
-        base_dir / "custom_components" / "nest_legacy" / "pynest" / "protobuf_gen"
+        base_dir / "custom_components" / "nest_protect" / "pynest" / "protobuf_gen"
     )
 
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # List of proto files to generate
-    # Find all .proto files in the protobuf directory
-    proto_files = [str(p.relative_to(proto_dir)) for p in proto_dir.rglob("*.proto")]
+    # List of proto files to generate. google/* are source-only — the runtime
+    # uses googleapis-common-protos from PyPI for those.
+    proto_files = [
+        str(p.relative_to(proto_dir))
+        for p in proto_dir.rglob("*.proto")
+        if p.relative_to(proto_dir).parts[:1] != ("google",)
+    ]
 
     # Construct the protoc command
     cmd = [
@@ -57,7 +61,8 @@ def generate_protos() -> None:
         sys.exit(1)
 
     # Create __init__.py files in the generated directories to make them packages
-    for root, _dirs, _files in os.walk(output_dir):
+    for root, dirs, _files in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
         init_file = Path(root) / "__init__.py"
         if not init_file.exists():
             init_file.touch()
@@ -119,7 +124,8 @@ def fix_imports(output_dir: Path) -> None:
     )
     import_re = re.compile(r"^import\s+([a-zA-Z0-9_.]+)", re.MULTILINE)
 
-    for root, _dirs, files in os.walk(output_dir):
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
         root_path = Path(root)
         try:
             # Calculate how deep we are to determine the number of relative dots

@@ -26,6 +26,22 @@ from .pynest.lock_models import LockBoltState, LockState
 LOCK_SIGNAL_PREFIX = "nest_protect_lock_"
 
 
+def _compose_lock_device_name(location: str | None, name: str) -> str:
+    """Combine an optional room label with the lock's own name.
+
+    Mirrors nest_legacy's `entity.py` formatting: "Front Door Lock". Falls
+    back to "Nest x Yale Lock" when neither the location nor a meaningful
+    label is available.
+    """
+    location = (location or "").strip()
+    name = (name or "").strip()
+    if location and location.lower() not in name.lower():
+        return f"{location} {name}".strip()
+    if name and name.lower() != "lock":
+        return name
+    return "Nest x Yale Lock"
+
+
 def lock_signal(resource_id: str) -> str:
     """Dispatcher signal name for a single lock resource."""
     return f"{LOCK_SIGNAL_PREFIX}{resource_id}"
@@ -100,12 +116,19 @@ class NestLockEntity(LockEntity):
         self._lock_state = lock_state
         self._attr_unique_id = f"lock_{lock_state.resource_id}"
         self._attr_attribution = ATTRIBUTION
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, lock_state.serial_number)},
-            name=lock_state.name,
+        self._attr_device_info = self._build_device_info()
+
+    def _build_device_info(self) -> DeviceInfo:
+        """Construct DeviceInfo from the current LockState."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._lock_state.serial_number)},
+            name=_compose_lock_device_name(
+                self._lock_state.location, self._lock_state.name
+            ),
             manufacturer="Google",
             model="Nest x Yale Lock",
-            sw_version=lock_state.software_version,
+            sw_version=self._lock_state.software_version,
+            suggested_area=self._lock_state.location,
         )
 
     @property
@@ -144,6 +167,9 @@ class NestLockEntity(LockEntity):
     def _handle_update(self, lock_state: LockState) -> None:
         """Receive a new LockState from the observe loop."""
         self._lock_state = lock_state
+        # Rebuild device_info so a later-arriving location or sw_version
+        # propagates to the device registry on the next state write.
+        self._attr_device_info = self._build_device_info()
         self.async_write_ha_state()
 
     async def async_lock(self, **kwargs: Any) -> None:

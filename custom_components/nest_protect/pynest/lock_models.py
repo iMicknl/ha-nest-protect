@@ -28,3 +28,4 @@ class LockState:
     bolt_state: LockBoltState
     software_version: str | None = None
     battery_level: float | None = None
+    location: str | None = None
