@@ -12,10 +12,10 @@ import builtins as _builtins
 import sys
 import typing as _typing
 
-if sys.version_info >= (3, 10):
-    from typing import TypeAlias as _TypeAlias
+if sys.version_info >= (3, 11):
+    from typing import TypeAlias as _TypeAlias, Never as _Never
 else:
-    from typing_extensions import TypeAlias as _TypeAlias
+    from typing_extensions import TypeAlias as _TypeAlias, Never as _Never
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -69,8 +69,11 @@ class PowerSourceTrait(_message.Message):
             condition: Global___PowerSourceTrait.PowerSourceCondition.ValueType = ...,
             status: Global___PowerSourceTrait.PowerSourceStatus.ValueType = ...,
         ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
         _ClearFieldArgType: _TypeAlias = _typing.Literal["condition", b"condition", "status", b"status"]  # noqa: Y015
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+        def WhichOneof(self, oneof_group: _Never) -> None: ...
 
     TYPE_FIELD_NUMBER: _builtins.int
     ASSESSEDVOLTAGE_FIELD_NUMBER: _builtins.int
@@ -104,6 +107,7 @@ class PowerSourceTrait(_message.Message):
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["assessedCurrent", b"assessedCurrent", "assessedFrequency", b"assessedFrequency", "assessedVoltage", b"assessedVoltage", "condition", b"condition", "present", b"present", "status", b"status", "type", b"type"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___PowerSourceTrait: _TypeAlias = PowerSourceTrait  # noqa: Y015
 
@@ -172,6 +176,7 @@ class PowerSourceCapabilitiesTrait(_message.Message):
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["currentType", b"currentType", "description", b"description", "maximumCurrent", b"maximumCurrent", "nominalVoltage", b"nominalVoltage", "order", b"order", "removable", b"removable", "type", b"type"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___PowerSourceCapabilitiesTrait: _TypeAlias = PowerSourceCapabilitiesTrait  # noqa: Y015
 
@@ -216,6 +221,7 @@ class BatteryPowerSourceTrait(_message.Message):
         def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
         _ClearFieldArgType: _TypeAlias = _typing.Literal["remainingPercent", b"remainingPercent", "remainingTime", b"remainingTime"]  # noqa: Y015
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+        def WhichOneof(self, oneof_group: _Never) -> None: ...
 
     @_typing.final
     class BatteryChangedEvent(_message.Message):
@@ -242,6 +248,7 @@ class BatteryPowerSourceTrait(_message.Message):
         def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
         _ClearFieldArgType: _TypeAlias = _typing.Literal["condition", b"condition", "remaining", b"remaining", "replacementIndicator", b"replacementIndicator", "status", b"status"]  # noqa: Y015
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+        def WhichOneof(self, oneof_group: _Never) -> None: ...
 
     TYPE_FIELD_NUMBER: _builtins.int
     ASSESSEDVOLTAGE_FIELD_NUMBER: _builtins.int
@@ -282,5 +289,6 @@ class BatteryPowerSourceTrait(_message.Message):
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["assessedCurrent", b"assessedCurrent", "assessedFrequency", b"assessedFrequency", "assessedVoltage", b"assessedVoltage", "condition", b"condition", "present", b"present", "remaining", b"remaining", "replacementIndicator", b"replacementIndicator", "status", b"status", "type", b"type"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___BatteryPowerSourceTrait: _TypeAlias = BatteryPowerSourceTrait  # noqa: Y015

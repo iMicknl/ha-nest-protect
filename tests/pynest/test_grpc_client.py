@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.nest_protect.lock import _compose_lock_device_name
 from custom_components.nest_protect.pynest.grpc_client import (
     GrpcLockClient,
     _decode_varint,
     _extract_lock_state,
+    _resolve_lock_location,
 )
 from custom_components.nest_protect.pynest.lock_models import LockBoltState
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    located_pb2 as nest_located_pb2,
+)
 from custom_components.nest_protect.pynest.protobuf_gen.nestlabs.gateway import (
     v1_pb2,
 )
@@ -74,10 +79,11 @@ def test_extract_lock_state_locked():
     assert lock is not None
     assert lock.resource_id == "DEVICE_X"
     assert lock.bolt_state == LockBoltState.LOCKED
-    # Fallback values when description / battery traits absent
+    # Fallback values when description / battery / located traits absent
     assert lock.serial_number == "DEVICE_X"
-    assert lock.name == "Nest x Yale Lock"
+    assert lock.name == "Lock"
     assert lock.battery_level is None
+    assert lock.location is None
 
 
 def test_extract_lock_state_unlocked():
@@ -142,6 +148,99 @@ def test_extract_lock_state_with_description_and_battery():
     assert lock.software_version == "1.2-7"
     assert lock.name == "Front Door"
     assert lock.battery_level == pytest.approx(85.0)
+
+
+# -- _compose_lock_device_name ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("location", "name", "expected"),
+    [
+        ("Front Door", "Lock", "Front Door Lock"),
+        (
+            "Front Door",
+            "Front Door Lock",
+            "Front Door Lock",
+        ),  # location already in name
+        ("Hallway", "My Custom Name", "Hallway My Custom Name"),
+        (None, "My Custom Name", "My Custom Name"),
+        (None, "Lock", "Nest x Yale Lock"),  # bare fallback
+        ("", "", "Nest x Yale Lock"),
+    ],
+)
+def test_compose_lock_device_name(location, name, expected):
+    assert _compose_lock_device_name(location, name) == expected
+
+
+# -- _resolve_lock_location -------------------------------------------------
+
+
+def _make_located_settings(
+    *,
+    where_label_literal: str | None = None,
+    where_annotation_rid: str | None = None,
+    fixture_annotation_rid: str | None = None,
+) -> nest_located_pb2.DeviceLocatedSettingsTrait:
+    trait = nest_located_pb2.DeviceLocatedSettingsTrait()
+    if where_label_literal is not None:
+        trait.whereLabel.literal = where_label_literal
+    if where_annotation_rid is not None:
+        trait.whereAnnotationRid.resourceId = where_annotation_rid
+    if fixture_annotation_rid is not None:
+        trait.fixtureAnnotationRid.resourceId = fixture_annotation_rid
+    return trait
+
+
+def test_resolve_lock_location_prefers_literal():
+    settings = _make_located_settings(
+        where_label_literal="Front Door",
+        where_annotation_rid="ANNOTATION_AAAA",
+    )
+    traits = {
+        nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings
+    }
+    # Even though the map has an entry, the literal wins.
+    assert (
+        _resolve_lock_location(traits, {"ANNOTATION_AAAA": "Other Room"})
+        == "Front Door"
+    )
+
+
+def test_resolve_lock_location_falls_back_to_wheres_map():
+    settings = _make_located_settings(where_annotation_rid="ANNOTATION_AAAA")
+    traits = {
+        nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings
+    }
+    assert (
+        _resolve_lock_location(traits, {"ANNOTATION_AAAA": "Back Door"}) == "Back Door"
+    )
+
+
+def test_resolve_lock_location_returns_none_when_unresolved():
+    settings = _make_located_settings(where_annotation_rid="ANNOTATION_UNKNOWN")
+    traits = {
+        nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings
+    }
+    assert _resolve_lock_location(traits, {}) is None
+
+
+def test_resolve_lock_location_no_trait_returns_none():
+    assert _resolve_lock_location({}, {"ANNOTATION_AAAA": "Front Door"}) is None
+
+
+def test_extract_lock_state_sets_location_from_wheres_map():
+    bolt = _make_bolt_trait()
+    settings = _make_located_settings(where_annotation_rid="ANNOTATION_FRONT")
+    lock = _extract_lock_state(
+        "DEVICE_X",
+        {
+            weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name: bolt,
+            nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings,
+        },
+        wheres_map={"ANNOTATION_FRONT": "Front Door"},
+    )
+    assert lock is not None
+    assert lock.location == "Front Door"
 
 
 # -- GrpcLockClient.send_lock_command (serialization only) -------------------

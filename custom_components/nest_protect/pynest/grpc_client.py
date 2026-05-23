@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import ClientTimeout
 
 from .lock_models import LockBoltState, LockState
+from .protobuf_gen.nest.trait import located_pb2 as nest_located_pb2
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
 from .protobuf_gen.weave.trait import description_pb2 as weave_description_pb2
 from .protobuf_gen.weave.trait import power_pb2 as weave_power_pb2
@@ -48,6 +49,10 @@ _WIRE_TYPE_LENGTH_DELIMITED = 2
 
 # The lock-relevant trait types we ask the server to stream. Limited set keeps
 # bandwidth and parsing cost down vs subscribing to the entire trait surface.
+# The three nest.trait.located traits are needed to resolve human-readable
+# room labels: DeviceLocatedSettingsTrait lives on each lock, the two
+# *Annotations traits live on the structure resource as a where_id → label
+# catalogue.
 _TRAIT_NAME_TO_CLASS: dict[str, type] = {
     cls.DESCRIPTOR.full_name: cls
     for cls in (
@@ -55,8 +60,21 @@ _TRAIT_NAME_TO_CLASS: dict[str, type] = {
         weave_description_pb2.DeviceIdentityTrait,
         weave_description_pb2.LabelSettingsTrait,
         weave_power_pb2.BatteryPowerSourceTrait,
+        nest_located_pb2.DeviceLocatedSettingsTrait,
+        nest_located_pb2.LocatedAnnotationsTrait,
+        nest_located_pb2.CustomLocatedAnnotationsTrait,
     )
 }
+
+# Structure-level annotation traits — when they change we rebuild the
+# wheres_map and re-emit every known lock so the location is picked up.
+_STRUCTURE_ANNOTATION_TRAIT_NAMES: frozenset[str] = frozenset(
+    {
+        nest_located_pb2.LocatedAnnotationsTrait.DESCRIPTOR.full_name,
+        nest_located_pb2.CustomLocatedAnnotationsTrait.DESCRIPTOR.full_name,
+    }
+)
+_BOLT_LOCK_TRAIT_NAME = weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name
 
 
 def _decode_varint(buffer: bytes | bytearray) -> tuple[int | None, int]:
@@ -87,7 +105,48 @@ _LOCKED_STATE_MAP: dict[int, LockBoltState] = {
 }
 
 
-def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState | None:
+def _resolve_lock_location(
+    traits: dict[str, Any], wheres_map: dict[str, str]
+) -> str | None:
+    """Resolve the room label for a lock.
+
+    Checks `DeviceLocatedSettingsTrait` in this order, mirroring nest_legacy:
+    1. The denormalized `whereLabel.literal` / `fixtureNameLabel.literal`
+       (set on most accounts but stripped in some delta updates).
+    2. `whereAnnotationRid` / `fixtureAnnotationRid` looked up in `wheres_map`
+       (which is populated from structure-level annotation traits).
+
+    Returns None if no resolution succeeds.
+    """
+    loc_trait = traits.get(
+        nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name
+    )
+    if loc_trait is None:
+        return None
+
+    if loc_trait.HasField("whereLabel") and loc_trait.whereLabel.literal:
+        return loc_trait.whereLabel.literal
+    if loc_trait.HasField("fixtureNameLabel") and loc_trait.fixtureNameLabel.literal:
+        return loc_trait.fixtureNameLabel.literal
+
+    if loc_trait.HasField("whereAnnotationRid"):
+        where_id = loc_trait.whereAnnotationRid.resourceId
+        if where_id in wheres_map:
+            return wheres_map[where_id]
+
+    if loc_trait.HasField("fixtureAnnotationRid"):
+        fixture_id = loc_trait.fixtureAnnotationRid.resourceId
+        if fixture_id in wheres_map:
+            return wheres_map[fixture_id]
+
+    return None
+
+
+def _extract_lock_state(
+    resource_id: str,
+    traits: dict[str, Any],
+    wheres_map: dict[str, str] | None = None,
+) -> LockState | None:
     """Build a LockState from a per-resource trait dict, or None if not a lock."""
     bolt_trait: weave_security_pb2.BoltLockTrait | None = traits.get(
         weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name
@@ -107,7 +166,7 @@ def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState |
     software_version = identity.softwareVersion if identity else None
 
     label = traits.get(weave_description_pb2.LabelSettingsTrait.DESCRIPTOR.full_name)
-    name = label.label if label and label.label else "Nest x Yale Lock"
+    name = label.label if label and label.label else "Lock"
 
     battery_level: float | None = None
     battery_trait = traits.get(
@@ -118,6 +177,8 @@ def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState |
         if remaining.HasField("remainingPercent"):
             battery_level = 100.0 * remaining.remainingPercent.value
 
+    location = _resolve_lock_location(traits, wheres_map or {})
+
     return LockState(
         resource_id=resource_id,
         name=name,
@@ -125,6 +186,7 @@ def _extract_lock_state(resource_id: str, traits: dict[str, Any]) -> LockState |
         bolt_state=bolt_state,
         software_version=software_version,
         battery_level=battery_level,
+        location=location,
     )
 
 
@@ -144,6 +206,9 @@ class GrpcLockClient:
         self._grpc_host = grpc_host
         # Per-resource trait cache: resource_id -> {trait_full_name: trait_proto}
         self._trait_cache: dict[str, dict[str, Any]] = {}
+        # Global where_id -> room label, rebuilt whenever the structure-level
+        # annotation traits change. Locks use this to resolve their location.
+        self._wheres_map: dict[str, str] = {}
 
     def _headers(self) -> dict[str, str]:
         """Build the protobuf headers using the current session token."""
@@ -176,9 +241,12 @@ class GrpcLockClient:
     ) -> set[str]:
         """Apply trait updates from one inner ObserveResponse to the cache.
 
-        Returns the set of resource_ids that had any trait change.
+        Returns the set of resource_ids that need re-emission. That includes
+        directly-touched lock resources plus, if a structure-level annotation
+        trait changed, every cached lock (so the new location propagates).
         """
         touched: set[str] = set()
+        annotations_changed = False
         for state in inner.traitStates:
             type_url = state.patch.values.type_url
             full_name = type_url.removeprefix(_NESTLABS_TYPE_URL_PREFIX)
@@ -192,8 +260,48 @@ class GrpcLockClient:
             resource_id = state.traitId.resourceId
             cache_entry = self._trait_cache.setdefault(resource_id, {})
             cache_entry[full_name] = unpacked
-            touched.add(resource_id)
+
+            if full_name in _STRUCTURE_ANNOTATION_TRAIT_NAMES:
+                annotations_changed = True
+            else:
+                touched.add(resource_id)
+
+        if annotations_changed:
+            self._rebuild_wheres_map()
+            for rid, cached_traits in self._trait_cache.items():
+                if _BOLT_LOCK_TRAIT_NAME in cached_traits:
+                    touched.add(rid)
+
         return touched
+
+    def _rebuild_wheres_map(self) -> None:
+        """Rebuild `_wheres_map` from any cached annotation traits."""
+        wheres: dict[str, str] = {}
+        ann_name = nest_located_pb2.LocatedAnnotationsTrait.DESCRIPTOR.full_name
+        custom_name = (
+            nest_located_pb2.CustomLocatedAnnotationsTrait.DESCRIPTOR.full_name
+        )
+
+        for traits in self._trait_cache.values():
+            ann_trait = traits.get(ann_name)
+            if ann_trait is not None:
+                for item in ann_trait.predefinedWheres.values():
+                    if item.HasField("whereId") and item.HasField("label"):
+                        wheres[item.whereId.resourceId] = item.label.literal
+                for item in ann_trait.customWheres.values():
+                    if item.HasField("whereId") and item.HasField("label"):
+                        wheres[item.whereId.resourceId] = item.label.literal
+
+            custom_trait = traits.get(custom_name)
+            if custom_trait is not None:
+                for w_item in custom_trait.wheresList.values():
+                    if w_item.HasField("whereId") and w_item.HasField("label"):
+                        wheres[w_item.whereId.resourceId] = w_item.label.literal
+                for f_item in custom_trait.fixturesList.values():
+                    if f_item.HasField("fixtureId") and f_item.HasField("label"):
+                        wheres[f_item.fixtureId.resourceId] = f_item.label.literal
+
+        self._wheres_map = wheres
 
     def _parse_observe_buffer(self, buffer: bytearray) -> list[set[str]]:
         """Drain complete frames from `buffer`, returning lists of touched resource sets."""
@@ -247,7 +355,7 @@ class GrpcLockClient:
             traits = self._trait_cache.get(rid)
             if not traits:
                 continue
-            lock = _extract_lock_state(rid, traits)
+            lock = _extract_lock_state(rid, traits, self._wheres_map)
             if lock is not None:
                 out[rid] = lock
         return out

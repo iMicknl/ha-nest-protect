@@ -13,10 +13,10 @@ import builtins as _builtins
 import sys
 import typing as _typing
 
-if sys.version_info >= (3, 10):
-    from typing import TypeAlias as _TypeAlias
+if sys.version_info >= (3, 11):
+    from typing import TypeAlias as _TypeAlias, Never as _Never
 else:
-    from typing_extensions import TypeAlias as _TypeAlias
+    from typing_extensions import TypeAlias as _TypeAlias, Never as _Never
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -38,8 +38,11 @@ class SoftwareComponentTrait(_message.Message):
             componentName: _builtins.str = ...,
             componentVersion: _builtins.str = ...,
         ) -> None: ...
+        _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+        def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
         _ClearFieldArgType: _TypeAlias = _typing.Literal["componentName", b"componentName", "componentVersion", b"componentVersion"]  # noqa: Y015
         def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+        def WhichOneof(self, oneof_group: _Never) -> None: ...
 
     SOFTWARECOMPONENTS_FIELD_NUMBER: _builtins.int
     @_builtins.property
@@ -49,8 +52,11 @@ class SoftwareComponentTrait(_message.Message):
         *,
         softwareComponents: _abc.Iterable[Global___SoftwareComponentTrait.SoftwareComponentTypeStruct] | None = ...,
     ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["softwareComponents", b"softwareComponents"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___SoftwareComponentTrait: _TypeAlias = SoftwareComponentTrait  # noqa: Y015
 
@@ -100,6 +106,7 @@ class DeviceIdentityTrait(_message.Message):
     def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["deviceId", b"deviceId", "fabricId", b"fabricId", "manufacturingDate", b"manufacturingDate", "productIdDescription", b"productIdDescription", "productRevision", b"productRevision", "serialNumber", b"serialNumber", "softwareVersion", b"softwareVersion", "vendorId", b"vendorId", "vendorIdDescription", b"vendorIdDescription", "vendorProductId", b"vendorProductId"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___DeviceIdentityTrait: _TypeAlias = DeviceIdentityTrait  # noqa: Y015
 
@@ -114,7 +121,10 @@ class LabelSettingsTrait(_message.Message):
         *,
         label: _builtins.str = ...,
     ) -> None: ...
+    _HasFieldArgType: _TypeAlias = _Never  # noqa: Y015
+    def HasField(self, field_name: _HasFieldArgType) -> _builtins.bool: ...
     _ClearFieldArgType: _TypeAlias = _typing.Literal["label", b"label"]  # noqa: Y015
     def ClearField(self, field_name: _ClearFieldArgType) -> None: ...
+    def WhichOneof(self, oneof_group: _Never) -> None: ...
 
 Global___LabelSettingsTrait: _TypeAlias = LabelSettingsTrait  # noqa: Y015
