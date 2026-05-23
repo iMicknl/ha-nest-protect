@@ -20,11 +20,11 @@ CONF_AUTH_CODE: Final = "auth_code"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.LOCK,
     Platform.SENSOR,
     Platform.SELECT,
     Platform.SWITCH,
 ]
-LOCK_PLATFORM: Platform = Platform.LOCK
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"

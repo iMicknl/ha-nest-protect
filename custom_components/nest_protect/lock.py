@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.lock import LockEntity
@@ -15,10 +16,10 @@ from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ATTRIBUTION, DOMAIN, LOGGER
+from .const import ATTRIBUTION, DOMAIN
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
 
@@ -35,28 +36,29 @@ def discovery_signal(entry_id: str) -> str:
     return f"{LOCK_SIGNAL_PREFIX}discover_{entry_id}"
 
 
-async def async_setup_entry(
+def subscribe_to_lock_discovery(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
+    factory: Callable[[LockState], Entity],
 ) -> None:
-    """Set up lock entities. Discovery is event-driven via dispatcher."""
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    grpc_client: GrpcLockClient | None = getattr(entry_data, "grpc_lock_client", None)
-    if grpc_client is None:
-        LOGGER.debug("Lock platform set up but locks are disabled — no entities")
-        return
+    """Wire one `async_add_entities` callback into per-resource lock discovery.
 
+    `factory(lock_state)` builds one entity per newly-seen resource_id. Locks
+    already cached on the config entry (from observe events that arrived before
+    this platform set up) are replayed immediately.
+    """
+    entry_data = hass.data[DOMAIN][entry.entry_id]
     known: set[str] = set()
 
     @callback
     def _on_locks_discovered(locks: dict[str, LockState]) -> None:
-        new_entities: list[NestLockEntity] = []
+        new_entities: list[Entity] = []
         for resource_id, lock_state in locks.items():
             if resource_id in known:
                 continue
             known.add(resource_id)
-            new_entities.append(NestLockEntity(grpc_client, lock_state))
+            new_entities.append(factory(lock_state))
         if new_entities:
             async_add_entities(new_entities)
 
@@ -66,10 +68,23 @@ async def async_setup_entry(
         )
     )
 
-    # Seed with whatever locks have already been observed before platform setup.
-    seed: dict[str, LockState] | None = getattr(entry_data, "lock_state_cache", None)
-    if seed:
-        _on_locks_discovered(seed)
+    if entry_data.lock_state_cache:
+        _on_locks_discovered(entry_data.lock_state_cache)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up lock entities. Discovery is event-driven via dispatcher."""
+    grpc_client = hass.data[DOMAIN][entry.entry_id].grpc_lock_client
+    subscribe_to_lock_discovery(
+        hass,
+        entry,
+        async_add_entities,
+        lambda state: NestLockEntity(grpc_client, state),
+    )
 
 
 class NestLockEntity(LockEntity):
@@ -138,11 +153,6 @@ class NestLockEntity(LockEntity):
                 self._lock_state.resource_id, lock=True
             )
         except Exception as err:
-            LOGGER.error(
-                "Lock command failed for %s: %s",
-                self._lock_state.resource_id,
-                err,
-            )
             raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_unlock(self, **kwargs: Any) -> None:
@@ -152,11 +162,6 @@ class NestLockEntity(LockEntity):
                 self._lock_state.resource_id, lock=False
             )
         except Exception as err:
-            LOGGER.error(
-                "Unlock command failed for %s: %s",
-                self._lock_state.resource_id,
-                err,
-            )
             raise HomeAssistantError(f"Failed to unlock: {err}") from err
 
 

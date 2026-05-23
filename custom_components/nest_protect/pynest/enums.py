@@ -41,7 +41,6 @@ class BucketType(StrEnum):
     USER_SETTINGS = "user_settings"
     WIDGET_TRACK = "widget_track"
     WHERE = "where"  # Areas
-    WWN_SECURITY = "wwn_security"  # Nest x Yale locks (and other security devices)
 
     UNKNOWN = "unknown"
 

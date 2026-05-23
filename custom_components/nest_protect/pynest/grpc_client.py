@@ -48,14 +48,14 @@ _WIRE_TYPE_LENGTH_DELIMITED = 2
 
 # The lock-relevant trait types we ask the server to stream. Limited set keeps
 # bandwidth and parsing cost down vs subscribing to the entire trait surface.
-_LOCK_TRAITS: tuple[type, ...] = (
-    weave_security_pb2.BoltLockTrait,
-    weave_description_pb2.DeviceIdentityTrait,
-    weave_description_pb2.LabelSettingsTrait,
-    weave_power_pb2.BatteryPowerSourceTrait,
-)
 _TRAIT_NAME_TO_CLASS: dict[str, type] = {
-    cls.DESCRIPTOR.full_name: cls for cls in _LOCK_TRAITS
+    cls.DESCRIPTOR.full_name: cls
+    for cls in (
+        weave_security_pb2.BoltLockTrait,
+        weave_description_pb2.DeviceIdentityTrait,
+        weave_description_pb2.LabelSettingsTrait,
+        weave_power_pb2.BatteryPowerSourceTrait,
+    )
 }
 
 
