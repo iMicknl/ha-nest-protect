@@ -63,6 +63,7 @@ FULL_NEST_REQUEST = {
         BucketType.STRUCTURE_METADATA,
         BucketType.USER,
         BucketType.WIDGET_TRACK,
+        BucketType.WWN_SECURITY,
     ],
     "known_bucket_versions": [],
 }

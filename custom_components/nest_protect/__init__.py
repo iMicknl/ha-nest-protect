@@ -26,11 +26,13 @@ from .const import (
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
+    LOCK_PLATFORM,
     LOGGER,
     PLATFORMS,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
 )
+from .lock import discovery_signal, lock_signal
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import BucketType, Environment
@@ -41,6 +43,8 @@ from .pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
+from .pynest.grpc_client import GrpcLockClient
+from .pynest.lock_models import LockState
 from .pynest.models import (
     Bucket,
     FirstDataAPIResponse,
@@ -59,6 +63,9 @@ class HomeAssistantNestProtectData:
     client: NestClient
     session_manager: NestSessionManager
     subscription_task: asyncio.Task | None = None
+    grpc_lock_client: GrpcLockClient | None = None
+    lock_observe_task: asyncio.Task | None = None
+    lock_state_cache: dict[str, LockState] | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -137,25 +144,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry_data.lock_state_cache = {}
+    entry_data.grpc_lock_client = GrpcLockClient(client)
+    platforms = [*PLATFORMS, LOCK_PLATFORM]
+
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
 
     entry_data.subscription_task = asyncio.create_task(
         _async_subscribe_for_data(hass, entry, data)
     )
 
+    entry_data.lock_observe_task = asyncio.create_task(
+        _async_observe_locks_loop(hass, entry)
+    )
+
     return True
+
+
+async def _async_observe_locks_loop(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Consume the gRPC observe stream and dispatch lock updates."""
+    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    grpc_client = entry_data.grpc_lock_client
+    cache = entry_data.lock_state_cache
+    if grpc_client is None or cache is None:
+        return
+
+    try:
+        async for batch in grpc_client.observe_locks():
+            new_locks: dict[str, LockState] = {}
+            for resource_id, lock_state in batch.items():
+                previous = cache.get(resource_id)
+                cache[resource_id] = lock_state
+                if previous is None:
+                    new_locks[resource_id] = lock_state
+                else:
+                    async_dispatcher_send(
+                        hass, lock_signal(resource_id), lock_state
+                    )
+            if new_locks:
+                async_dispatcher_send(
+                    hass, discovery_signal(entry.entry_id), new_locks
+                )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        LOGGER.exception("Lock observe loop failed unexpectedly")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Cancel subscription task only after successful platform unload
+    platforms = [*PLATFORMS, LOCK_PLATFORM]
+    if unload_ok := await hass.config_entries.async_unload_platforms(entry, platforms):
+        # Cancel background tasks only after successful platform unload
         if entry.entry_id in hass.data.get(DOMAIN, {}):
             entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
             if entry_data.subscription_task:
                 entry_data.subscription_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await entry_data.subscription_task
+            if entry_data.lock_observe_task:
+                entry_data.lock_observe_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await entry_data.lock_observe_task
             hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
