@@ -61,7 +61,9 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
     entry.async_on_unload(
-        async_dispatcher_connect(hass, discovery_signal(entry.entry_id), _on_locks_discovered)
+        async_dispatcher_connect(
+            hass, discovery_signal(entry.entry_id), _on_locks_discovered
+        )
     )
 
     # Seed with whatever locks have already been observed before platform setup.
@@ -135,7 +137,7 @@ class NestLockEntity(LockEntity):
             await self._grpc_client.send_lock_command(
                 self._lock_state.resource_id, lock=True
             )
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             LOGGER.error(
                 "Lock command failed for %s: %s",
                 self._lock_state.resource_id,
@@ -149,7 +151,7 @@ class NestLockEntity(LockEntity):
             await self._grpc_client.send_lock_command(
                 self._lock_state.resource_id, lock=False
             )
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             LOGGER.error(
                 "Unlock command failed for %s: %s",
                 self._lock_state.resource_id,

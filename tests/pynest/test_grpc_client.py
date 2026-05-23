@@ -9,7 +9,7 @@ from custom_components.nest_protect.pynest.grpc_client import (
     _decode_varint,
     _extract_lock_state,
 )
-from custom_components.nest_protect.pynest.lock_models import LockBoltState, LockState
+from custom_components.nest_protect.pynest.lock_models import LockBoltState
 from custom_components.nest_protect.pynest.protobuf_gen.nestlabs.gateway import (
     v1_pb2,
 )
@@ -26,12 +26,11 @@ from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
     security_pb2 as weave_security_pb2,
 )
 
-
 # -- _decode_varint ---------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "buffer,expected_value,expected_bytes",
+    ("buffer", "expected_value", "expected_bytes"),
     [
         (b"\x00", 0, 1),
         (b"\x01", 1, 1),
@@ -132,9 +131,7 @@ def test_extract_lock_state_with_description_and_battery():
     label = weave_description_pb2.LabelSettingsTrait()
     label.label = "Front Door"
     liveness = weave_heartbeat_pb2.LivenessTrait()
-    liveness.status = (
-        weave_heartbeat_pb2.LivenessTrait.LIVENESS_DEVICE_STATUS_ONLINE
-    )
+    liveness.status = weave_heartbeat_pb2.LivenessTrait.LIVENESS_DEVICE_STATUS_ONLINE
     battery = weave_power_pb2.BatteryPowerSourceTrait()
     battery.remaining.remainingPercent.value = 0.85
 
