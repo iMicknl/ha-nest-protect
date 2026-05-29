@@ -31,7 +31,9 @@ DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
     "issue_token_prefix": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken",
     "accounts_url": "https://accounts.google.com/",
-    "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip",
+    # Pinned to a specific release rather than "latest", which may resolve to a
+    # pre-release that is incompatible with this version of the integration.
+    "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip",
 }
 
 

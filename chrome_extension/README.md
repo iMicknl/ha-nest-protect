@@ -4,7 +4,7 @@ A Chrome extension that extracts the authentication credentials needed to config
 
 ## Installation
 
-1. Download the latest `nest-auth-helper.zip` from the [Releases page](https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip)
+1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip)
 2. Unzip the file
 3. Open Chrome and navigate to `chrome://extensions`
 4. Enable **Developer mode** (toggle in the top-right corner)
