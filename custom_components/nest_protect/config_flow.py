@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any, cast
+from typing import Any, Final, cast
 
 import voluptuous as vol
 from aiohttp import ClientError
@@ -36,6 +36,27 @@ DESCRIPTION_PLACEHOLDERS = {
     "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip",
 }
 
+REQUIRED_COOKIE_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "NID",
+        "__Secure-3PSID",
+        "__Secure-3PAPISID",
+        "__Host-3PLSID",
+        "__Secure-3PSIDCC",
+        "APISID",
+        "SAPISID",
+        "HSID",
+        "SSID",
+        "SID",
+        "__Secure-1PSID",
+        "__Secure-1PAPISID",
+        "__Host-1PLSID",
+        "__Secure-1PSIDCC",
+        "SIDCC",
+        "LSID",
+    }
+)
+
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Nest Protect."""
@@ -44,6 +65,28 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     _config_entry: ConfigEntry | None = None
     _default_account_type: Environment = Environment.PRODUCTION
+
+    @staticmethod
+    def _clean_cookies(cookies: str) -> str:
+        """Clean cookies by keeping only the ones needed for authentication.
+
+        Users often copy extra cookies from non-incognito sessions which can
+        cause authentication failures. This strips unnecessary cookies while
+        preserving the required Google auth cookies.
+        """
+        cleaned_pairs = []
+        for raw_pair in cookies.split(";"):
+            stripped = raw_pair.strip()
+            if not stripped or "=" not in stripped:
+                continue
+            name = stripped.split("=", 1)[0].strip()
+            if name in REQUIRED_COOKIE_NAMES:
+                cleaned_pairs.append(stripped)
+
+        if cleaned_pairs:
+            return "; ".join(cleaned_pairs)
+        # If no known cookies matched, return original to let validation catch it
+        return cookies
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -170,7 +213,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     base64.b64decode(user_input[CONF_AUTH_CODE]).decode()
                 )
                 issue_token = decoded["issue_token"]
-                cookies = decoded["cookies"]
+                cookies = self._clean_cookies(decoded["cookies"])
             except ValueError, KeyError, json.JSONDecodeError:
                 errors[CONF_AUTH_CODE] = "invalid_code"
 
@@ -242,7 +285,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
             issue_token = user_input.get(CONF_ISSUE_TOKEN, "").strip()
-            cookies = user_input.get(CONF_COOKIES, "").strip()
+            cookies = self._clean_cookies(user_input.get(CONF_COOKIES, "").strip())
             # Store stripped values back so downstream validation and API calls
             # use the normalized credentials
             user_input[CONF_ISSUE_TOKEN] = issue_token
