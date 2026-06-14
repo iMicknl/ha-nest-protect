@@ -102,6 +102,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
     except BadCredentialsException as exception:
+        # #region agent log
+        from .debug_log import agent_debug_log
+
+        agent_debug_log(
+            "__init__.py:async_setup_entry",
+            "setup failed with BadCredentialsException",
+            {"error": str(exception)},
+            "H1",
+        )
+        # #endregion
         raise ConfigEntryAuthFailed from exception
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception("Unknown exception.")
@@ -109,6 +119,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     if data is None:
         raise ConfigEntryAuthFailed("No credentials available")
+
+    # Keep Google cookies alive even when tier-1 persisted Nest session succeeded
+    await session_manager.async_refresh_google_cookies()
 
     # Update cookies in config entry if Google returned refreshed ones
     _persist_refreshed_cookies(hass, entry, client, session_manager)
@@ -184,9 +197,37 @@ def _persist_refreshed_cookies(
     """
     new_cookies = sm.refreshed_cookies
     if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
+        # #region agent log
+        from .debug_log import agent_debug_log
+
+        agent_debug_log(
+            "__init__.py:_persist_refreshed_cookies",
+            "cookie persist skipped",
+            {
+                "has_refreshed_cookies": bool(new_cookies),
+                "cookies_unchanged": new_cookies == entry.data.get(CONF_COOKIES)
+                if new_cookies
+                else None,
+            },
+            "H3",
+        )
+        # #endregion
         return
 
     LOGGER.debug("Persisting refreshed Nest cookies")
+    # #region agent log
+    from .debug_log import agent_debug_log
+
+    agent_debug_log(
+        "__init__.py:_persist_refreshed_cookies",
+        "cookie persist writing to config entry",
+        {
+            "old_cookie_len": len(entry.data.get(CONF_COOKIES) or ""),
+            "new_cookie_len": len(new_cookies),
+        },
+        "H3",
+    )
+    # #endregion
     hass.config_entries.async_update_entry(
         entry,
         data={**entry.data, CONF_COOKIES: new_cookies},
@@ -302,6 +343,16 @@ async def _async_subscribe_for_data(
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
+        # #region agent log
+        from .debug_log import agent_debug_log
+
+        agent_debug_log(
+            "__init__.py:_async_subscribe_for_data",
+            "subscriber NotAuthenticatedException",
+            {"consecutive_failures": sm.consecutive_failures + 1},
+            "H4",
+        )
+        # #endregion
         sm.record_failure()
 
         if sm.should_trigger_reauth:
@@ -330,6 +381,16 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
 
     except BadCredentialsException:
+        # #region agent log
+        from .debug_log import agent_debug_log
+
+        agent_debug_log(
+            "__init__.py:_async_subscribe_for_data",
+            "subscriber BadCredentialsException triggering reauth",
+            {},
+            "H1",
+        )
+        # #endregion
         LOGGER.warning(
             "Bad credentials detected. Please re-authenticate the Nest Protect integration."
         )

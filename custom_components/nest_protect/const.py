@@ -28,5 +28,6 @@ PLATFORMS: list[Platform] = [
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
+COOKIE_REFRESH_INTERVAL_SECONDS: Final = 1800  # 30 minutes
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min

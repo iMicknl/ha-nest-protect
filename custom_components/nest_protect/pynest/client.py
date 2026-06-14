@@ -27,6 +27,7 @@ from .exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
+from ..debug_log import agent_debug_log
 from .models import (
     Bucket,
     FirstDataAPIResponse,
@@ -191,6 +192,17 @@ class NestClient:
             result = await response.json()
 
             if "error" in result:
+                # #region agent log
+                agent_debug_log(
+                    "client.py:get_access_token_from_cookies",
+                    "Google issueToken returned error",
+                    {
+                        "error": result.get("error"),
+                        "received_set_cookie": bool(new_cookies),
+                    },
+                    "H1",
+                )
+                # #endregion
                 # Cookie method
                 if result["error"] == "USER_LOGGED_OUT":
                     raise BadCredentialsException(
@@ -200,6 +212,19 @@ class NestClient:
                 raise Exception(result["error"])
 
             self.auth = GoogleAuthResponseForCookies(**result)
+
+            # #region agent log
+            agent_debug_log(
+                "client.py:get_access_token_from_cookies",
+                "Google issueToken succeeded",
+                {
+                    "received_set_cookie": bool(new_cookies),
+                    "cookie_count": len(new_cookies),
+                    "cookies_changed": self.refreshed_cookies is not None,
+                },
+                "H2",
+            )
+            # #endregion
 
             return self.auth
 
