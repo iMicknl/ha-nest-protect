@@ -5,7 +5,7 @@ requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
-    "homeassistant>=2026.4.4",
+    "homeassistant>=2026.6.3",
     "prek>=0.4.1",
     "ruff>=0.15.15",
 ]
