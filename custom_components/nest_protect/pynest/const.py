@@ -23,15 +23,15 @@ DEFAULT_NEST_ENVIRONMENT = NEST_ENVIRONMENTS[Environment.PRODUCTION]
 # / URL for refresh token generation
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Installed-app OAuth (PKCE) flow used to mint a long-lived refresh token without
-# the deprecated out-of-band (OOB) flow. This reproduces how the Nest mobile app
-# obtains a durable credential that only dies on password change / revocation.
-OAUTH_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-# openid+email give us the account identity; nest-account is the scope the Nest
-# app uses and which nestauthproxy accepts when exchanged via issue_jwt.
-OAUTH_SCOPES = "openid email https://www.googleapis.com/auth/nest-account"
-# Path appended to the reversed-client-id custom scheme redirect URI.
-OAUTH_REDIRECT_PATH = "/oauth2redirect"
+# Android "master token" flow. This reproduces how the Nest/Google mobile apps stay
+# logged in: a master token (aas_et/...) that never expires unless the password is
+# changed or access is revoked. From it we mint short-lived nest-account access
+# tokens. The app package + signing cert are the Google Home app's (the same ones
+# used by glocaltokens); only the requested service/scope is Nest-specific.
+EMBEDDED_SETUP_URL = "https://accounts.google.com/EmbeddedSetup"
+GOOGLE_HOME_APP = "com.google.android.apps.chromecast.app"
+GOOGLE_OAUTH_CLIENT_SIG = "24bb24c05e47e0aefa68a58a766179d9b613a600"
+NEST_ACCOUNT_OAUTH_SERVICE = "oauth2:https://www.googleapis.com/auth/nest-account"
 
 # App launch API endpoint
 APP_LAUNCH_URL_FORMAT = "{host}/api/0.1/user/{user_id}/app_launch"

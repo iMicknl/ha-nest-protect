@@ -2,26 +2,24 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
+import asyncio
 import logging
 import secrets
 import time
 from random import randint
 from types import TracebackType
 from typing import Any, cast
-from urllib.parse import parse_qs, urlencode, urlsplit
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
     DEFAULT_NEST_ENVIRONMENT,
+    GOOGLE_HOME_APP,
+    GOOGLE_OAUTH_CLIENT_SIG,
+    NEST_ACCOUNT_OAUTH_SERVICE,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
-    OAUTH_AUTH_URL,
-    OAUTH_REDIRECT_PATH,
-    OAUTH_SCOPES,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -79,6 +77,10 @@ class NestClient:
     transport_url: str | None = None
     environment: NestEnvironment
 
+    # Master token Auth (durable, app-style)
+    master_token: str | None = None
+    google_email: str | None = None
+    android_id: str | None = None
     # Legacy Auth
     refresh_token: str | None = None
     # Cookie Auth
@@ -123,7 +125,9 @@ class NestClient:
     async def get_access_token(self) -> GoogleAuthResponse:
         """Get a Nest access token."""
 
-        if self.refresh_token:
+        if self.master_token:
+            await self.get_access_token_from_master_token()
+        elif self.refresh_token:
             await self.get_access_token_from_refresh_token(self.refresh_token)
         elif self.issue_token and self.cookies:
             await self.get_access_token_from_cookies(self.issue_token, self.cookies)
@@ -168,112 +172,103 @@ class NestClient:
             return self.auth
 
     @staticmethod
-    def generate_pkce_pair() -> tuple[str, str]:
-        """Generate a PKCE (code_verifier, code_challenge) pair using S256."""
-        code_verifier = secrets.token_urlsafe(64)
-        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-        code_challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-        return code_verifier, code_challenge
+    def generate_android_id() -> str:
+        """Generate a random 16-hex-character Android ID for the master-token flow."""
+        return secrets.token_hex(8)
 
     @staticmethod
-    def build_redirect_uri(client_id: str) -> str:
-        """Build the reversed-client-id custom-scheme redirect URI.
+    def _exchange_token_sync(oauth_token: str, email: str, android_id: str) -> dict:
+        """Blocking gpsoauth call: one-time oauth_token -> durable master token."""
+        import gpsoauth  # noqa: PLC0415  (optional dependency, imported lazily)
 
-        Installed-app (iOS/Android) OAuth clients use a reversed client id as
-        their custom URI scheme. A regular browser cannot open this scheme, so
-        the user copies the resulting ``code`` from the address bar instead.
-        """
-        base = client_id.replace(".apps.googleusercontent.com", "")
-        return f"com.googleusercontent.apps.{base}{OAUTH_REDIRECT_PATH}"
+        return gpsoauth.exchange_token(email, oauth_token, android_id)
 
     @staticmethod
-    def build_authorization_url(
-        client_id: str, code_challenge: str, redirect_uri: str
+    def _perform_oauth_sync(email: str, master_token: str, android_id: str) -> dict:
+        """Blocking gpsoauth call: master token -> short-lived nest-account token."""
+        import gpsoauth  # noqa: PLC0415  (optional dependency, imported lazily)
+
+        return gpsoauth.perform_oauth(
+            email,
+            master_token,
+            android_id,
+            app=GOOGLE_HOME_APP,
+            service=NEST_ACCOUNT_OAUTH_SERVICE,
+            client_sig=GOOGLE_OAUTH_CLIENT_SIG,
+        )
+
+    async def exchange_master_token(
+        self, oauth_token: str, email: str, android_id: str
     ) -> str:
-        """Build the Google authorization URL for the installed-app PKCE flow."""
-        params = {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": OAUTH_SCOPES,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-            "access_type": "offline",
-            "prompt": "consent",
-        }
-        return f"{OAUTH_AUTH_URL}?{urlencode(params)}"
+        """Exchange a one-time ``oauth_token`` for a durable Google master token.
 
-    @staticmethod
-    def extract_authorization_code(value: str) -> str:
-        """Extract the authorization code from a pasted redirect URL or raw code."""
-        value = value.strip()
-        if not value:
-            return ""
-
-        # Accept a full redirect URL (custom scheme or otherwise) and pull ?code=
-        query = urlsplit(value).query or (value.split("?", 1)[1] if "?" in value else "")
-        if query:
-            params = parse_qs(query)
-            if "code" in params and params["code"]:
-                return params["code"][0]
-
-        # Otherwise assume the user pasted the bare code value.
-        return value
-
-    async def exchange_authorization_code(
-        self, code: str, code_verifier: str, redirect_uri: str
-    ) -> GoogleAuthResponse:
-        """Exchange an authorization code for a long-lived refresh token.
-
-        This mints the durable credential (refresh token) that powers the
-        app-token auth method. The refresh token only becomes invalid on a
-        Google password change or explicit revocation.
+        The ``oauth_token`` (starts with ``oauth2_4/``) is captured once from
+        ``accounts.google.com/EmbeddedSetup``. The resulting master token
+        (``aas_et/...``) never expires unless the password is changed or access is
+        revoked, mirroring how the mobile apps stay signed in.
         """
-        async with self.session.post(
-            TOKEN_URL,
-            data=FormData(
-                {
-                    "client_id": self.environment.client_id,
-                    "code": code,
-                    "code_verifier": code_verifier,
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                }
-            ),
-            headers={
-                "User-Agent": USER_AGENT,
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        ) as response:
-            result = await response.json()
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, self._exchange_token_sync, oauth_token, email, android_id
+        )
 
-            if "error" in result:
-                error = result.get("error")
-                detail = result.get("error_description", "")
-                if error in ("invalid_grant", "invalid_request"):
-                    raise BadCredentialsException(f"{error} - {detail}")
-                raise PynestException(
-                    f"Authorization code exchange failed: {error} - {detail}"
-                )
+        master_token = result.get("Token")
+        if not master_token:
+            error = result.get("Error", result)
+            raise BadCredentialsException(f"Could not obtain master token: {error}")
 
-            refresh_token = result.get("refresh_token")
-            if not refresh_token:
-                raise PynestException(
-                    "Google did not return a refresh_token. Make sure you approved "
-                    "offline access and used a fresh authorization code."
-                )
+        self.master_token = master_token
+        self.google_email = email
+        self.android_id = android_id
 
-            self.refresh_token = refresh_token
-            self.refreshed_refresh_token = refresh_token
-            self.auth = GoogleAuthResponse(
-                access_token=result["access_token"],
-                scope=result.get("scope", OAUTH_SCOPES),
-                token_type=result.get("token_type", "Bearer"),
-                expires_in=result["expires_in"],
-                id_token=result.get("id_token"),
+        return master_token
+
+    async def get_access_token_from_master_token(
+        self,
+        master_token: str | None = None,
+        email: str | None = None,
+        android_id: str | None = None,
+    ) -> GoogleAuthResponse:
+        """Mint a short-lived nest-account access token from a master token."""
+        if master_token:
+            self.master_token = master_token
+        if email:
+            self.google_email = email
+        if android_id:
+            self.android_id = android_id
+
+        if not (self.master_token and self.google_email and self.android_id):
+            raise PynestException("Master token credentials are incomplete")
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            self._perform_oauth_sync,
+            self.google_email,
+            self.master_token,
+            self.android_id,
+        )
+
+        access_token = result.get("Auth")
+        if not access_token:
+            error = result.get("Error", result)
+            # BadAuthentication means the master token is no longer valid.
+            raise BadCredentialsException(
+                f"Could not mint access token from master token: {error}"
             )
 
-            return self.auth
+        expiry = int(result.get("Expiry", 0))
+        expires_in = max(0, expiry - int(time.time())) if expiry else 3600
+
+        self.auth = GoogleAuthResponse(
+            access_token=access_token,
+            scope=NEST_ACCOUNT_OAUTH_SERVICE,
+            token_type="Bearer",
+            expires_in=expires_in,
+            id_token=None,
+        )
+
+        return self.auth
 
     async def get_access_token_from_cookies(
         self, issue_token: str, cookies: str

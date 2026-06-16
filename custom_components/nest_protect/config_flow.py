@@ -16,9 +16,13 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import (
     CONF_ACCOUNT_TYPE,
+    CONF_ANDROID_ID,
     CONF_AUTH_CODE,
     CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
     CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
+    CONF_OAUTH_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
     ISSUE_COOKIE_EXPIRED,
@@ -33,6 +37,7 @@ DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
     "issue_token_prefix": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken",
     "accounts_url": "https://accounts.google.com/",
+    "embedded_setup_url": "https://accounts.google.com/EmbeddedSetup",
     # Pinned to a specific release rather than "latest", which may resolve to a
     # pre-release that is incompatible with this version of the integration.
     "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip",
@@ -46,11 +51,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     _config_entry: ConfigEntry | None = None
     _default_account_type: Environment = Environment.PRODUCTION
-
-    # State for the installed-app PKCE (app token) flow.
-    _app_token_code_verifier: str | None = None
-    _app_token_redirect_uri: str | None = None
-    _app_token_auth_url: str | None = None
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -151,8 +151,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle auth method selection."""
         if user_input:
             method = user_input["method"]
-            if method == "app_token":
-                return await self.async_step_app_token()
+            if method == "master_token":
+                return await self.async_step_master_token()
             if method == "extension":
                 return await self.async_step_extension()
             return await self.async_step_account_link()
@@ -161,9 +161,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="auth_method",
             data_schema=vol.Schema(
                 {
-                    vol.Required("method", default="app_token"): vol.In(
+                    vol.Required("method", default="master_token"): vol.In(
                         {
-                            "app_token": "App token (stays logged in, recommended)",
+                            "master_token": "Master token (stays logged in, recommended)",
                             "extension": "Use the Chrome Extension",
                             "manual": "Enter credentials manually",
                         }
@@ -173,35 +173,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders=DESCRIPTION_PLACEHOLDERS,
         )
 
-    async def async_step_app_token(
+    async def async_step_master_token(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle authentication via the installed-app (PKCE) token flow.
+        """Handle authentication via the durable Google master-token flow.
 
-        This mints a long-lived refresh token entirely inside Home Assistant,
-        with no browser extension and no companion service. The credential only
-        becomes invalid on a Google password change or explicit revocation.
+        The user provides their Google email and a one-time ``oauth_token``
+        captured from ``accounts.google.com/EmbeddedSetup``. Home Assistant
+        exchanges it for a master token (which never expires unless the password
+        changes) and stores that. No browser extension or companion service is
+        used; renewal happens entirely inside HA.
         """
         errors: dict[str, str] = {}
         environment = self._default_account_type
-        client_id = NEST_ENVIRONMENTS[environment].client_id
-
-        # Generate a fresh PKCE pair and authorization URL on first display.
-        if self._app_token_code_verifier is None:
-            code_verifier, code_challenge = NestClient.generate_pkce_pair()
-            self._app_token_code_verifier = code_verifier
-            self._app_token_redirect_uri = NestClient.build_redirect_uri(client_id)
-            self._app_token_auth_url = NestClient.build_authorization_url(
-                client_id, code_challenge, self._app_token_redirect_uri
-            )
 
         if user_input:
-            code = NestClient.extract_authorization_code(user_input[CONF_AUTH_CODE])
+            email = user_input[CONF_GOOGLE_EMAIL].strip()
+            oauth_token = user_input[CONF_OAUTH_TOKEN].strip()
+            android_id = NestClient.generate_android_id()
             nest = None
             data = None
 
-            if not code:
-                errors[CONF_AUTH_CODE] = "invalid_code"
+            if not email or not oauth_token:
+                errors["base"] = "invalid_code"
 
             if not errors:
                 session = async_create_clientsession(self.hass)
@@ -209,45 +203,46 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     session=session, environment=NEST_ENVIRONMENTS[environment]
                 )
                 try:
-                    auth = await client.exchange_authorization_code(
-                        code,
-                        cast(str, self._app_token_code_verifier),
-                        cast(str, self._app_token_redirect_uri),
-                    )
+                    await client.exchange_master_token(oauth_token, email, android_id)
+                    auth = await client.get_access_token_from_master_token()
                     nest = await client.authenticate(auth.access_token)
                     data = await client.get_first_data(nest.access_token, nest.userid)
                 except (TimeoutError, ClientError):
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
-                    errors[CONF_AUTH_CODE] = "invalid_code"
+                    errors["base"] = "invalid_auth"
                 except PynestException:
-                    errors[CONF_AUTH_CODE] = "invalid_code"
+                    errors["base"] = "unknown"
                 except Exception as exception:  # pylint: disable=broad-except
                     errors["base"] = "unknown"
                     LOGGER.exception(exception)
 
             if not errors and nest is not None and data is not None:
-                email = ""
+                account_email = email
                 for bucket in data.updated_buckets:
                     if bucket.object_key.startswith("user."):
-                        email = bucket.value["email"]
+                        account_email = bucket.value.get("email", email)
 
                 await self.async_set_unique_id(nest.user)
 
                 new_data = {
-                    CONF_REFRESH_TOKEN: client.refresh_token,
+                    CONF_MASTER_TOKEN: client.master_token,
+                    CONF_GOOGLE_EMAIL: email,
+                    CONF_ANDROID_ID: android_id,
                     CONF_ACCOUNT_TYPE: environment,
                 }
 
-                # Reset PKCE state so a retry/new flow generates a fresh code.
-                self._app_token_code_verifier = None
-
                 if self._config_entry:
-                    # Reauth: replace credentials and drop any stale cookie creds.
+                    # Reauth: switch to the durable credential, drop legacy creds.
                     merged = {
                         key: value
                         for key, value in self._config_entry.data.items()
-                        if key not in (CONF_ISSUE_TOKEN, CONF_COOKIES)
+                        if key
+                        not in (
+                            CONF_ISSUE_TOKEN,
+                            CONF_COOKIES,
+                            CONF_REFRESH_TOKEN,
+                        )
                     }
                     merged.update(new_data)
                     self.hass.config_entries.async_update_entry(
@@ -263,20 +258,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title=f"Nest Protect ({email})", data=new_data
+                    title=f"Nest Protect ({account_email})", data=new_data
                 )
 
         return self.async_show_form(
-            step_id="app_token",
+            step_id="master_token",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_AUTH_CODE): str,
+                    vol.Required(CONF_GOOGLE_EMAIL): str,
+                    vol.Required(CONF_OAUTH_TOKEN): str,
                 }
             ),
-            description_placeholders={
-                **DESCRIPTION_PLACEHOLDERS,
-                "auth_url": self._app_token_auth_url or "",
-            },
+            description_placeholders=DESCRIPTION_PLACEHOLDERS,
             errors=errors,
             last_step=True,
         )

@@ -23,8 +23,11 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_ACCOUNT_TYPE,
+    CONF_ANDROID_ID,
     CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
     CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
     ISSUE_COOKIE_EXPIRED,
@@ -85,6 +88,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     issue_token = entry.data.get(CONF_ISSUE_TOKEN)
     cookies = entry.data.get(CONF_COOKIES)
     refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
+    master_token = entry.data.get(CONF_MASTER_TOKEN)
+    google_email = entry.data.get(CONF_GOOGLE_EMAIL)
+    android_id = entry.data.get(CONF_ANDROID_ID)
 
     session = async_create_clientsession(hass)
     account_type = entry.data.get(CONF_ACCOUNT_TYPE, Environment.PRODUCTION)
@@ -93,6 +99,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     client.issue_token = issue_token
     client.cookies = cookies
     client.refresh_token = refresh_token
+    client.master_token = master_token
+    client.google_email = google_email
+    client.android_id = android_id
 
     store = Store(
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)

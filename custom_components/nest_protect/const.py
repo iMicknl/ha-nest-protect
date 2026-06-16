@@ -17,6 +17,11 @@ CONF_REFRESH_TOKEN: Final = "refresh_token"
 CONF_ISSUE_TOKEN: Final = "issue_token"
 CONF_COOKIES: Final = "cookies"
 CONF_AUTH_CODE: Final = "auth_code"
+# Master token (durable, app-style) auth
+CONF_MASTER_TOKEN: Final = "master_token"
+CONF_GOOGLE_EMAIL: Final = "google_email"
+CONF_ANDROID_ID: Final = "android_id"
+CONF_OAUTH_TOKEN: Final = "oauth_token"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
