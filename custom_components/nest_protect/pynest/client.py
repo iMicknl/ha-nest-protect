@@ -192,6 +192,7 @@ class NestClient:
             result = await response.json()
 
             if "error" in result:
+                self.refreshed_cookies = None
                 # #region agent log
                 agent_debug_log(
                     "client.py:get_access_token_from_cookies",

@@ -42,11 +42,17 @@ class NestSessionManager:
         self._store = store
         self._consecutive_failures: int = 0
         self._last_cookie_refresh: float = 0.0
+        self._cookie_auth_failed: bool = False
 
     @property
     def refreshed_cookies(self) -> str | None:
         """Proxy to client's refreshed_cookies property."""
         return self._client.refreshed_cookies
+
+    @property
+    def cookie_auth_failed(self) -> bool:
+        """Return True if the last Google cookie refresh failed."""
+        return self._cookie_auth_failed
 
     @property
     def consecutive_failures(self) -> int:
@@ -227,6 +233,7 @@ class NestSessionManager:
                 self._client.issue_token, self._client.cookies
             )
         except BadCredentialsException:
+            self._cookie_auth_failed = True
             # #region agent log
             agent_debug_log(
                 "session.py:async_refresh_google_cookies",
@@ -238,9 +245,16 @@ class NestSessionManager:
             # #endregion
             return False
 
+        self._cookie_auth_failed = False
         self._mark_cookie_refresh()
         if self._client.refreshed_cookies:
             self._client.cookies = self._client.refreshed_cookies
+
+        if self._client.auth:
+            self._client.nest_session = await self._client.authenticate(
+                self._client.auth.access_token
+            )
+            await self._async_persist(self._client.nest_session)
 
         # #region agent log
         agent_debug_log(
@@ -248,23 +262,24 @@ class NestSessionManager:
             "proactive cookie refresh succeeded",
             {
                 "cookies_changed": self._client.refreshed_cookies is not None,
+                "nest_session_refreshed": bool(self._client.nest_session),
             },
-            "H2",
+            "H6",
             run_id="post-fix",
         )
         # #endregion
         return True
 
-    async def maybe_refresh_google_cookies(self) -> None:
+    async def maybe_refresh_google_cookies(self) -> bool | None:
         """Refresh Google cookies periodically even when Nest session is valid."""
         if not (self._client.issue_token and self._client.cookies):
-            return
+            return None
 
         elapsed = time.monotonic() - self._last_cookie_refresh
         if self._last_cookie_refresh and elapsed < COOKIE_REFRESH_INTERVAL_SECONDS:
-            return
+            return None
 
-        await self.async_refresh_google_cookies()
+        return await self.async_refresh_google_cookies()
 
     async def ensure_session(self) -> None:
         """Ensure a valid Nest session exists, refreshing if needed."""

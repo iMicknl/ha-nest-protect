@@ -59,6 +59,7 @@ class HomeAssistantNestProtectData:
     client: NestClient
     session_manager: NestSessionManager
     subscription_task: asyncio.Task | None = None
+    reauth_pending: bool = False
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -126,6 +127,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Update cookies in config entry if Google returned refreshed ones
     _persist_refreshed_cookies(hass, entry, client, session_manager)
 
+    if session_manager.cookie_auth_failed:
+        # #region agent log
+        from .debug_log import agent_debug_log
+
+        agent_debug_log(
+            "__init__.py:async_setup_entry",
+            "startup cookie refresh failed, triggering reauth",
+            {},
+            "H1",
+            run_id="post-fix",
+        )
+        # #endregion
+        LOGGER.warning(
+            "Google cookie refresh failed on startup; re-authentication recommended"
+        )
+
     device_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
 
@@ -149,6 +166,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         session_manager=session_manager,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+
+    if session_manager.cookie_auth_failed:
+        _maybe_request_reauth(hass, entry, entry_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -180,6 +200,17 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
     await store.async_remove()
+
+
+def _maybe_request_reauth(
+    hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
+) -> None:
+    """Request re-authentication once until cookies recover."""
+    if entry_data.reauth_pending:
+        return
+
+    entry_data.reauth_pending = True
+    entry.async_start_reauth(hass)
 
 
 def _persist_refreshed_cookies(
@@ -263,7 +294,33 @@ async def _async_subscribe_for_data(
         await asyncio.sleep(0)
 
         await sm.ensure_session()
+
+        if sm.cookie_auth_failed:
+            # #region agent log
+            from .debug_log import agent_debug_log
+
+            agent_debug_log(
+                "__init__.py:_async_subscribe_for_data",
+                "cookie auth failed, requesting reauth and continuing if possible",
+                {
+                    "has_nest_session": bool(entry_data.client.nest_session),
+                },
+                "H9",
+                run_id="post-fix",
+            )
+            # #endregion
+            LOGGER.warning(
+                "Google cookies expired; re-authentication needed. "
+                "Continuing with current Nest session until it expires."
+            )
+            _maybe_request_reauth(hass, entry, entry_data)
+
         _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+
+        if not entry_data.client.nest_session:
+            await asyncio.sleep(sm.backoff_interval)
+            _register_subscribe_task(hass, entry, data)
+            return
 
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
@@ -273,6 +330,7 @@ async def _async_subscribe_for_data(
         )
 
         sm.record_success()
+        entry_data.reauth_pending = False
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
