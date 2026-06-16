@@ -9,9 +9,19 @@
       },
       "auth_method": {
         "title": "Authentication Method",
-        "description": "Choose how to connect your Nest account. The Chrome Extension method is recommended for most users.",
+        "description": "Choose how to connect your Nest account. The **App token** method is recommended: it stays logged in and does not expire after a few hours.",
         "data": {
           "method": "Method"
+        }
+      },
+      "app_token": {
+        "title": "Connect with an App Token",
+        "description": "This creates a long-lived login that does not expire after a few hours. It only stops working if you change your Google password or revoke access.\n\n1. Open this link in any browser and sign in: [Sign in with Google]({auth_url})\n2. Approve access when prompted\n3. Your browser will then try to open a page that fails to load (an address starting with `com.googleusercontent.apps...`). This is expected.\n4. Copy the **entire address** from the browser's address bar and paste it below (you can also paste just the `code` value).\n\n⚠️ Do not share this — it grants access to your Nest account.",
+        "data": {
+          "auth_code": "Authorization Code or Redirect URL"
+        },
+        "data_description": {
+          "auth_code": "Paste the full redirect URL from the address bar, or the code value contained in it"
         }
       },
       "extension": {
@@ -42,7 +52,7 @@
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "invalid_issue_token": "Invalid issue token URL. Must start with {accounts_url} and contain the issueToken action.",
       "invalid_cookies": "Invalid cookies format. Ensure you copied the complete cookie header from the oauth2/iframe request.",
-      "invalid_code": "Invalid authentication code. Make sure you copied the complete code from the extension.",
+      "invalid_code": "Invalid or expired authentication code. Make sure you copied the complete code or redirect URL and try again with a fresh sign-in.",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "abort": {
@@ -52,8 +62,8 @@
   },
   "issues": {
     "cookie_auth_expired": {
-      "title": "Nest Protect cookies expired for {title}",
-      "description": "Google session cookies have expired. Re-authenticate using the Chrome extension or by pasting fresh issue_token and cookies. See docs/authentication.md for details. Staying logged into Google in Chrome makes extension reauth one-click."
+      "title": "Nest Protect authentication expired for {title}",
+      "description": "Your Nest credentials have expired or were revoked. Re-authenticate to restore updates. The **App token** method is the most durable option (it only expires when you change your Google password); the cookie/extension methods expire every few hours. See docs/authentication.md for details."
     }
   },
   "entity": {

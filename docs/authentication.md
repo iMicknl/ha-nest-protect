@@ -7,10 +7,11 @@ Last updated: 2026-06-12 (from debug sessions and community research).
 ## TL;DR
 
 - **Nest Protect has no official Google API.** The Smart Device Management (SDM) OAuth integration in Home Assistant does not support Protect.
-- **This integration uses the same unofficial web API** as home.nest.com (`topaz` device buckets), via cookie + `issueToken` auth.
-- **There is no portable OAuth refresh token** for new Google-account setups (Google deprecated browser token generation in 2022).
-- **Google session cookies expire** on a server-side schedule (~2–5 hours in practice). HA stores a snapshot; when Google returns `USER_LOGGED_OUT`, fresh cookies from a browser are required.
+- **This integration uses the same unofficial web API** as home.nest.com (`topaz` device buckets).
+- **Recommended: the App token method.** It mints a long-lived OAuth **refresh token** via the installed-app (PKCE) flow — the same kind of durable credential the Nest mobile app holds. It only stops working on a Google password change or explicit revocation, so HA self-refreshes indefinitely with no browser running.
+- **Legacy fallback: cookie + `issueToken` auth.** Works, but **Google session cookies expire** on a server-side schedule (~2–5 hours in practice). When Google returns `USER_LOGGED_OUT`, fresh cookies from a browser are required.
 - **The Chrome extension works without re-login** because Chrome still has a live Google session — it re-captures cookies, not because HA can self-heal forever.
+- **Intercepting the Nest Protect device traffic does not help** (see "Packet capture" below).
 
 ---
 
@@ -48,6 +49,92 @@ Runtime persistence (per config entry):
 
 ---
 
+## App token method (recommended) — long-lived refresh token, HA-contained
+
+This is the durable path. It reproduces how the Nest mobile app stays logged in: it
+obtains a **long-lived OAuth refresh token** that only dies on password change or
+revocation. Everything happens inside Home Assistant — no browser extension, no
+companion service, no always-on browser.
+
+### How it works
+
+```mermaid
+sequenceDiagram
+    participant User as User_Browser
+    participant HA as Home_Assistant
+    participant Google as Google_OAuth
+    participant Nest as Nest_Web_API
+
+    HA->>HA: Generate PKCE pair + authorization URL
+    User->>Google: Open auth URL, sign in, approve
+    Google-->>User: Redirect to custom scheme (browser cannot open it)
+    User->>HA: Paste the redirect URL / code
+    HA->>Google: Exchange code + code_verifier (PKCE)
+    Google-->>HA: refresh_token (long-lived) + access_token
+    HA->>Nest: issue_jwt with access_token
+    Nest-->>HA: Nest session
+    Note over HA,Google: On expiry, HA exchanges refresh_token for a new access_token forever
+```
+
+- The flow uses the Nest iOS OAuth `client_id` already in
+  `custom_components/nest_protect/pynest/const.py` and the
+  `https://www.googleapis.com/auth/nest-account` scope.
+- The redirect URI is the reversed-client-id custom scheme
+  (`com.googleusercontent.apps.<client-id>:/oauth2redirect`). A normal browser
+  cannot open it, so the user copies the `code` from the address bar.
+- The minted `refresh_token` is stored in the config entry (`CONF_REFRESH_TOKEN`)
+  and consumed by the existing `get_access_token_from_refresh_token` →
+  `authenticate` → `subscribe_for_data` pipeline.
+
+### Why this is not the dead OOB flow
+
+Google deprecated the out-of-band (`urn:ietf:wg:oauth:2.0:oob`) flow in Oct 2022.
+The **installed-app PKCE flow with a custom-scheme redirect is a different,
+still-supported mechanism** — it does not rely on OOB. This is what makes minting
+new refresh tokens possible again.
+
+### Code references
+
+| Step | Location |
+|------|----------|
+| PKCE + URL + code exchange | `pynest/client.py` → `generate_pkce_pair`, `build_authorization_url`, `exchange_authorization_code` |
+| OAuth constants (URL/scope/redirect) | `pynest/const.py` → `OAUTH_AUTH_URL`, `OAUTH_SCOPES`, `OAUTH_REDIRECT_PATH` |
+| Config flow step | `config_flow.py` → `async_step_app_token` |
+
+### When re-auth is still needed
+
+Only when the refresh token is invalidated: a **Google password change** or an
+**explicit revocation** in the Google account security page. There is no periodic
+hours-based expiry like the cookie method.
+
+### Documented fallback if PKCE ever stops working
+
+If Google ever blocks the installed-app PKCE flow for this `client_id`, the next
+option is the **Android master token** flow (`gpsoauth`): exchange a one-time
+`oauth_token` (from `accounts.google.com/EmbeddedSetup`) for a master token
+(`aas_et/...`) — the exact credential the phone stores — then derive short-lived
+service tokens from it. This requires an extra dependency (`gpsoauth`) and the Nest
+Android app's package name, signing-cert SHA1, and service scope (APK-derived), so
+it is intentionally left as a documented fallback rather than shipped code while the
+PKCE method works.
+
+---
+
+## Packet capture / Wireshark — ruled out
+
+Intercepting traffic between a Nest Protect and Google cannot produce a credential
+this integration can use:
+
+- Protects talk to Google over **Weave** (802.15.4 Thread + Wi-Fi 802.11), which is
+  encrypted and authenticated with **per-device hardware certificates** and is
+  certificate-pinned.
+- Even with full TLS/MITM decryption, you obtain *device* credentials, not a
+  reusable *account* token, and the device traffic does not expose the
+  `home.nest.com` account API this integration depends on.
+- Therefore interception is a dead end for the auth goal. Use the App token method.
+
+---
+
 ## Official Google OAuth (SDM API) — not for Protect
 
 The [official HA Nest integration](https://www.home-assistant.io/integrations/nest/) uses Google's **Smart Device Management API**:
@@ -68,16 +155,18 @@ References:
 
 ---
 
-## Legacy OAuth `refresh_token` — dead for new setups
+## OAuth `refresh_token` — how new tokens are minted now
 
-The codebase still supports `refresh_token` in `config_flow.py` and `NestClient.get_access_token_from_refresh_token()`, but:
+The codebase consumes `refresh_token` via `NestClient.get_access_token_from_refresh_token()`.
+Historically new tokens could not be created because:
 
 - Google **deprecated the browser out-of-band (OOB) OAuth flow** in October 2022
-- **New refresh tokens cannot be obtained** via browser login anymore
 - homebridge-nest documents this: [issue #575](https://github.com/chrisjshull/homebridge-nest/issues/575)
-- Pre-existing refresh tokens may continue working until password change or revocation — not viable for new users
+- Pre-existing refresh tokens kept working until password change or revocation
 
-Do not plan features that depend on generating new refresh tokens from a browser.
+The **App token method** (above) restores the ability to mint new refresh tokens by
+using the still-supported installed-app **PKCE** flow with a custom-scheme redirect
+instead of the dead OOB flow. So new setups can again obtain a durable refresh token.
 
 If an `issueToken` response ever includes a `refresh_token`, the integration persists it automatically. Users who already have a legacy `refresh_token` can still use the manual config-flow path.
 
@@ -141,7 +230,13 @@ See [chrome_extension/README.md](../chrome_extension/README.md).
 
 ## Strategies evaluated
 
-### HA-only (current plan direction)
+### App token (recommended, implemented)
+
+Mint a long-lived refresh token via the installed-app PKCE flow, fully inside HA.
+No browser extension or companion service. Only re-auth trigger is a Google
+password change / revocation. See "App token method" above.
+
+### HA-only cookies (legacy fallback)
 
 Maximize uptime without an always-on browser:
 
@@ -168,8 +263,10 @@ Only if user already possesses a token from before 2022 deprecation.
 | Area | File |
 |------|------|
 | Config entry fields | `custom_components/nest_protect/const.py` |
+| App token (PKCE) mint | `custom_components/nest_protect/pynest/client.py` → `generate_pkce_pair`, `build_authorization_url`, `exchange_authorization_code` |
+| App token config step | `custom_components/nest_protect/config_flow.py` → `async_step_app_token` |
 | Cookie auth | `custom_components/nest_protect/pynest/client.py` → `get_access_token_from_cookies` |
-| Refresh token auth (legacy) | `get_access_token_from_refresh_token` |
+| Refresh token auth | `get_access_token_from_refresh_token` |
 | Session tiers + persistence | `custom_components/nest_protect/session.py` |
 | Cookie persist to config | `custom_components/nest_protect/__init__.py` → `_persist_refreshed_auth` |
 | Chrome extension capture | `chrome_extension/background.js` |

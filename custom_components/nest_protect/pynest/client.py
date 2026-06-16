@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import secrets
 import time
 from random import randint
 from types import TracebackType
 from typing import Any, cast
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
@@ -15,6 +19,9 @@ from .const import (
     DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    OAUTH_AUTH_URL,
+    OAUTH_REDIRECT_PATH,
+    OAUTH_SCOPES,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -157,6 +164,114 @@ class NestClient:
                 raise Exception(result["error"])
 
             self.auth = GoogleAuthResponse(**result)
+
+            return self.auth
+
+    @staticmethod
+    def generate_pkce_pair() -> tuple[str, str]:
+        """Generate a PKCE (code_verifier, code_challenge) pair using S256."""
+        code_verifier = secrets.token_urlsafe(64)
+        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+        code_challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+        return code_verifier, code_challenge
+
+    @staticmethod
+    def build_redirect_uri(client_id: str) -> str:
+        """Build the reversed-client-id custom-scheme redirect URI.
+
+        Installed-app (iOS/Android) OAuth clients use a reversed client id as
+        their custom URI scheme. A regular browser cannot open this scheme, so
+        the user copies the resulting ``code`` from the address bar instead.
+        """
+        base = client_id.replace(".apps.googleusercontent.com", "")
+        return f"com.googleusercontent.apps.{base}{OAUTH_REDIRECT_PATH}"
+
+    @staticmethod
+    def build_authorization_url(
+        client_id: str, code_challenge: str, redirect_uri: str
+    ) -> str:
+        """Build the Google authorization URL for the installed-app PKCE flow."""
+        params = {
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": OAUTH_SCOPES,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+        return f"{OAUTH_AUTH_URL}?{urlencode(params)}"
+
+    @staticmethod
+    def extract_authorization_code(value: str) -> str:
+        """Extract the authorization code from a pasted redirect URL or raw code."""
+        value = value.strip()
+        if not value:
+            return ""
+
+        # Accept a full redirect URL (custom scheme or otherwise) and pull ?code=
+        query = urlsplit(value).query or (value.split("?", 1)[1] if "?" in value else "")
+        if query:
+            params = parse_qs(query)
+            if "code" in params and params["code"]:
+                return params["code"][0]
+
+        # Otherwise assume the user pasted the bare code value.
+        return value
+
+    async def exchange_authorization_code(
+        self, code: str, code_verifier: str, redirect_uri: str
+    ) -> GoogleAuthResponse:
+        """Exchange an authorization code for a long-lived refresh token.
+
+        This mints the durable credential (refresh token) that powers the
+        app-token auth method. The refresh token only becomes invalid on a
+        Google password change or explicit revocation.
+        """
+        async with self.session.post(
+            TOKEN_URL,
+            data=FormData(
+                {
+                    "client_id": self.environment.client_id,
+                    "code": code,
+                    "code_verifier": code_verifier,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                }
+            ),
+            headers={
+                "User-Agent": USER_AGENT,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        ) as response:
+            result = await response.json()
+
+            if "error" in result:
+                error = result.get("error")
+                detail = result.get("error_description", "")
+                if error in ("invalid_grant", "invalid_request"):
+                    raise BadCredentialsException(f"{error} - {detail}")
+                raise PynestException(
+                    f"Authorization code exchange failed: {error} - {detail}"
+                )
+
+            refresh_token = result.get("refresh_token")
+            if not refresh_token:
+                raise PynestException(
+                    "Google did not return a refresh_token. Make sure you approved "
+                    "offline access and used a fresh authorization code."
+                )
+
+            self.refresh_token = refresh_token
+            self.refreshed_refresh_token = refresh_token
+            self.auth = GoogleAuthResponse(
+                access_token=result["access_token"],
+                scope=result.get("scope", OAUTH_SCOPES),
+                token_type=result.get("token_type", "Bearer"),
+                expires_in=result["expires_in"],
+                id_token=result.get("id_token"),
+            )
 
             return self.auth
 

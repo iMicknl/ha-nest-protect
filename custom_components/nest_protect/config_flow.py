@@ -27,7 +27,7 @@ from .const import (
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import Environment
-from .pynest.exceptions import BadCredentialsException
+from .pynest.exceptions import BadCredentialsException, PynestException
 
 DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
@@ -46,6 +46,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     _config_entry: ConfigEntry | None = None
     _default_account_type: Environment = Environment.PRODUCTION
+
+    # State for the installed-app PKCE (app token) flow.
+    _app_token_code_verifier: str | None = None
+    _app_token_redirect_uri: str | None = None
+    _app_token_auth_url: str | None = None
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -145,7 +150,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle auth method selection."""
         if user_input:
-            if user_input["method"] == "extension":
+            method = user_input["method"]
+            if method == "app_token":
+                return await self.async_step_app_token()
+            if method == "extension":
                 return await self.async_step_extension()
             return await self.async_step_account_link()
 
@@ -153,15 +161,124 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="auth_method",
             data_schema=vol.Schema(
                 {
-                    vol.Required("method", default="extension"): vol.In(
+                    vol.Required("method", default="app_token"): vol.In(
                         {
-                            "extension": "Use the Chrome Extension (recommended)",
+                            "app_token": "App token (stays logged in, recommended)",
+                            "extension": "Use the Chrome Extension",
                             "manual": "Enter credentials manually",
                         }
                     ),
                 }
             ),
             description_placeholders=DESCRIPTION_PLACEHOLDERS,
+        )
+
+    async def async_step_app_token(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle authentication via the installed-app (PKCE) token flow.
+
+        This mints a long-lived refresh token entirely inside Home Assistant,
+        with no browser extension and no companion service. The credential only
+        becomes invalid on a Google password change or explicit revocation.
+        """
+        errors: dict[str, str] = {}
+        environment = self._default_account_type
+        client_id = NEST_ENVIRONMENTS[environment].client_id
+
+        # Generate a fresh PKCE pair and authorization URL on first display.
+        if self._app_token_code_verifier is None:
+            code_verifier, code_challenge = NestClient.generate_pkce_pair()
+            self._app_token_code_verifier = code_verifier
+            self._app_token_redirect_uri = NestClient.build_redirect_uri(client_id)
+            self._app_token_auth_url = NestClient.build_authorization_url(
+                client_id, code_challenge, self._app_token_redirect_uri
+            )
+
+        if user_input:
+            code = NestClient.extract_authorization_code(user_input[CONF_AUTH_CODE])
+            nest = None
+            data = None
+
+            if not code:
+                errors[CONF_AUTH_CODE] = "invalid_code"
+
+            if not errors:
+                session = async_create_clientsession(self.hass)
+                client = NestClient(
+                    session=session, environment=NEST_ENVIRONMENTS[environment]
+                )
+                try:
+                    auth = await client.exchange_authorization_code(
+                        code,
+                        cast(str, self._app_token_code_verifier),
+                        cast(str, self._app_token_redirect_uri),
+                    )
+                    nest = await client.authenticate(auth.access_token)
+                    data = await client.get_first_data(nest.access_token, nest.userid)
+                except (TimeoutError, ClientError):
+                    errors["base"] = "cannot_connect"
+                except BadCredentialsException:
+                    errors[CONF_AUTH_CODE] = "invalid_code"
+                except PynestException:
+                    errors[CONF_AUTH_CODE] = "invalid_code"
+                except Exception as exception:  # pylint: disable=broad-except
+                    errors["base"] = "unknown"
+                    LOGGER.exception(exception)
+
+            if not errors and nest is not None and data is not None:
+                email = ""
+                for bucket in data.updated_buckets:
+                    if bucket.object_key.startswith("user."):
+                        email = bucket.value["email"]
+
+                await self.async_set_unique_id(nest.user)
+
+                new_data = {
+                    CONF_REFRESH_TOKEN: client.refresh_token,
+                    CONF_ACCOUNT_TYPE: environment,
+                }
+
+                # Reset PKCE state so a retry/new flow generates a fresh code.
+                self._app_token_code_verifier = None
+
+                if self._config_entry:
+                    # Reauth: replace credentials and drop any stale cookie creds.
+                    merged = {
+                        key: value
+                        for key, value in self._config_entry.data.items()
+                        if key not in (CONF_ISSUE_TOKEN, CONF_COOKIES)
+                    }
+                    merged.update(new_data)
+                    self.hass.config_entries.async_update_entry(
+                        self._config_entry, data=merged
+                    )
+                    self._clear_cookie_expired_issue(self._config_entry)
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(
+                            self._config_entry.entry_id
+                        )
+                    )
+                    return self.async_abort(reason="reauth_successful")
+
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=f"Nest Protect ({email})", data=new_data
+                )
+
+        return self.async_show_form(
+            step_id="app_token",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_AUTH_CODE): str,
+                }
+            ),
+            description_placeholders={
+                **DESCRIPTION_PLACEHOLDERS,
+                "auth_url": self._app_token_auth_url or "",
+            },
+            errors=errors,
+            last_step=True,
         )
 
     async def async_step_extension(
@@ -180,7 +297,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 issue_token = decoded["issue_token"]
                 cookies = decoded["cookies"]
-            except ValueError, KeyError, json.JSONDecodeError:
+            except (ValueError, KeyError, json.JSONDecodeError):
                 errors[CONF_AUTH_CODE] = "invalid_code"
 
             if not errors and (
@@ -199,7 +316,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         validation_input
                     )
-                except TimeoutError, ClientError:
+                except (TimeoutError, ClientError):
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
@@ -269,7 +386,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         user_input
                     )
-                except TimeoutError, ClientError:
+                except (TimeoutError, ClientError):
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
