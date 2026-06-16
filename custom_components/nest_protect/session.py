@@ -47,7 +47,7 @@ class NestSessionManager:
     @property
     def should_trigger_reauth(self) -> bool:
         """Return True if failures exceed the threshold."""
-        return self._consecutive_failures >= MAX_AUTH_FAILURES
+        return self._consecutive_failures >= MAX_AUTH_FAILURES or (self._consecutive_failures > 0 and self._client.nest_session.is_expired(buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS))
 
     @property
     def backoff_interval(self) -> int:
