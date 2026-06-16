@@ -13,7 +13,6 @@ from .const import (
     MAX_AUTH_FAILURES,
     SESSION_EXPIRY_BUFFER_SECONDS,
 )
-from .debug_log import agent_debug_log
 from .pynest.client import NestClient
 from .pynest.exceptions import (
     BadCredentialsException,
@@ -43,11 +42,22 @@ class NestSessionManager:
         self._consecutive_failures: int = 0
         self._last_cookie_refresh: float = 0.0
         self._cookie_auth_failed: bool = False
+        self._logged_issue_token_keys: bool = False
 
     @property
     def refreshed_cookies(self) -> str | None:
         """Proxy to client's refreshed_cookies property."""
         return self._client.refreshed_cookies
+
+    @property
+    def refreshed_issue_token(self) -> str | None:
+        """Proxy to client's refreshed_issue_token property."""
+        return self._client.refreshed_issue_token
+
+    @property
+    def refreshed_refresh_token(self) -> str | None:
+        """Proxy to client's refreshed_refresh_token property."""
+        return self._client.refreshed_refresh_token
 
     @property
     def cookie_auth_failed(self) -> bool:
@@ -88,24 +98,8 @@ class NestSessionManager:
         nest_session = await self._async_try_persisted_session()
 
         if nest_session is not None:
-            # #region agent log
-            agent_debug_log(
-                "session.py:async_setup",
-                "setup succeeded via persisted session tier",
-                {"tier": 1},
-                "H1",
-            )
-            # #endregion
             return nest_session
 
-        # #region agent log
-        agent_debug_log(
-            "session.py:async_setup",
-            "persisted session unavailable, using credential auth",
-            {"tier": 2},
-            "H1",
-        )
-        # #endregion
         return await self._async_authenticate_and_fetch()
 
     async def _async_try_persisted_session(self) -> FirstDataAPIResponse | None:
@@ -116,14 +110,6 @@ class NestSessionManager:
         persisted = await self._store.async_load()
 
         if not persisted or not persisted.get("nest_session"):
-            # #region agent log
-            agent_debug_log(
-                "session.py:_async_try_persisted_session",
-                "no persisted session in store",
-                {"has_persisted": bool(persisted)},
-                "H1",
-            )
-            # #endregion
             return None
 
         restored_session = NestResponse.from_dict(persisted["nest_session"])
@@ -133,14 +119,6 @@ class NestSessionManager:
 
         if restored_session.is_expired(buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS):
             LOGGER.debug("Persisted session expired, falling through to cookie auth")
-            # #region agent log
-            agent_debug_log(
-                "session.py:_async_try_persisted_session",
-                "persisted session expired by timestamp",
-                {"expires_in": restored_session.expires_in},
-                "H1",
-            )
-            # #endregion
             return None
 
         LOGGER.debug(
@@ -155,18 +133,10 @@ class NestSessionManager:
             return await self._client.get_first_data(
                 restored_session.access_token, restored_session.userid
             )
-        except (NotAuthenticatedException, PynestException) as exc:  # fmt: skip
+        except (NotAuthenticatedException, PynestException):
             LOGGER.debug(
                 "Persisted session rejected by Nest, falling through to cookie auth"
             )
-            # #region agent log
-            agent_debug_log(
-                "session.py:_async_try_persisted_session",
-                "persisted session rejected by Nest API",
-                {"error_type": type(exc).__name__},
-                "H1",
-            )
-            # #endregion
             self._client.nest_session = None
             return None
 
@@ -198,26 +168,27 @@ class NestSessionManager:
                 self._client.issue_token, self._client.cookies
             )
             self._mark_cookie_refresh()
+            self._log_issue_token_response_keys_once()
         elif self._client.refresh_token:
             auth = await self._client.get_access_token_from_refresh_token(
                 self._client.refresh_token
             )
         else:
-            # #region agent log
-            agent_debug_log(
-                "session.py:_async_authenticate_with_credentials",
-                "no credentials available",
-                {
-                    "has_issue_token": bool(self._client.issue_token),
-                    "has_cookies": bool(self._client.cookies),
-                    "has_refresh_token": bool(self._client.refresh_token),
-                },
-                "H5",
-            )
-            # #endregion
+            LOGGER.debug("No credentials available for Nest authentication")
             return None
 
         return await self._client.authenticate(auth.access_token)
+
+    def _log_issue_token_response_keys_once(self) -> None:
+        """Log issueToken response keys once to detect legacy refresh_token."""
+        if self._logged_issue_token_keys:
+            return
+        self._logged_issue_token_keys = True
+        if self._client.last_issue_token_response_keys:
+            LOGGER.debug(
+                "issueToken response keys: %s",
+                sorted(self._client.last_issue_token_response_keys),
+            )
 
     def _mark_cookie_refresh(self) -> None:
         """Record a successful Google cookie refresh."""
@@ -234,21 +205,13 @@ class NestSessionManager:
             )
         except BadCredentialsException:
             self._cookie_auth_failed = True
-            # #region agent log
-            agent_debug_log(
-                "session.py:async_refresh_google_cookies",
-                "proactive cookie refresh failed",
-                {},
-                "H2",
-                run_id="post-fix",
-            )
-            # #endregion
+            LOGGER.debug("Google cookie refresh failed")
             return False
 
         self._cookie_auth_failed = False
         self._mark_cookie_refresh()
-        if self._client.refreshed_cookies:
-            self._client.cookies = self._client.refreshed_cookies
+        self._log_issue_token_response_keys_once()
+        self._apply_refreshed_credentials()
 
         if self._client.auth:
             self._client.nest_session = await self._client.authenticate(
@@ -256,22 +219,23 @@ class NestSessionManager:
             )
             await self._async_persist(self._client.nest_session)
 
-        # #region agent log
-        agent_debug_log(
-            "session.py:async_refresh_google_cookies",
-            "proactive cookie refresh succeeded",
-            {
-                "cookies_changed": self._client.refreshed_cookies is not None,
-                "nest_session_refreshed": bool(self._client.nest_session),
-            },
-            "H6",
-            run_id="post-fix",
+        LOGGER.debug(
+            "Google cookie refresh succeeded (nest_session_refreshed=%s)",
+            bool(self._client.nest_session),
         )
-        # #endregion
         return True
 
+    def _apply_refreshed_credentials(self) -> None:
+        """Apply rotated credentials from the client onto itself."""
+        if self._client.refreshed_cookies:
+            self._client.cookies = self._client.refreshed_cookies
+        if self._client.refreshed_issue_token:
+            self._client.issue_token = self._client.refreshed_issue_token
+        if self._client.refreshed_refresh_token:
+            self._client.refresh_token = self._client.refreshed_refresh_token
+
     async def maybe_refresh_google_cookies(self) -> bool | None:
-        """Refresh Google cookies periodically even when Nest session is valid."""
+        """Safety-net cookie refresh when the interval has elapsed."""
         if not (self._client.issue_token and self._client.cookies):
             return None
 
@@ -282,33 +246,12 @@ class NestSessionManager:
         return await self.async_refresh_google_cookies()
 
     async def ensure_session(self) -> None:
-        """Ensure a valid Nest session exists, refreshing if needed."""
-        await self.maybe_refresh_google_cookies()
-
+        """Ensure a valid Nest session exists, refreshing only when needed."""
         if self._client.nest_session and not self._client.nest_session.is_expired(
             buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
         ):
-            # #region agent log
-            agent_debug_log(
-                "session.py:ensure_session",
-                "session still valid, skipping refresh",
-                {"expires_in": self._client.nest_session.expires_in},
-                "H2",
-            )
-            # #endregion
             return
 
-        # #region agent log
-        agent_debug_log(
-            "session.py:ensure_session",
-            "session refresh required",
-            {
-                "has_nest_session": bool(self._client.nest_session),
-                "has_auth": bool(self._client.auth),
-            },
-            "H2",
-        )
-        # #endregion
         await self.async_refresh_session()
 
     async def async_refresh_session(self) -> None:
@@ -318,8 +261,8 @@ class NestSessionManager:
             await self._client.get_access_token()
             if self._client.issue_token and self._client.cookies:
                 self._mark_cookie_refresh()
-            if self._client.refreshed_cookies:
-                self._client.cookies = self._client.refreshed_cookies
+                self._log_issue_token_response_keys_once()
+            self._apply_refreshed_credentials()
 
         if self._client.auth:
             self._client.nest_session = await self._client.authenticate(

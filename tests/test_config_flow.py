@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.nest_protect.config_flow import ConfigFlow
 from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.pynest.exceptions import BadCredentialsException
 
@@ -66,10 +67,22 @@ async def test_auth_method_manual_leads_to_account_link(
     assert result["step_id"] == "account_link"
 
 
+def _valid_test_cookies() -> str:
+    """Build a cookie string that passes config-flow validation."""
+    base = (
+        "SID=abc123456789012345678901234567890; "
+        "HSID=def1234567890; SSID=ghi1234567890; "
+        "APISID=jkl1234567890; SAPISID=mno1234567890; "
+        "SIDCC=abcdefghijklmnop; "
+        "__Secure-1PSID=abcdefghijklmnopqrstuvwxyz0123456789"
+    )
+    return base + ("; padding=x" * 40)
+
+
 async def test_extension_step_creates_entry(hass: HomeAssistant) -> None:
     """Test extension step decodes code and creates entry on success."""
     issue_token = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"
-    cookies = "SID=abc123456789012345678901234567890; HSID=def1234567890; SSID=ghi1234567890; APISID=jkl1234567890; SAPISID=mno1234567890"
+    cookies = _valid_test_cookies()
     code = base64.b64encode(
         json.dumps({"issue_token": issue_token, "cookies": cookies}).encode()
     ).decode()
@@ -130,7 +143,7 @@ async def test_extension_step_invalid_code(hass: HomeAssistant) -> None:
 async def test_extension_step_auth_failure(hass: HomeAssistant) -> None:
     """Test extension step shows error when auth chain fails."""
     issue_token = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"
-    cookies = "SID=abc123456789012345678901234567890; HSID=def1234567890; SSID=ghi1234567890; APISID=jkl1234567890; SAPISID=mno1234567890"
+    cookies = _valid_test_cookies()
     code = base64.b64encode(
         json.dumps({"issue_token": issue_token, "cookies": cookies}).encode()
     ).decode()
@@ -177,3 +190,14 @@ async def test_reauth_shows_auth_method(hass: HomeAssistant) -> None:
     result = await entry.start_reauth_flow(hass)
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "auth_method"
+
+
+def test_validate_cookies_requires_extended_markers() -> None:
+    """Truncated cookie strings without SIDCC/__Secure- should fail validation."""
+    short_core_only = (
+        "SID=abc123456789012345678901234567890; "
+        "HSID=def1234567890; SSID=ghi1234567890; "
+        "APISID=jkl1234567890; SAPISID=mno1234567890"
+    )
+    assert ConfigFlow._validate_cookies(short_core_only) is False
+    assert ConfigFlow._validate_cookies(_valid_test_cookies()) is True

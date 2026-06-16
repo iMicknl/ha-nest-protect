@@ -11,6 +11,7 @@ from aiohttp import ClientError
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import (
@@ -20,6 +21,7 @@ from .const import (
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
+    ISSUE_COOKIE_EXPIRED,
     LOGGER,
 )
 from .pynest.client import NestClient
@@ -66,14 +68,21 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Cookies should be substantial, contain key-value pairs,
         and include typical Google auth cookie markers.
         """
-        if len(cookies) <= 100:
+        if len(cookies) < 500:
             return False
-        # Require at least one key=value pair
         if "=" not in cookies:
             return False
-        # Common Google auth cookie names expected in exported cookie headers
         google_auth_markers = ("APISID=", "SAPISID=", "HSID=", "SSID=", "SID=")
-        return any(marker in cookies for marker in google_auth_markers)
+        if not any(marker in cookies for marker in google_auth_markers):
+            return False
+        extended_markers = ("SIDCC=", "__Secure-")
+        return any(marker in cookies for marker in extended_markers)
+
+    def _clear_cookie_expired_issue(self, entry: ConfigEntry) -> None:
+        """Remove cookie-expired repair issue after successful reauth."""
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"{ISSUE_COOKIE_EXPIRED}_{entry.entry_id}"
+        )
 
     async def async_validate_input(self, user_input: dict[str, Any]) -> list:
         """Validate user credentials."""
@@ -210,6 +219,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         self._config_entry,
                         data={**self._config_entry.data, **data},
                     )
+                    self._clear_cookie_expired_issue(self._config_entry)
                     self.hass.async_create_task(
                         self.hass.config_entries.async_reload(
                             self._config_entry.entry_id
@@ -277,6 +287,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             **user_input,
                         },
                     )
+                    self._clear_cookie_expired_issue(self._config_entry)
 
                     self.hass.async_create_task(
                         self.hass.config_entries.async_reload(
@@ -316,4 +327,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
 
+        return await self.async_step_auth_method()
+
+    async def async_step_fix(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle repair flow when Google cookies have expired."""
+        entry_id = self.context.get("entry_id") or self.context.get(
+            "issue_data", {}
+        ).get("entry_id")
+        if not entry_id:
+            return self.async_abort(reason="unknown")
+
+        self._config_entry = cast(
+            ConfigEntry,
+            self.hass.config_entries.async_get_entry(entry_id),
+        )
+        if self._config_entry is None:
+            return self.async_abort(reason="unknown")
+
+        self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
         return await self.async_step_auth_method()

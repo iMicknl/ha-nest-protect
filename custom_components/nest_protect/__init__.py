@@ -15,6 +15,7 @@ from aiohttp import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -26,6 +27,7 @@ from .const import (
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
+    ISSUE_COOKIE_EXPIRED,
     LOGGER,
     PLATFORMS,
     STORAGE_KEY_FORMAT,
@@ -103,16 +105,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
     except BadCredentialsException as exception:
-        # #region agent log
-        from .debug_log import agent_debug_log
-
-        agent_debug_log(
-            "__init__.py:async_setup_entry",
-            "setup failed with BadCredentialsException",
-            {"error": str(exception)},
-            "H1",
-        )
-        # #endregion
         raise ConfigEntryAuthFailed from exception
     except Exception as exception:  # pylint: disable=broad-except
         LOGGER.exception("Unknown exception.")
@@ -124,21 +116,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Keep Google cookies alive even when tier-1 persisted Nest session succeeded
     await session_manager.async_refresh_google_cookies()
 
-    # Update cookies in config entry if Google returned refreshed ones
-    _persist_refreshed_cookies(hass, entry, client, session_manager)
+    # Update credentials in config entry if Google returned refreshed ones
+    _persist_refreshed_auth(hass, entry, client, session_manager)
 
     if session_manager.cookie_auth_failed:
-        # #region agent log
-        from .debug_log import agent_debug_log
-
-        agent_debug_log(
-            "__init__.py:async_setup_entry",
-            "startup cookie refresh failed, triggering reauth",
-            {},
-            "H1",
-            run_id="post-fix",
-        )
-        # #endregion
         LOGGER.warning(
             "Google cookie refresh failed on startup; re-authentication recommended"
         )
@@ -191,6 +172,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await entry_data.subscription_task
             hass.data[DOMAIN].pop(entry.entry_id)
 
+    _clear_cookie_expired_issue(hass, entry)
     return unload_ok
 
 
@@ -200,6 +182,30 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
     await store.async_remove()
+    _clear_cookie_expired_issue(hass, entry)
+
+
+def _cookie_expired_issue_id(entry: ConfigEntry) -> str:
+    return f"{ISSUE_COOKIE_EXPIRED}_{entry.entry_id}"
+
+
+def _create_cookie_expired_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Create a repair issue when Google cookies have expired."""
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _cookie_expired_issue_id(entry),
+        is_fixable=True,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=ISSUE_COOKIE_EXPIRED,
+        translation_placeholders={"title": entry.title},
+        data={"entry_id": entry.entry_id},
+    )
+
+
+def _clear_cookie_expired_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove the cookie-expired repair issue when auth recovers."""
+    ir.async_delete_issue(hass, DOMAIN, _cookie_expired_issue_id(entry))
 
 
 def _maybe_request_reauth(
@@ -210,60 +216,46 @@ def _maybe_request_reauth(
         return
 
     entry_data.reauth_pending = True
+    _create_cookie_expired_issue(hass, entry)
     entry.async_start_reauth(hass)
 
 
-def _persist_refreshed_cookies(
+def _persist_refreshed_auth(
     hass: HomeAssistant,
     entry: ConfigEntry,
     client: NestClient,
     sm: NestSessionManager,
 ) -> None:
-    """Persist Google-rotated cookies back to the config entry and client.
+    """Persist Google-rotated credentials back to the config entry and client.
 
-    Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
-    Without writing them back, a HA restart would use stale cookies and force
-    re-authentication; the in-memory client also needs the update so the next
-    refresh in the same HA session uses fresh cookies.
+    Google may rotate OAuth cookies, issue_token URL, or (rarely) return a
+    refresh_token during ``get_access_token_from_cookies``. Without writing them
+    back, a HA restart would use stale credentials.
     """
     new_cookies = sm.refreshed_cookies
-    if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
-        # #region agent log
-        from .debug_log import agent_debug_log
+    new_issue_token = sm.refreshed_issue_token
+    new_refresh_token = sm.refreshed_refresh_token
 
-        agent_debug_log(
-            "__init__.py:_persist_refreshed_cookies",
-            "cookie persist skipped",
-            {
-                "has_refreshed_cookies": bool(new_cookies),
-                "cookies_unchanged": new_cookies == entry.data.get(CONF_COOKIES)
-                if new_cookies
-                else None,
-            },
-            "H3",
-        )
-        # #endregion
+    updates: dict[str, str] = {}
+    if new_cookies and new_cookies != entry.data.get(CONF_COOKIES):
+        updates[CONF_COOKIES] = new_cookies
+        client.cookies = new_cookies
+    if new_issue_token and new_issue_token != entry.data.get(CONF_ISSUE_TOKEN):
+        updates[CONF_ISSUE_TOKEN] = new_issue_token
+        client.issue_token = new_issue_token
+    if new_refresh_token and new_refresh_token != entry.data.get(CONF_REFRESH_TOKEN):
+        updates[CONF_REFRESH_TOKEN] = new_refresh_token
+        client.refresh_token = new_refresh_token
+        LOGGER.info("Persisted legacy refresh_token from issueToken response")
+
+    if not updates:
         return
 
-    LOGGER.debug("Persisting refreshed Nest cookies")
-    # #region agent log
-    from .debug_log import agent_debug_log
-
-    agent_debug_log(
-        "__init__.py:_persist_refreshed_cookies",
-        "cookie persist writing to config entry",
-        {
-            "old_cookie_len": len(entry.data.get(CONF_COOKIES) or ""),
-            "new_cookie_len": len(new_cookies),
-        },
-        "H3",
-    )
-    # #endregion
+    LOGGER.debug("Persisting refreshed Nest auth credentials: %s", sorted(updates))
     hass.config_entries.async_update_entry(
         entry,
-        data={**entry.data, CONF_COOKIES: new_cookies},
+        data={**entry.data, **updates},
     )
-    client.cookies = new_cookies
 
 
 def _register_subscribe_task(
@@ -296,26 +288,13 @@ async def _async_subscribe_for_data(
         await sm.ensure_session()
 
         if sm.cookie_auth_failed:
-            # #region agent log
-            from .debug_log import agent_debug_log
-
-            agent_debug_log(
-                "__init__.py:_async_subscribe_for_data",
-                "cookie auth failed, requesting reauth and continuing if possible",
-                {
-                    "has_nest_session": bool(entry_data.client.nest_session),
-                },
-                "H9",
-                run_id="post-fix",
-            )
-            # #endregion
             LOGGER.warning(
                 "Google cookies expired; re-authentication needed. "
                 "Continuing with current Nest session until it expires."
             )
             _maybe_request_reauth(hass, entry, entry_data)
 
-        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+        _persist_refreshed_auth(hass, entry, entry_data.client, sm)
 
         if not entry_data.client.nest_session:
             await asyncio.sleep(sm.backoff_interval)
@@ -331,6 +310,7 @@ async def _async_subscribe_for_data(
 
         sm.record_success()
         entry_data.reauth_pending = False
+        _clear_cookie_expired_issue(hass, entry)
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
@@ -401,16 +381,6 @@ async def _async_subscribe_for_data(
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
-        # #region agent log
-        from .debug_log import agent_debug_log
-
-        agent_debug_log(
-            "__init__.py:_async_subscribe_for_data",
-            "subscriber NotAuthenticatedException",
-            {"consecutive_failures": sm.consecutive_failures + 1},
-            "H4",
-        )
-        # #endregion
         sm.record_failure()
 
         if sm.should_trigger_reauth:
@@ -434,25 +404,17 @@ async def _async_subscribe_for_data(
         if entry.entry_id not in hass.data.get(DOMAIN, {}):
             return
 
-        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+        _persist_refreshed_auth(hass, entry, entry_data.client, sm)
 
         _register_subscribe_task(hass, entry, data)
 
     except BadCredentialsException:
-        # #region agent log
-        from .debug_log import agent_debug_log
-
-        agent_debug_log(
-            "__init__.py:_async_subscribe_for_data",
-            "subscriber BadCredentialsException triggering reauth",
-            {},
-            "H1",
-        )
-        # #endregion
         LOGGER.warning(
             "Bad credentials detected. Please re-authenticate the Nest Protect integration."
         )
-        entry.async_start_reauth(hass)
+        _maybe_request_reauth(hass, entry, entry_data)
+        if entry_data.client.nest_session:
+            _register_subscribe_task(hass, entry, data)
         return
 
     except NestServiceException:

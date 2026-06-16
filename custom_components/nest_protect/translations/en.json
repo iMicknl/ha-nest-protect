@@ -50,6 +50,12 @@
       }
     }
   },
+  "issues": {
+    "cookie_auth_expired": {
+      "title": "Nest Protect cookies expired for {title}",
+      "description": "Google session cookies have expired. Re-authenticate using the Chrome extension or by pasting fresh issue_token and cookies. See docs/authentication.md for details. Staying logged into Google in Chrome makes extension reauth one-click."
+    }
+  },
   "entity": {
     "binary_sensor": {
       "co_status": {

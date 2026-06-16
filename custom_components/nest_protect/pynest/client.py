@@ -27,7 +27,6 @@ from .exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
-from ..debug_log import agent_debug_log
 from .models import (
     Bucket,
     FirstDataAPIResponse,
@@ -81,6 +80,9 @@ class NestClient:
     # Set after successful cookie auth if Google returned refreshed cookies.
     # Only Google OAuth cookies matter for re-auth; Nest uses Bearer tokens.
     refreshed_cookies: str | None = None
+    refreshed_issue_token: str | None = None
+    refreshed_refresh_token: str | None = None
+    last_issue_token_response_keys: set[str] | None = None
 
     def __init__(
         self,
@@ -170,6 +172,8 @@ class NestClient:
             self.cookies = cookies
 
         self.refreshed_cookies = None
+        self.refreshed_issue_token = None
+        self.refreshed_refresh_token = None
 
         async with self.session.get(
             issue_token,
@@ -181,6 +185,12 @@ class NestClient:
                 "cookie": cookies,
             },
         ) as response:
+            if (
+                "action=issueToken" in str(response.url)
+                and str(response.url) != self.issue_token
+            ):
+                self.refreshed_issue_token = str(response.url)
+
             # Capture refreshed cookies from Google's response
             new_cookies: dict[str, str] = {}
             for cookie in response.cookies.values():
@@ -190,20 +200,11 @@ class NestClient:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
 
             result = await response.json()
+            self.last_issue_token_response_keys = set(result.keys())
 
             if "error" in result:
                 self.refreshed_cookies = None
-                # #region agent log
-                agent_debug_log(
-                    "client.py:get_access_token_from_cookies",
-                    "Google issueToken returned error",
-                    {
-                        "error": result.get("error"),
-                        "received_set_cookie": bool(new_cookies),
-                    },
-                    "H1",
-                )
-                # #endregion
+                self.refreshed_issue_token = None
                 # Cookie method
                 if result["error"] == "USER_LOGGED_OUT":
                     raise BadCredentialsException(
@@ -212,20 +213,11 @@ class NestClient:
 
                 raise Exception(result["error"])
 
-            self.auth = GoogleAuthResponseForCookies(**result)
+            if refresh_token := result.get("refresh_token"):
+                self.refreshed_refresh_token = refresh_token
+                _LOGGER.debug("issueToken returned a refresh_token")
 
-            # #region agent log
-            agent_debug_log(
-                "client.py:get_access_token_from_cookies",
-                "Google issueToken succeeded",
-                {
-                    "received_set_cookie": bool(new_cookies),
-                    "cookie_count": len(new_cookies),
-                    "cookies_changed": self.refreshed_cookies is not None,
-                },
-                "H2",
-            )
-            # #endregion
+            self.auth = GoogleAuthResponseForCookies(**result)
 
             return self.auth
 
