@@ -111,7 +111,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     try:
         data = await session_manager.async_setup()
-    except TimeoutError, ClientError as exception:
+    except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
     except BadCredentialsException as exception:
         raise ConfigEntryAuthFailed from exception
