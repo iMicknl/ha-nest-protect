@@ -2,7 +2,7 @@
 
 This document records what we know about authenticating **ha-nest-protect** with Google/Nest. Read this before re-investigating OAuth or alternative APIs.
 
-Last updated: 2026-06-12 (from debug sessions and community research).
+Last updated: 2026-06-17 (master token method verified in production).
 
 ## TL;DR
 
@@ -119,12 +119,17 @@ Only when the master token is invalidated: a **Google password change** or an
 **explicit revocation** in the Google account security page. There is no periodic
 hours-based expiry like the cookie method.
 
-### Open risk to confirm
+### Confirmed working
 
-Whether Nest's `issue_jwt` accepts a token whose OAuth client is the Google Home app
-(rather than the Nest app). A community writeup obtained a valid `nest-account` token
-this way; if `issue_jwt` rejects it, the debug log will show a `PynestException` at
-the `authenticate` step and the app/scope params may need adjustment.
+The one open question was whether Nest's `issue_jwt` would accept a token whose OAuth
+client is the Google Home app (rather than the Nest app). **It does** — this was
+verified in production, running 24h+ with no deauths and no manual reauth. HA silently
+mints a fresh ~1h `nest-account` access token from the stored master token as needed.
+
+If it ever fails later, the debug log pinpoints the stage: a `BadCredentialsException`
+at the token mint means the master token was revoked (e.g. password change), while a
+`PynestException` at the `authenticate` step would indicate `issue_jwt` rejected the
+token (app/scope params would need adjustment).
 
 ---
 
