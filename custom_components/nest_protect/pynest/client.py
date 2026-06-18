@@ -179,14 +179,14 @@ class NestClient:
     @staticmethod
     def _exchange_token_sync(oauth_token: str, email: str, android_id: str) -> dict:
         """Blocking gpsoauth call: one-time oauth_token -> durable master token."""
-        import gpsoauth  # noqa: PLC0415  (optional dependency, imported lazily)
+        import gpsoauth  # lazy import: optional runtime dependency
 
         return gpsoauth.exchange_token(email, oauth_token, android_id)
 
     @staticmethod
     def _perform_oauth_sync(email: str, master_token: str, android_id: str) -> dict:
         """Blocking gpsoauth call: master token -> short-lived nest-account token."""
-        import gpsoauth  # noqa: PLC0415  (optional dependency, imported lazily)
+        import gpsoauth  # lazy import: optional runtime dependency
 
         return gpsoauth.perform_oauth(
             email,
@@ -263,7 +263,7 @@ class NestClient:
         self.auth = GoogleAuthResponse(
             access_token=access_token,
             scope=NEST_ACCOUNT_OAUTH_SERVICE,
-            token_type="Bearer",
+            token_type="Bearer",  # noqa: S106
             expires_in=expires_in,
             id_token=None,
         )
