@@ -179,6 +179,11 @@ async def test_startup_reuses_persisted_session(
         patch(
             "custom_components.nest_protect.NestClient.get_access_token_from_cookies"
         ) as mock_cookie_auth,
+        patch(
+            "custom_components.nest_protect.NestSessionManager.async_refresh_google_cookies",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_first_data.return_value = MagicMock(
             updated_buckets=[],
@@ -227,6 +232,11 @@ async def test_startup_falls_through_on_expired_session(
             "custom_components.nest_protect.NestClient.get_first_data"
         ) as mock_first_data,
         patch("custom_components.nest_protect.Store.async_save"),
+        patch(
+            "custom_components.nest_protect.NestSessionManager.async_refresh_google_cookies",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_cookie_auth.return_value = MagicMock(access_token="new-google-token")
         mock_auth.return_value = MagicMock(
@@ -289,6 +299,11 @@ async def test_startup_falls_through_on_401_from_persisted_session(
         ) as mock_cookie_auth,
         patch("custom_components.nest_protect.NestClient.authenticate") as mock_auth,
         patch("custom_components.nest_protect.Store.async_save"),
+        patch(
+            "custom_components.nest_protect.NestSessionManager.async_refresh_google_cookies",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         mock_cookie_auth.return_value = MagicMock(access_token="new-google-token")
         mock_auth.return_value = MagicMock(
@@ -310,6 +325,8 @@ def _make_subscriber_entry_data(
     client = MagicMock()
     client.nest_session = MagicMock(is_expired=lambda buffer_seconds=0: False)
     client.refreshed_cookies = refreshed_cookies
+    client.refreshed_issue_token = None
+    client.refreshed_refresh_token = None
 
     store = MagicMock()
     store.async_load = AsyncMock(return_value=None)
