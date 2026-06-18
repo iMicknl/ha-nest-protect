@@ -133,7 +133,7 @@ class NestSessionManager:
             return await self._client.get_first_data(
                 restored_session.access_token, restored_session.userid
             )
-        except (NotAuthenticatedException, PynestException):
+        except NotAuthenticatedException, PynestException:
             LOGGER.debug(
                 "Persisted session rejected by Nest, falling through to cookie auth"
             )
