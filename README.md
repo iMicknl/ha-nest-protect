@@ -10,12 +10,15 @@ Custom component for Home Assistant to interact with Nest Protect devices via an
 
 This integration will add the most important sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired (to main power). In addition, it will expose several diagnostic and configuration entities. All sensor values will be updated real-time.
 
+> [!NOTE]
+> This integration will also add Nest Temperature Sensor pucks (T5000SF) if present on your account, exposing their temperature and battery. This is currently untested, so behavior may vary - please report any issues.
+
 ## Known limitations
 
 - Only Google Accounts are supported, there is no plan to support legacy Nest accounts
 - When Nest Protect (wired) occupancy is triggered, it will stay 'on' for 10 minutes. (API limitation)
 - Google removed API key authentication, so you must sign in with Google at least once during setup. The integration supports three methods (see below): **Master token (recommended)**, the Chrome extension, and manual cookie paste.
-- The **Master token** method stores a long-lived credential (a Google master token, the same kind the mobile apps hold). Home Assistant refreshes access automatically and it only stops working if you **change your Google password** or revoke access — no browser needs to stay running.
+- The **Master token** method stores a long-lived credential (a Google master token, the same kind the mobile apps hold). Home Assistant refreshes access automatically and it only stops working if you **change your Google password** or revoke access - no browser needs to stay running.
 - The **cookie / extension** methods rely on **Google session cookies that expire on a server-side schedule** (typically every few hours). When Google returns `USER_LOGGED_OUT`, you must re-authenticate. Prefer the Master token method to avoid this. See [docs/authentication.md](docs/authentication.md) for the full auth landscape, OAuth details, and realistic expectations.
 
 ## Installation
@@ -40,16 +43,16 @@ Copy the `custom_components/nest_protect` to your custom_components folder and r
 
 During setup you choose an authentication method:
 
-1. **Master token (recommended)** — creates a long-lived login that does not expire after a few hours. Select "Master token" in the config flow, then:
+1. **Master token (recommended)** - creates a long-lived login that does not expire after a few hours. Select "Master token" in the config flow, then:
    - Open an Incognito/Private window and go to `https://accounts.google.com/EmbeddedSetup`
    - Sign in with the Google account that owns your Nest devices (2-step verification is fine)
    - If asked **"Who will be using this device?"**, choose **I will be using this device**
-   - Click **I agree** if prompted (the page may then spin forever — ignore it)
+   - Click **I agree** if prompted (the page may then spin forever - ignore it)
    - Open Developer Tools (F12) → **Application** → **Cookies** → `https://accounts.google.com`, find the `oauth_token` cookie (value starts with `oauth2_4/`) and copy its value
    - Enter your Google email and paste the `oauth_token` value into Home Assistant
    - This only needs re-doing if you change your Google password.
-2. **Chrome Extension** — captures `issue_token` + cookies from a live Google session. Cookies expire every few hours (see limitations).
-3. **Manual** — paste `issue_token` and `cookies` yourself (see below). Cookies expire every few hours.
+2. **Chrome Extension** - captures `issue_token` + cookies from a live Google session. Cookies expire every few hours (see limitations).
+3. **Manual** - paste `issue_token` and `cookies` yourself (see below). Cookies expire every few hours.
 
 ## Retrieving `issue_token` and `cookies` (manual / extension methods)
 
