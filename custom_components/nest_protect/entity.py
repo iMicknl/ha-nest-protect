@@ -100,8 +100,6 @@ class NestEntity(Entity):
                 suggested_area=self.area,
             )
 
-        return None
-
         if self.bucket.object_key.startswith("kryptonite."):
             identifier = (
                 self.bucket.value.get("serial_number") or self.bucket.object_key
