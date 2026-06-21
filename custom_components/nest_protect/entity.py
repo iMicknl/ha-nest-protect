@@ -73,7 +73,9 @@ class NestEntity(Entity):
                 model=self.bucket.value.get("model"),
                 sw_version=self.bucket.value.get("software_version"),
                 hw_version=(
-                    "Wired" if self.bucket.value.get("wired_or_battery") == 0 else "Battery"
+                    "Wired"
+                    if self.bucket.value.get("wired_or_battery") == 0
+                    else "Battery"
                 ),
                 suggested_area=self.area,
                 configuration_url=(
