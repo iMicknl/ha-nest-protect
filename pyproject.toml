@@ -7,7 +7,7 @@ requires-python = ">=3.14.2"
 dev = [
     "homeassistant>=2026.4.4",
     "prek>=0.4.5",
-    "ruff>=0.15.15",
+    "ruff>=0.15.20",
 ]
 test = [
     "pytest>=8.0",
