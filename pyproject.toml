@@ -15,12 +15,20 @@ test = [
     "pytest-homeassistant-custom-component>=0.13.333",
     "pytest-socket>=0.7",
     "pytest-timeout>=2.3",
+    "protobuf>=4.21.0",
+    "googleapis-common-protos>=1.56.0",
 ]
 
 [tool.pytest.ini_options]
 timeout = 10
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+extend-exclude = [
+    "custom_components/nest_protect/pynest/protobuf_gen",
+    "generate_protos.py",
+]
 
 [tool.ruff.lint]
 select = [

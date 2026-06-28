@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "weave/common.proto";
+
+package nest.trait.located;
+
+message CustomLocatedAnnotationsTrait {
+    map<uint64, WhereItem> wheresList = 1;
+    map<uint64, FixtureItem> fixturesList = 2;
+
+    enum CustomLocatedStatus {
+        CUSTOM_LOCATED_STATUS_UNSPECIFIED = 0;
+        CUSTOM_LOCATED_STATUS_ANNOTATION_EXISTS = 1;
+        CUSTOM_LOCATED_STATUS_ANNOTATION_DOESNT_EXIST = 2;
+        CUSTOM_LOCATED_STATUS_MISSING_PARAMS = 3;
+        CUSTOM_LOCATED_STATUS_SUCCESS = 4;
+        CUSTOM_LOCATED_STATUS_FAILURE = 5;
+    }
+
+    message WhereItem {
+        weave.common.StringRef label = 1;
+        weave.common.StringRef legacyUuid = 2;
+        weave.common.ResourceId whereId = 3;
+    }
+
+    message FixtureItem {
+        weave.common.StringRef label = 1;
+        weave.common.ResourceId fixtureId = 2;
+    }
+
+    message CustomWhereCreationRequest {
+        weave.common.StringRef label = 1;
+    }
+
+    message CustomWhereCreationResponse {
+        WhereItem whereItem = 1;
+        CustomLocatedStatus status = 2;
+    }
+
+    message CustomWhereDeletionRequest {
+        weave.common.ResourceId whereId = 1;
+    }
+
+    message CustomWhereDeletionResponse {
+        CustomLocatedStatus status = 1;
+    }
+
+    message CustomFixtureCreationRequest {
+        weave.common.StringRef label = 1;
+    }
+
+    message CustomFixtureCreationResponse {
+        FixtureItem fixtureItem = 1;
+        CustomLocatedStatus status = 2;
+    }
+
+    message CustomFixtureDeletionRequest {
+        weave.common.ResourceId fixtureId = 1;
+    }
+
+    message CustomFixtureDeletionResponse {
+        CustomLocatedStatus status = 1;
+    }
+
+    message CustomFixtureCreationEvent {
+        FixtureItem fixture = 1;
+    }
+
+    message CustomWhereCreationEvent {
+        WhereItem where = 1;
+    }
+}
+
+message LocatedTrait {
+    enum LocatedMajorFixtureType {
+        LOCATED_MAJOR_FIXTURE_TYPE_UNSPECIFIED = 0;
+        LOCATED_MAJOR_FIXTURE_TYPE_DOOR = 1;
+        LOCATED_MAJOR_FIXTURE_TYPE_WINDOW = 2;
+        LOCATED_MAJOR_FIXTURE_TYPE_WALL = 3;
+        LOCATED_MAJOR_FIXTURE_TYPE_OBJECT = 4;
+    }
+
+    enum LocatedMinorFixtureTypeDoor {
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_UNSPECIFIED = 0;
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_GENERIC = 1;
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_HINGED = 2;
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_FRENCH = 3;
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_SLIDING = 4;
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_GARAGE_SEGMENTED = 5;
+        LOCATED_MINOR_FIXTURE_TYPE_DOOR_GARAGE_SINGLE_PANEL = 6;
+    }
+
+    enum LocatedMinorFixtureTypeWindow {
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_UNSPECIFIED = 0;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_GENERIC = 1;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_VERTICAL_SINGLE_HUNG = 2;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_HORIZONTAL_SINGLE_HUNG = 3;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_VERTICAL_DOUBLE_HUNG = 4;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_HORIZONTAL_DOUBLE_HUNG = 5;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_VERTICAL_CASEMENT = 6;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_HORIZONTAL_CASEMENT = 7;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_TILTTURN = 8;
+        LOCATED_MINOR_FIXTURE_TYPE_WINDOW_ROOF = 9;
+    }
+
+    enum LocatedMinorFixtureTypeWall {
+        LOCATED_MINOR_FIXTURE_TYPE_WALL_UNSPECIFIED = 0;
+        LOCATED_MINOR_FIXTURE_TYPE_WALL_GENERIC = 1;
+        LOCATED_MINOR_FIXTURE_TYPE_WALL_CORNER = 2;
+        LOCATED_MINOR_FIXTURE_TYPE_WALL_FLUSH = 3;
+    }
+
+    enum LocatedMinorFixtureTypeObject {
+        LOCATED_MINOR_FIXTURE_TYPE_OBJECT_UNSPECIFIED = 0;
+        LOCATED_MINOR_FIXTURE_TYPE_OBJECT_GENERIC = 1;
+    }
+
+    message LocatedFixtureType {
+        LocatedMajorFixtureType majorType = 1;
+        LocatedMinorFixtureTypeDoor minorTypeDoor = 2;
+        LocatedMinorFixtureTypeWindow minorTypeWindow = 3;
+        LocatedMinorFixtureTypeWall minorTypeWall = 4;
+        LocatedMinorFixtureTypeObject minorTypeObject = 5;
+    }
+}
+
+message LocatedAnnotationsTrait {
+    map<uint32, WhereItem> predefinedWheres = 1;
+    map<uint32, WhereItem> customWheres = 2;
+    map<uint32, weave.common.ResourceId> deprecatedPredefinedWheresToInclude = 3;
+
+    enum StatusCode {
+        STATUS_CODE_UNSPECIFIED = 0;
+        STATUS_CODE_SUCCESS = 1;
+        STATUS_CODE_FAILURE = 2;
+        STATUS_CODE_MISSING_LABEL = 4096;
+        STATUS_CODE_ANNOTATION_EXISTS = 4097;
+        STATUS_CODE_MISSING_ANNOTATION = 8192;
+        STATUS_CODE_ANNOTATION_DOESNT_EXIST = 8193;
+    }
+
+    message WhereItem {
+        weave.common.ResourceId whereId = 1;
+        weave.common.StringRef label = 2;
+        string legacyUuid = 3;
+    }
+
+    message CustomWhereCreationRequest {
+        string label = 1;
+    }
+
+    message CustomWhereCreationResponse {
+        StatusCode status = 1;
+        WhereItem whereItem = 2;
+    }
+
+    message CustomWhereDeletionRequest {
+        weave.common.ResourceId whereId = 1;
+    }
+
+    message CustomWhereDeletionResponse {
+        StatusCode status = 1;
+    }
+
+    message GetWhereItemRequest {
+        weave.common.ResourceId whereId = 1;
+    }
+
+    message GetWhereItemResponse {
+        WhereItem whereItem = 1;
+    }
+}
+
+message DeviceLocatedSettingsTrait {
+    weave.common.ResourceId whereAnnotationRid = 2;
+    weave.common.ResourceId fixtureAnnotationRid = 3;
+    LocatedTrait.LocatedFixtureType fixtureType = 4;
+    weave.common.StringRef whereLabel = 5;
+    repeated weave.common.ResourceId whereSpokenAnnotationRids = 6;
+    weave.common.StringRef fixtureNameLabel = 7;
+    repeated weave.common.ResourceId fixtureSpokenAnnotationRids = 8;
+    google.protobuf.Timestamp lastModifiedTimestamp = 9;
+    google.protobuf.Timestamp lastKnownRelocationTimestamp = 10;
+    string whereLegacyUuid = 11;
+
+    enum StatusCode {
+        STATUS_CODE_UNSPECIFIED = 0;
+        STATUS_CODE_SUCCESS = 1;
+        STATUS_CODE_INTERNAL = 2;
+        STATUS_CODE_UNAUTHORIZED = 3;
+        STATUS_CODE_RESOURCE_NOT_FOUND = 4;
+    }
+
+    message SetWhereRequest {
+        string whereLabel = 1;
+        string locale = 2;
+    }
+
+    message SetWhereResponse {
+        weave.common.ResourceId whereAnnotationRid = 1;
+    }
+
+    message SyncRoomAssignmentRequest {
+        weave.common.ResourceId resourceId = 1;
+        string roomName = 2;
+    }
+
+    message SyncRoomAssignmentResponse {
+        StatusCode status = 1;
+        weave.common.ResourceId resourceId = 2;
+    }
+}
+
+message GeoCommon {
+    message GeoCoordinateStruct {
+        float latitude = 1;
+        float longitude = 2;
+    }
+
+    message PostalAddress {
+        google.protobuf.StringValue postalCode = 1;
+        string regionCode = 2;
+        repeated string addressLines = 3;
+        google.protobuf.StringValue locality = 4;
+        google.protobuf.StringValue administrativeArea = 5;
+    }
+}
+
+message DeviceLocatedCapabilitiesTrait {
+    repeated weave.common.ResourceId validWhereAnnotationRids = 1;
+    repeated weave.common.ResourceId validWhereSpokenAnnotationRids = 2;
+    repeated weave.common.ResourceId validFixtureAnnotationRids = 3;
+    repeated weave.common.ResourceId validFixtureSpokenAnnotationRids = 4;
+    repeated LocatedTrait.LocatedFixtureType validFixtureTypes = 5;
+}

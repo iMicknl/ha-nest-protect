@@ -317,7 +317,11 @@ def _make_subscriber_entry_data(
     sm._consecutive_failures = consecutive_failures
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
-        devices={}, areas={}, client=client, session_manager=sm
+        devices={},
+        areas={},
+        client=client,
+        session_manager=sm,
+        grpc_lock_client=MagicMock(),
     )
     return client, sm
 
