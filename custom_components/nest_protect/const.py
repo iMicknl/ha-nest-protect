@@ -17,6 +17,11 @@ CONF_REFRESH_TOKEN: Final = "refresh_token"
 CONF_ISSUE_TOKEN: Final = "issue_token"
 CONF_COOKIES: Final = "cookies"
 CONF_AUTH_CODE: Final = "auth_code"
+# Master token (durable, app-style) auth
+CONF_MASTER_TOKEN: Final = "master_token"
+CONF_GOOGLE_EMAIL: Final = "google_email"
+CONF_ANDROID_ID: Final = "android_id"
+CONF_OAUTH_TOKEN: Final = "oauth_token"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -27,6 +32,8 @@ PLATFORMS: list[Platform] = [
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
+ISSUE_COOKIE_EXPIRED: Final = "cookie_auth_expired"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
+COOKIE_REFRESH_INTERVAL_SECONDS: Final = 2700  # 45 minutes — safety net only
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min

@@ -45,6 +45,21 @@ def _make_first_data() -> MagicMock:
     )
 
 
+def _make_client_mock(**overrides) -> MagicMock:
+    """Create a NestClient mock with safe defaults for auth-related attributes."""
+    client = MagicMock()
+    client.master_token = None
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
+    client.refreshed_cookies = None
+    client.refreshed_issue_token = None
+    client.refreshed_refresh_token = None
+    for key, value in overrides.items():
+        setattr(client, key, value)
+    return client
+
+
 @pytest.mark.asyncio
 async def test_restore_valid_session():
     """Test that a valid persisted session skips Google auth."""
@@ -54,13 +69,11 @@ async def test_restore_valid_session():
         "transport_url": "https://transport.example.com",
     }
 
-    client = MagicMock()
-    client.issue_token = "https://accounts.google.com/issue"
-    client.cookies = "SID=test"
-    client.refresh_token = None
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-    client.get_access_token_from_cookies = AsyncMock()
-    client.get_access_token_from_refresh_token = AsyncMock()
+    client = _make_client_mock(
+        get_first_data=AsyncMock(return_value=_make_first_data()),
+        get_access_token_from_cookies=AsyncMock(),
+        get_access_token_from_refresh_token=AsyncMock(),
+    )
 
     store = MagicMock()
     store.async_load = AsyncMock(return_value=stored_data)
@@ -92,18 +105,15 @@ async def test_restore_expired_session_falls_through():
 
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
-    client.issue_token = "https://accounts.google.com/issue"
-    client.cookies = "SID=test"
-    client.refresh_token = None
-    client.get_access_token_from_cookies = AsyncMock(
-        return_value=MagicMock(access_token="new-google-token")
+    client = _make_client_mock(
+        get_access_token_from_cookies=AsyncMock(
+            return_value=MagicMock(access_token="new-google-token")
+        ),
+        authenticate=AsyncMock(return_value=new_nest_session),
+        get_first_data=AsyncMock(return_value=_make_first_data()),
+        nest_session=None,
+        transport_url=None,
     )
-    client.authenticate = AsyncMock(return_value=new_nest_session)
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-    client.nest_session = None
-    client.transport_url = None
-    client.refreshed_cookies = None
 
     store = MagicMock()
     store.async_load = AsyncMock(return_value=stored_data)
@@ -132,24 +142,20 @@ async def test_restore_rejected_session_falls_through():
 
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
-    client.issue_token = "https://accounts.google.com/issue"
-    client.cookies = "SID=test"
-    client.refresh_token = None
-    # First call with persisted token raises 401, second call succeeds
-    client.get_first_data = AsyncMock(
-        side_effect=[
-            NotAuthenticatedException("401"),
-            _make_first_data(),
-        ]
+    client = _make_client_mock(
+        get_first_data=AsyncMock(
+            side_effect=[
+                NotAuthenticatedException("401"),
+                _make_first_data(),
+            ]
+        ),
+        get_access_token_from_cookies=AsyncMock(
+            return_value=MagicMock(access_token="new-google-token")
+        ),
+        authenticate=AsyncMock(return_value=new_nest_session),
+        nest_session=None,
+        transport_url=None,
     )
-    client.get_access_token_from_cookies = AsyncMock(
-        return_value=MagicMock(access_token="new-google-token")
-    )
-    client.authenticate = AsyncMock(return_value=new_nest_session)
-    client.nest_session = None
-    client.transport_url = None
-    client.refreshed_cookies = None
 
     store = MagicMock()
     store.async_load = AsyncMock(return_value=stored_data)
@@ -172,18 +178,15 @@ async def test_no_persisted_session_uses_cookies():
     """Test that no stored data triggers cookie auth."""
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
-    client.issue_token = "https://accounts.google.com/issue"
-    client.cookies = "SID=test"
-    client.refresh_token = None
-    client.get_access_token_from_cookies = AsyncMock(
-        return_value=MagicMock(access_token="google-token")
+    client = _make_client_mock(
+        get_access_token_from_cookies=AsyncMock(
+            return_value=MagicMock(access_token="google-token")
+        ),
+        authenticate=AsyncMock(return_value=new_nest_session),
+        get_first_data=AsyncMock(return_value=_make_first_data()),
+        nest_session=None,
+        transport_url=None,
     )
-    client.authenticate = AsyncMock(return_value=new_nest_session)
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-    client.nest_session = None
-    client.transport_url = None
-    client.refreshed_cookies = None
 
     store = MagicMock()
     store.async_load = AsyncMock(return_value=None)

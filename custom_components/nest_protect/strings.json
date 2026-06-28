@@ -9,9 +9,21 @@
       },
       "auth_method": {
         "title": "Authentication Method",
-        "description": "Choose how to connect your Nest account. The Chrome Extension method is recommended for most users.",
+        "description": "Choose how to connect your Nest account. The **Master token** method is recommended: it stays logged in and does not expire after a few hours.",
         "data": {
           "method": "Method"
+        }
+      },
+      "master_token": {
+        "title": "Connect with a Master Token",
+        "description": "This creates a long-lived login that does not expire after a few hours. It only stops working if you change your Google password or revoke access.\n\n1. Open an **Incognito/Private** window and go to [Google EmbeddedSetup]({embedded_setup_url})\n2. Sign in with the Google account that owns your Nest devices (2-step verification is fine)\n3. If asked **\"Who will be using this device?\"**, choose **I will be using this device**\n4. Click **I agree** if prompted. The page may then show a spinner forever — that is expected, ignore it.\n5. Open **Developer Tools** (F12) → **Application** tab → **Cookies** → `{accounts_url}`\n6. Find the cookie named **`oauth_token`** and copy its **Value** (it starts with `oauth2_4/`)\n7. Enter your Google email and paste that value below\n\n⚠️ Do not share these — they grant access to your Google account.",
+        "data": {
+          "google_email": "Google Email",
+          "oauth_token": "oauth_token value"
+        },
+        "data_description": {
+          "google_email": "The Google account that owns your Nest devices",
+          "oauth_token": "The oauth_token cookie value from accounts.google.com (starts with oauth2_4/)"
         }
       },
       "extension": {
@@ -42,12 +54,18 @@
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "invalid_issue_token": "Invalid issue token URL. Must start with {accounts_url} and contain the issueToken action.",
       "invalid_cookies": "Invalid cookies format. Ensure you copied the complete cookie header from the oauth2/iframe request.",
-      "invalid_code": "Invalid authentication code. Make sure you copied the complete code from the extension.",
+      "invalid_code": "Invalid or expired token. Make sure you copied the complete oauth_token value (starts with oauth2_4/) and try again with a fresh sign-in.",
       "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
       "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
+    }
+  },
+  "issues": {
+    "cookie_auth_expired": {
+      "title": "Nest Protect authentication expired for {title}",
+      "description": "Your Nest credentials have expired or were revoked. Re-authenticate to restore updates. The **Master token** method is the most durable option (it only expires when you change your Google password); the cookie/extension methods expire every few hours. See docs/authentication.md for details."
     }
   },
   "entity": {

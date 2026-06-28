@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import time
+
 from homeassistant.helpers.storage import Store
 
 from .const import (
     BACKOFF_INTERVALS,
+    COOKIE_REFRESH_INTERVAL_SECONDS,
     LOGGER,
     MAX_AUTH_FAILURES,
     SESSION_EXPIRY_BUFFER_SECONDS,
 )
 from .pynest.client import NestClient
-from .pynest.exceptions import NotAuthenticatedException, PynestException
+from .pynest.exceptions import (
+    BadCredentialsException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .pynest.models import FirstDataAPIResponse, NestResponse
 
 
@@ -33,11 +40,29 @@ class NestSessionManager:
         self._client = client
         self._store = store
         self._consecutive_failures: int = 0
+        self._last_cookie_refresh: float = 0.0
+        self._cookie_auth_failed: bool = False
+        self._logged_issue_token_keys: bool = False
 
     @property
     def refreshed_cookies(self) -> str | None:
         """Proxy to client's refreshed_cookies property."""
         return self._client.refreshed_cookies
+
+    @property
+    def refreshed_issue_token(self) -> str | None:
+        """Proxy to client's refreshed_issue_token property."""
+        return self._client.refreshed_issue_token
+
+    @property
+    def refreshed_refresh_token(self) -> str | None:
+        """Proxy to client's refreshed_refresh_token property."""
+        return self._client.refreshed_refresh_token
+
+    @property
+    def cookie_auth_failed(self) -> bool:
+        """Return True if the last Google cookie refresh failed."""
+        return self._cookie_auth_failed
 
     @property
     def consecutive_failures(self) -> int:
@@ -108,7 +133,7 @@ class NestSessionManager:
             return await self._client.get_first_data(
                 restored_session.access_token, restored_session.userid
             )
-        except (NotAuthenticatedException, PynestException):  # fmt: skip
+        except NotAuthenticatedException, PynestException:
             LOGGER.debug(
                 "Persisted session rejected by Nest, falling through to cookie auth"
             )
@@ -138,21 +163,92 @@ class NestSessionManager:
         Returns a NestResponse on success, None if no credentials are available.
         Raises authentication exceptions from the underlying client on failure.
         """
-        if self._client.issue_token and self._client.cookies:
+        if self._client.master_token:
+            auth = await self._client.get_access_token_from_master_token()
+        elif self._client.issue_token and self._client.cookies:
             auth = await self._client.get_access_token_from_cookies(
                 self._client.issue_token, self._client.cookies
             )
+            self._mark_cookie_refresh()
+            self._log_issue_token_response_keys_once()
         elif self._client.refresh_token:
             auth = await self._client.get_access_token_from_refresh_token(
                 self._client.refresh_token
             )
         else:
+            LOGGER.debug("No credentials available for Nest authentication")
             return None
 
         return await self._client.authenticate(auth.access_token)
 
+    def _log_issue_token_response_keys_once(self) -> None:
+        """Log issueToken response keys once to detect legacy refresh_token."""
+        if self._logged_issue_token_keys:
+            return
+        self._logged_issue_token_keys = True
+        if self._client.last_issue_token_response_keys:
+            LOGGER.debug(
+                "issueToken response keys: %s",
+                sorted(self._client.last_issue_token_response_keys),
+            )
+
+    def _mark_cookie_refresh(self) -> None:
+        """Record a successful Google cookie refresh."""
+        self._last_cookie_refresh = time.monotonic()
+
+    async def async_refresh_google_cookies(self) -> bool:
+        """Refresh Google OAuth cookies via issueToken to keep them alive."""
+        if not (self._client.issue_token and self._client.cookies):
+            return False
+
+        try:
+            await self._client.get_access_token_from_cookies(
+                self._client.issue_token, self._client.cookies
+            )
+        except BadCredentialsException:
+            self._cookie_auth_failed = True
+            LOGGER.debug("Google cookie refresh failed")
+            return False
+
+        self._cookie_auth_failed = False
+        self._mark_cookie_refresh()
+        self._log_issue_token_response_keys_once()
+        self._apply_refreshed_credentials()
+
+        if self._client.auth:
+            self._client.nest_session = await self._client.authenticate(
+                self._client.auth.access_token
+            )
+            await self._async_persist(self._client.nest_session)
+
+        LOGGER.debug(
+            "Google cookie refresh succeeded (nest_session_refreshed=%s)",
+            bool(self._client.nest_session),
+        )
+        return True
+
+    def _apply_refreshed_credentials(self) -> None:
+        """Apply rotated credentials from the client onto itself."""
+        if self._client.refreshed_cookies:
+            self._client.cookies = self._client.refreshed_cookies
+        if self._client.refreshed_issue_token:
+            self._client.issue_token = self._client.refreshed_issue_token
+        if self._client.refreshed_refresh_token:
+            self._client.refresh_token = self._client.refreshed_refresh_token
+
+    async def maybe_refresh_google_cookies(self) -> bool | None:
+        """Safety-net cookie refresh when the interval has elapsed."""
+        if not (self._client.issue_token and self._client.cookies):
+            return None
+
+        elapsed = time.monotonic() - self._last_cookie_refresh
+        if self._last_cookie_refresh and elapsed < COOKIE_REFRESH_INTERVAL_SECONDS:
+            return None
+
+        return await self.async_refresh_google_cookies()
+
     async def ensure_session(self) -> None:
-        """Ensure a valid Nest session exists, refreshing if needed."""
+        """Ensure a valid Nest session exists, refreshing only when needed."""
         if self._client.nest_session and not self._client.nest_session.is_expired(
             buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
         ):
@@ -165,6 +261,10 @@ class NestSessionManager:
         if not self._client.auth or self._client.auth.is_expired():
             LOGGER.debug("Retrieving new Google access token")
             await self._client.get_access_token()
+            if self._client.issue_token and self._client.cookies:
+                self._mark_cookie_refresh()
+                self._log_issue_token_response_keys_once()
+            self._apply_refreshed_credentials()
 
         if self._client.auth:
             self._client.nest_session = await self._client.authenticate(
