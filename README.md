@@ -36,6 +36,12 @@ Copy the `custom_components/nest_protect` to your custom_components folder and r
 
 ## Retrieving `issue_token` and `cookies`
 
+### Easy way (vibecoded skript)
+
+For a simpler experience, you can use the [nest-token-extractor](https://github.com/helloworld1987/nest-token-extractor) script, which automates the extraction of these credentials. This is especially helpful if you prefer a more automated approach.
+
+### Manual way
+
 (adapted from [homebridge-nest documentation](https://github.com/chrisjshull/homebridge-nest))
 
 The values of "issue_token" and "cookies" are specific to your Google Account. To get them, follow these steps (only needs to be done once, as long as you stay logged into your Google Account).
