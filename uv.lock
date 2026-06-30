@@ -997,7 +997,7 @@ dev = [
 test = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.8" },
-    { name = "pytest-homeassistant-custom-component", specifier = ">=0.13.333" },
+    { name = "pytest-homeassistant-custom-component", specifier = ">=0.13.340" },
     { name = "pytest-socket", specifier = ">=0.7" },
     { name = "pytest-timeout", specifier = ">=2.3" },
 ]
