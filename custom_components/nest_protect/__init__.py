@@ -47,6 +47,7 @@ from .pynest.models import (
     TopazBucket,
     WhereBucketValue,
 )
+from .pynest.protobuf import ProtobufDeviceUpdate, ProtobufStructureUpdate
 from .session import NestSessionManager
 
 
@@ -55,10 +56,13 @@ class HomeAssistantNestProtectData:
     """Nest Protect data stored in the Home Assistant data object."""
 
     devices: dict[str, Bucket]
+    structures: dict[str, Bucket]
     areas: dict[str, str]
     client: NestClient
     session_manager: NestSessionManager
     subscription_task: asyncio.Task | None = None
+    protobuf_observe_task: asyncio.Task | None = None
+    protobuf_structure_map: dict[str, str] | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -114,11 +118,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     _persist_refreshed_cookies(hass, entry, client, session_manager)
 
     device_buckets: list[Bucket] = []
+    structure_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
 
     for bucket in data.updated_buckets:
         if bucket.type in {BucketType.TOPAZ, BucketType.KRYPTONITE}:
             device_buckets.append(bucket)
+
+        if bucket.type == BucketType.STRUCTURE:
+            structure_buckets.append(bucket)
 
         if bucket.type == BucketType.WHERE and isinstance(
             bucket.value, WhereBucketValue
@@ -128,9 +136,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 areas[area.where_id] = area.name
 
     devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
+    structures: dict[str, Bucket] = {b.object_key: b for b in structure_buckets}
 
     entry_data = HomeAssistantNestProtectData(
         devices=devices,
+        structures=structures,
         areas=areas,
         client=client,
         session_manager=session_manager,
@@ -141,6 +151,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     entry_data.subscription_task = asyncio.create_task(
         _async_subscribe_for_data(hass, entry, data)
+    )
+    entry_data.protobuf_observe_task = asyncio.create_task(
+        _async_observe_for_protobuf_data(hass, entry)
     )
 
     return True
@@ -156,6 +169,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry_data.subscription_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await entry_data.subscription_task
+            if entry_data.protobuf_observe_task:
+                entry_data.protobuf_observe_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await entry_data.protobuf_observe_task
             hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
@@ -208,6 +225,125 @@ def _register_subscribe_task(
     return task
 
 
+async def _async_observe_for_protobuf_data(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Observe protobuf data used by Home/Away on migrated Nest accounts."""
+    while entry.entry_id in hass.data.get(DOMAIN, {}):
+        entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+        sm = entry_data.session_manager
+
+        try:
+            await sm.ensure_session()
+
+            async for update in entry_data.client.observe_for_structure_updates(
+                entry_data.client.nest_session.access_token,
+            ):
+                if isinstance(update, ProtobufStructureUpdate):
+                    _apply_protobuf_structure_update(hass, entry_data, update)
+                else:
+                    _apply_protobuf_device_update(hass, entry_data, update)
+
+            LOGGER.debug("Protobuf observe stream ended.")
+            await asyncio.sleep(5)
+
+        except NotAuthenticatedException:
+            LOGGER.debug("Protobuf observe: 401 exception.")
+            sm.record_failure()
+
+            if sm.should_trigger_reauth:
+                LOGGER.warning(
+                    "Protobuf observe: %d consecutive auth failures, triggering re-authentication",
+                    sm.consecutive_failures,
+                )
+                entry.async_start_reauth(hass)
+                return
+
+            await asyncio.sleep(sm.backoff_interval)
+            await sm.async_refresh_session()
+
+        except BadCredentialsException:
+            LOGGER.warning(
+                "Bad credentials detected. Please re-authenticate the Nest Protect integration."
+            )
+            entry.async_start_reauth(hass)
+            return
+
+        except asyncio.CancelledError:
+            LOGGER.debug("Protobuf observe: task cancelled, stopping.")
+            raise
+
+        except Exception:  # pylint: disable=broad-except
+            LOGGER.exception(
+                "Protobuf observe failed. Updates paused for %ds.",
+                sm.backoff_interval,
+            )
+            await asyncio.sleep(sm.backoff_interval)
+
+
+def _apply_protobuf_structure_update(
+    hass: HomeAssistant,
+    entry_data: HomeAssistantNestProtectData,
+    update: ProtobufStructureUpdate,
+) -> None:
+    """Merge a protobuf structure update into the legacy structure bucket."""
+    if entry_data.protobuf_structure_map is None:
+        entry_data.protobuf_structure_map = {}
+
+    if update.legacy_structure_id:
+        entry_data.protobuf_structure_map[update.resource_id] = update.legacy_structure_id
+
+    legacy_structure_id = update.legacy_structure_id or entry_data.protobuf_structure_map.get(
+        update.resource_id
+    )
+    if not legacy_structure_id:
+        LOGGER.debug(
+            "Protobuf observe: no legacy structure mapping for %s", update.resource_id
+        )
+        return
+
+    key = f"structure.{legacy_structure_id}"
+    structure = entry_data.structures.get(key)
+    if not structure:
+        LOGGER.debug("Protobuf observe: unknown legacy structure %s", key)
+        return
+
+    structure.value["new_structure_id"] = update.resource_id.removeprefix("STRUCTURE_")
+    structure.value["using_protobuf"] = True
+    if update.user_id:
+        structure.value["user_id"] = update.user_id
+    if update.away is not None:
+        structure.value["away"] = update.away
+        structure.value["protobuf_away"] = update.away
+
+    LOGGER.debug(
+        "Protobuf observe: updated structure %s with %s",
+        key,
+        sorted(k for k in ("new_structure_id", "user_id", "away") if k in structure.value),
+    )
+    async_dispatcher_send(hass, key, structure)
+
+
+def _apply_protobuf_device_update(
+    hass: HomeAssistant,
+    entry_data: HomeAssistantNestProtectData,
+    update: ProtobufDeviceUpdate,
+) -> None:
+    """Merge a protobuf temperature sensor update into the device bucket."""
+    device = entry_data.devices.get(update.object_key)
+    if not device:
+        LOGGER.debug("Protobuf observe: unknown device %s", update.object_key)
+        return
+
+    device.value.update(update.value)
+    LOGGER.debug(
+        "Protobuf observe: updated device %s with %s",
+        update.object_key,
+        sorted(update.value),
+    )
+    async_dispatcher_send(hass, update.object_key, device)
+
+
 async def _async_subscribe_for_data(
     hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
 ):
@@ -256,6 +392,13 @@ async def _async_subscribe_for_data(
                 entry_data.devices[key] = kryptonite
 
                 async_dispatcher_send(hass, key, kryptonite)
+
+            # Structures / Home-Away
+            if key.startswith("structure."):
+                structure = Bucket(**bucket)
+                entry_data.structures[key] = structure
+
+                async_dispatcher_send(hass, key, structure)
 
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
