@@ -7,7 +7,7 @@ from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
 from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
-from custom_components.nest_protect.pynest.const import NEST_REQUEST
+from custom_components.nest_protect.pynest.const import NEST_REQUEST, SEND_COMMAND_PATH
 
 
 @pytest.mark.enable_socket
@@ -210,3 +210,36 @@ def test_merge_cookies_empty_new():
     original = "SID=old; HSID=val"
     result = merge_cookies(original, {})
     assert result == original
+
+
+@pytest.mark.enable_socket
+async def test_send_structure_mode_command(socket_enabled):
+    """Test sending a protobuf structure mode command."""
+
+    async def command_response(request):
+        body = await request.read()
+        request.app["request"].append((request.headers, body))
+        return web.Response(body=b"ok", content_type="application/x-protobuf")
+
+    app = web.Application()
+    app.router.add_post(SEND_COMMAND_PATH, command_response)
+    app["request"] = []
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        base = str(server.make_url("")).rstrip("/")
+        with patch.object(nest_client.environment, "grpc_host", base):
+            result = await nest_client.send_structure_mode_command(
+                "access-token",
+                "STRUCTURE_abc",
+                "USER_123",
+                False,
+            )
+
+    assert result == b"ok"
+    assert len(app["request"]) == 1
+    headers, body = app["request"][0]
+    assert headers.get("Authorization") == "Basic access-token"
+    assert headers.get("Content-Type") == "application/x-protobuf"
+    assert b"STRUCTURE_abc" in body
+    assert b"structure_mode" in body

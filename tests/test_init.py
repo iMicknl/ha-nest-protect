@@ -317,7 +317,7 @@ def _make_subscriber_entry_data(
     sm._consecutive_failures = consecutive_failures
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
-        devices={}, areas={}, client=client, session_manager=sm
+        devices={}, structures={}, areas={}, client=client, session_manager=sm
     )
     return client, sm
 

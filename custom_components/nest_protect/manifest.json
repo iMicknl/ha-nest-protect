@@ -13,6 +13,8 @@
   "documentation": "https://github.com/imicknl/ha-nest-protect",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
-  "requirements": [],
+  "requirements": [
+    "httpx[http2]>=0.28.1"
+  ],
   "version": "0.4.4b2"
 }

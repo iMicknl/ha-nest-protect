@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncIterator
 from random import randint
 from types import TracebackType
 from typing import Any, cast
+from uuid import uuid4
 
+import httpx
 from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
 
 from .const import (
@@ -15,6 +18,8 @@ from .const import (
     DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    OBSERVE_PATH,
+    SEND_COMMAND_PATH,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -35,6 +40,14 @@ from .models import (
     NestAuthResponse,
     NestEnvironment,
     NestResponse,
+)
+from .protobuf import (
+    ProtobufObserveState,
+    ProtobufObserveUpdate,
+    decode_observe_stream_frames,
+    decode_structure_updates,
+    encode_observe_request,
+    encode_structure_mode_resource_command_request,
 )
 
 _LOGGER = logging.getLogger(__package__)
@@ -408,3 +421,88 @@ class NestClient:
             # TODO type object
 
             return result
+
+    async def send_structure_mode_command(
+        self,
+        nest_access_token: str,
+        structure_resource_id: str,
+        user_id: str,
+        home: bool,
+    ) -> bytes:
+        """Send a protobuf structure Home/Away command."""
+        payload = encode_structure_mode_resource_command_request(
+            structure_resource_id=structure_resource_id,
+            user_id=user_id,
+            home=home,
+        )
+
+        timeout = httpx.Timeout(60.0, connect=30.0, write=30.0, pool=30.0)
+
+        async with httpx.AsyncClient(http2=True, timeout=timeout) as client:
+            response = await client.post(
+                self.environment.grpc_host + SEND_COMMAND_PATH,
+                content=payload,
+                headers={
+                    "Authorization": f"Basic {nest_access_token}",
+                    "Content-Type": "application/x-protobuf",
+                    "User-Agent": USER_AGENT,
+                    "X-Accept-Content-Transfer-Encoding": "binary",
+                    "X-Accept-Response-Streaming": "true",
+                },
+            )
+
+            if response.status_code == 401:
+                raise NotAuthenticatedException(await response.aread())
+
+            if response.status_code >= 400:
+                raise PynestException(
+                    f"{response.status_code} error while sending structure mode command - {await response.aread()}"
+                )
+
+            return await response.aread()
+
+    async def observe_for_structure_updates(
+        self,
+        nest_access_token: str,
+    ) -> AsyncIterator[ProtobufObserveUpdate]:
+        """Observe protobuf structure and temperature sensor updates."""
+        pending = b""
+        state = ProtobufObserveState()
+        headers = {
+            "Authorization": f"Basic {nest_access_token}",
+            "Content-Type": "application/x-protobuf",
+            "User-Agent": USER_AGENT,
+            "X-Accept-Content-Transfer-Encoding": "binary",
+            "X-Accept-Response-Streaming": "true",
+            "request-id": str(uuid4()),
+            "referer": self.environment.host + "/",
+            "origin": self.environment.host,
+            "x-nl-webapp-version": "NlAppSDKVersion/8.15.0 NlSchemaVersion/2.1.20-87-gce5742894",
+        }
+
+        timeout = httpx.Timeout(600.0, connect=30.0, write=30.0, pool=30.0)
+
+        async with (
+            httpx.AsyncClient(http2=True, timeout=timeout) as client,
+            client.stream(
+                "POST",
+                self.environment.grpc_host + OBSERVE_PATH,
+                headers=headers,
+                content=encode_observe_request(),
+            ) as response,
+        ):
+            if response.status_code == 401:
+                raise NotAuthenticatedException(await response.aread())
+
+            if response.status_code >= 400:
+                raise PynestException(
+                    f"{response.status_code} error while observing protobuf structure updates - {await response.aread()}"
+                )
+
+            async for chunk in response.aiter_bytes():
+                pending += chunk
+                frames, pending = decode_observe_stream_frames(pending)
+
+                for frame in frames:
+                    for update in decode_structure_updates(frame, state):
+                        yield update

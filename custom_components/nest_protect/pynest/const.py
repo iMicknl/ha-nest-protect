@@ -10,11 +10,13 @@ NEST_ENVIRONMENTS: dict[str, NestEnvironment] = {
         name="Google Account",
         client_id="733249279899-1gpkq9duqmdp55a7e5lft1pr2smumdla.apps.googleusercontent.com",  # Nest iOS application
         host="https://home.nest.com",
+        grpc_host="https://grpc-web.production.nest.com",
     ),
     Environment.FIELDTEST: NestEnvironment(
         name="Google Account (Field Test)",
         client_id="384529615266-57v6vaptkmhm64n9hn5dcmkr4at14p8j.apps.googleusercontent.com",  # Test Flight Beta Nest iOS application
         host="https://home.ft.nest.com",
+        grpc_host="https://grpc-web.ft.nest.com",
     ),
 }
 
@@ -26,6 +28,8 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 # App launch API endpoint
 APP_LAUNCH_URL_FORMAT = "{host}/api/0.1/user/{user_id}/app_launch"
 NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt"
+SEND_COMMAND_PATH = "/nestlabs.gateway.v1.ResourceApi/SendCommand"
+OBSERVE_PATH = "/nestlabs.gateway.v2.GatewayService/Observe"
 
 NEST_REQUEST = {
     "known_bucket_types": [
