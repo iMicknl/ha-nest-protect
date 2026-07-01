@@ -140,6 +140,9 @@
       },
       "steam_detection_enable": {
         "name": "Steam check"
+      },
+      "home_away": {
+        "name": "Home occupied"
       }
     }
   }

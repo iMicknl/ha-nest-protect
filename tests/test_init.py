@@ -318,6 +318,7 @@ def _make_subscriber_entry_data(
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices={},
+        structures={},
         areas={},
         client=client,
         session_manager=sm,
