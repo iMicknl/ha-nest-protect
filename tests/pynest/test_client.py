@@ -157,6 +157,9 @@ async def test_get_access_token_from_cookies_captures_refreshed_cookies(socket_e
         assert "SID=new-sid-value" in nest_client.refreshed_cookies
         assert "HSID=new-hsid-value" in nest_client.refreshed_cookies
         assert "APISID=keep-me" in nest_client.refreshed_cookies
+        # Subsequent refreshes must replay the rotated cookies, not the
+        # originals — Google only honours stale values for a grace window.
+        assert nest_client.cookies == nest_client.refreshed_cookies
 
 
 @pytest.mark.enable_socket

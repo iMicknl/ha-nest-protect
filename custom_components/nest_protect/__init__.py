@@ -223,6 +223,12 @@ async def _async_subscribe_for_data(
 
         await sm.ensure_session()
 
+        # ensure_session refreshes the Google token roughly hourly; persist
+        # any cookies Google rotated during that refresh, otherwise every
+        # refresh replays the original cookies until Google invalidates the
+        # session (USER_LOGGED_OUT) and forces a re-authentication.
+        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
             entry_data.client.nest_session.userid,

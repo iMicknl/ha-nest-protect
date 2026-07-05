@@ -187,6 +187,10 @@ class NestClient:
 
             if new_cookies:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
+                # Google rotates cookies (e.g. __Secure-1PSIDTS) and only
+                # honours stale values for a grace window; keep using the
+                # rotated set for subsequent refreshes in this session.
+                self.cookies = self.refreshed_cookies
 
             result = await response.json()
 

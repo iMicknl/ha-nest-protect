@@ -406,6 +406,37 @@ async def test_subscriber_401_persists_refreshed_cookies(hass):
     assert client.cookies == new_cookies
 
 
+async def test_subscriber_happy_path_persists_refreshed_cookies(hass):
+    """Successful subscribe cycle persists cookies rotated during ensure_session.
+
+    Regression test: previously only the 401 path persisted rotated cookies,
+    so the hourly happy-path refresh replayed stale cookies until Google
+    invalidated the session (USER_LOGGED_OUT) and forced daily re-auth.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    new_cookies = "SID=new-sid; HSID=new-hsid"
+    client, sm = _make_subscriber_entry_data(hass, entry, refreshed_cookies=new_cookies)
+    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert entry.data.get(CONF_COOKIES) == new_cookies
+    assert client.cookies == new_cookies
+    assert sm.consecutive_failures == 0
+
+
 async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
     """Repeated 401s should reach MAX_AUTH_FAILURES and trigger reauth."""
     entry = MockConfigEntry(
