@@ -187,6 +187,7 @@ class NestClient:
 
             if new_cookies:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
+                self.cookies = self.refreshed_cookies
 
             result = await response.json()
 

@@ -406,6 +406,31 @@ async def test_subscriber_401_persists_refreshed_cookies(hass):
     assert client.cookies == new_cookies
 
 
+async def test_subscriber_ensure_session_persists_refreshed_cookies(hass):
+    """Proactive session refresh persists refreshed cookies before subscribing."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    new_cookies = "SID=new-sid; HSID=new-hsid"
+    client, sm = _make_subscriber_entry_data(hass, entry, refreshed_cookies=new_cookies)
+    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert entry.data.get(CONF_COOKIES) == new_cookies
+    assert client.cookies == new_cookies
+
+
 async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
     """Repeated 401s should reach MAX_AUTH_FAILURES and trigger reauth."""
     entry = MockConfigEntry(

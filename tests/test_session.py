@@ -243,6 +243,7 @@ async def test_ensure_session_expired_refreshes():
     store.async_save = AsyncMock()
 
     manager = NestSessionManager(client=client, store=store)
+    manager.record_failure()
 
     await manager.ensure_session()
 
@@ -252,6 +253,8 @@ async def test_ensure_session_expired_refreshes():
     store.async_save.assert_called_once()
     # Should have set the new session on the client
     assert client.nest_session == new_session
+    # Confirmed refresh should clear stale subscriber auth failures
+    assert manager.consecutive_failures == 0
 
 
 @pytest.mark.asyncio

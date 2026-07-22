@@ -2,7 +2,7 @@
 
 import base64
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -66,6 +66,55 @@ async def test_auth_method_manual_leads_to_account_link(
     assert result["step_id"] == "account_link"
 
 
+async def test_account_link_stores_refreshed_cookies(
+    hass: HomeAssistant,
+) -> None:
+    """Test manual auth stores cookies refreshed during validation."""
+    issue_token = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"
+    cookies = "SID=abc123456789012345678901234567890; HSID=def1234567890; SSID=ghi1234567890; APISID=jkl1234567890; SAPISID=mno1234567890"
+    refreshed_cookies = f"{cookies}; __Secure-1PSIDTS=fresh"
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"account_type": "production"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"method": "manual"},
+    )
+
+    client = MagicMock()
+    client.refreshed_cookies = refreshed_cookies
+    client.get_access_token_from_cookies = AsyncMock(
+        return_value=MagicMock(access_token="google-token")
+    )
+    client.authenticate = AsyncMock(
+        return_value=MagicMock(access_token="nest-token", userid="user1", user="user.1")
+    )
+    client.get_first_data = AsyncMock(
+        return_value=MagicMock(
+            updated_buckets=[
+                MagicMock(object_key="user.1", value={"email": "user@example.com"})
+            ]
+        )
+    )
+
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient",
+        return_value=client,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"issue_token": issue_token, "cookies": cookies},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["cookies"] == refreshed_cookies
+
+
 async def test_extension_step_creates_entry(hass: HomeAssistant) -> None:
     """Test extension step decodes code and creates entry on success."""
     issue_token = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"
@@ -102,6 +151,58 @@ async def test_extension_step_creates_entry(hass: HomeAssistant) -> None:
     assert result["data"]["issue_token"] == issue_token
     assert result["data"]["cookies"] == cookies
     assert result["data"]["account_type"] == "production"
+
+
+async def test_extension_step_stores_refreshed_cookies(
+    hass: HomeAssistant,
+) -> None:
+    """Test extension step stores cookies refreshed during validation."""
+    issue_token = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"
+    cookies = "SID=abc123456789012345678901234567890; HSID=def1234567890; SSID=ghi1234567890; APISID=jkl1234567890; SAPISID=mno1234567890"
+    refreshed_cookies = f"{cookies}; __Secure-1PSIDTS=fresh"
+    code = base64.b64encode(
+        json.dumps({"issue_token": issue_token, "cookies": cookies}).encode()
+    ).decode()
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"account_type": "production"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"method": "extension"},
+    )
+
+    client = MagicMock()
+    client.refreshed_cookies = refreshed_cookies
+    client.get_access_token_from_cookies = AsyncMock(
+        return_value=MagicMock(access_token="google-token")
+    )
+    client.authenticate = AsyncMock(
+        return_value=MagicMock(access_token="nest-token", userid="user1", user="user.1")
+    )
+    client.get_first_data = AsyncMock(
+        return_value=MagicMock(
+            updated_buckets=[
+                MagicMock(object_key="user.1", value={"email": "user@example.com"})
+            ]
+        )
+    )
+
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient",
+        return_value=client,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"auth_code": code},
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["cookies"] == refreshed_cookies
 
 
 async def test_extension_step_invalid_code(hass: HomeAssistant) -> None:
