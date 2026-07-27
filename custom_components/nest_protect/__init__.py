@@ -222,6 +222,7 @@ async def _async_subscribe_for_data(
         await asyncio.sleep(0)
 
         await sm.ensure_session()
+        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
 
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
