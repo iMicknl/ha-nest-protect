@@ -1,18 +1,25 @@
 """Generate protobuf files for pynest.
 
 pip install grpcio-tools mypy-protobuf
-python generate_protos.py
+python scripts/generate_protos.py
 # To delete untracked files:
 git clean -fdi
+
+The generated files keep protoc's `ValidateProtobufRuntimeVersion` guard, so a
+gencode/runtime mismatch fails loudly at import instead of behaving arbitrarily.
+That means the `protobuf` lower bound in `custom_components/nest_protect/
+manifest.json` must be at least the "Protobuf Python Version" that protoc
+stamps into the generated files. If you need to support an older runtime,
+regenerate with an older protoc rather than removing the guard.
 """
 
-from functools import partial
 import logging
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from functools import partial
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 _LOGGER = logging.getLogger(__name__)
@@ -20,8 +27,8 @@ _LOGGER = logging.getLogger(__name__)
 
 def generate_protos() -> None:
     """Run the protoc command to generate Python files from .proto definitions."""
-    # Define paths
-    base_dir = Path(__file__).parent
+    # Define paths (this script lives in scripts/, protos live at the repo root)
+    base_dir = Path(__file__).parent.parent
     proto_dir = base_dir / "protobuf"
     output_dir = (
         base_dir / "custom_components" / "nest_protect" / "pynest" / "protobuf_gen"
@@ -56,8 +63,8 @@ def generate_protos() -> None:
     try:
         subprocess.check_call(cmd)
         _LOGGER.info("Protobuf generation successful")
-    except subprocess.CalledProcessError as e:
-        _LOGGER.error("Protobuf generation failed with error: %s", e)
+    except subprocess.CalledProcessError:
+        _LOGGER.exception("Protobuf generation failed")
         sys.exit(1)
 
     # Create __init__.py files in the generated directories to make them packages
@@ -69,9 +76,6 @@ def generate_protos() -> None:
 
     # Automatically transform absolute imports to relative imports
     fix_imports(output_dir)
-
-    # Remove runtime version validation for compatibility with older protobuf versions
-    fix_runtime_version(output_dir)
 
 
 def _get_from_replacement(match: re.Match, dots: str, output_dir: Path) -> str:
@@ -140,7 +144,7 @@ def fix_imports(output_dir: Path) -> None:
             if file.endswith((".py", ".pyi")):
                 file_path = root_path / file
 
-                with open(file_path, encoding="utf-8") as f:
+                with file_path.open(encoding="utf-8") as f:
                     content = f.read()
 
                 from_func = partial(
@@ -155,33 +159,8 @@ def fix_imports(output_dir: Path) -> None:
                 # Write back if alterations were made, forcing UNIX newlines
                 if new_content != content:
                     new_content = new_content.replace("\r\n", "\n")
-                    with open(file_path, "w", encoding="utf-8", newline="\n") as f:
+                    with file_path.open("w", encoding="utf-8", newline="\n") as f:
                         f.write(new_content)
-
-
-def fix_runtime_version(output_dir: Path) -> None:
-    """Remove protobuf runtime version validation from generated files."""
-    import_re = re.compile(
-        r"^from google\.protobuf import runtime_version as _runtime_version\n",
-        re.MULTILINE,
-    )
-    validate_re = re.compile(
-        r"_runtime_version\.ValidateProtobufRuntimeVersion\(\s*[^)]*\)\n",
-        re.DOTALL,
-    )
-
-    for file_path in output_dir.rglob("*_pb2.py"):
-        content = file_path.read_text(encoding="utf-8")
-
-        if "runtime_version" not in content:
-            continue
-
-        new_content = import_re.sub("", content)
-        new_content = validate_re.sub("", new_content)
-
-        if new_content != content:
-            file_path.write_text(new_content, encoding="utf-8")
-            _LOGGER.info("Removed runtime version validation from %s", file_path.name)
 
 
 if __name__ == "__main__":

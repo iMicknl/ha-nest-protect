@@ -27,6 +27,7 @@ from .const import (
     CONF_REFRESH_TOKEN,
     DOMAIN,
     LOGGER,
+    MAX_AUTH_FAILURES,
     PLATFORMS,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
@@ -38,6 +39,7 @@ from .pynest.enums import BucketType, Environment
 from .pynest.exceptions import (
     BadCredentialsException,
     EmptyResponseException,
+    NestLockAuthException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
@@ -150,34 +152,76 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         _async_subscribe_for_data(hass, entry, data)
     )
 
-    entry_data.lock_observe_task = asyncio.create_task(
-        _async_observe_locks_loop(hass, entry)
+    entry_data.lock_observe_task = entry.async_create_background_task(
+        hass,
+        _async_observe_locks_loop(hass, entry),
+        name=f"{DOMAIN}_lock_observe_{entry.entry_id}",
     )
 
     return True
 
 
 async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Consume the gRPC observe stream and dispatch lock updates."""
+    """Consume the gRPC observe stream and dispatch lock updates.
+
+    Returns — ending the background task — when the observer reports that this
+    account has no locks, so accounts without a Nest x Yale lock stop talking to
+    the gateway after the first stream. Auth failures are retried with a session
+    refresh, and escalate to re-auth after MAX_AUTH_FAILURES.
+    """
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     cache = entry_data.lock_state_cache
+    sm = entry_data.session_manager
+    auth_failures = 0
 
-    try:
-        async for batch in entry_data.grpc_lock_client.observe_locks():
-            new_locks: dict[str, LockState] = {}
-            for resource_id, lock_state in batch.items():
-                previous = cache.get(resource_id)
-                cache[resource_id] = lock_state
-                if previous is None:
-                    new_locks[resource_id] = lock_state
-                else:
-                    async_dispatcher_send(hass, lock_signal(resource_id), lock_state)
-            if new_locks:
-                async_dispatcher_send(hass, discovery_signal(entry.entry_id), new_locks)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        LOGGER.exception("Lock observe loop failed unexpectedly")
+    while True:
+        try:
+            async for batch in entry_data.grpc_lock_client.observe_locks():
+                auth_failures = 0
+                new_locks: dict[str, LockState] = {}
+                for resource_id, lock_state in batch.items():
+                    previous = cache.get(resource_id)
+                    cache[resource_id] = lock_state
+                    if previous is None:
+                        new_locks[resource_id] = lock_state
+                    else:
+                        async_dispatcher_send(
+                            hass, lock_signal(resource_id), lock_state
+                        )
+                if new_locks:
+                    async_dispatcher_send(
+                        hass, discovery_signal(entry.entry_id), new_locks
+                    )
+        except asyncio.CancelledError:
+            raise
+        except NestLockAuthException as err:
+            auth_failures += 1
+            if auth_failures >= MAX_AUTH_FAILURES:
+                LOGGER.warning(
+                    "Lock observer: %d consecutive auth failures, triggering "
+                    "re-authentication",
+                    auth_failures,
+                )
+                entry.async_start_reauth(hass)
+                return
+
+            LOGGER.debug(
+                "Lock observer: credentials rejected (%r), refreshing session", err
+            )
+            await asyncio.sleep(sm.backoff_interval)
+            await sm.async_refresh_session()
+
+            # Entry may have been unloaded during the backoff sleep
+            if entry.entry_id not in hass.data.get(DOMAIN, {}):
+                return
+        except Exception:
+            LOGGER.exception("Lock observe loop failed unexpectedly")
+            return
+        else:
+            # observe_locks() only ends the iteration when it has concluded
+            # there is nothing to watch on this account.
+            LOGGER.debug("Lock observer: no locks on this account, stopping")
+            return
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

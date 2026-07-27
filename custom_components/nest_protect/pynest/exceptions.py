@@ -27,3 +27,15 @@ class BadGatewayException(NestServiceException):
 
 class EmptyResponseException(NestServiceException):
     """Raised when server returns Status 200 (OK), but empty response."""
+
+
+class NestLockException(PynestException):
+    """Raised when the gRPC-web lock transport fails."""
+
+
+class NestLockAuthException(NestLockException):
+    """Raised when gRPC-web rejects the session credentials."""
+
+
+class NestLockCommandException(NestLockException):
+    """Raised when a lock or unlock command is rejected."""

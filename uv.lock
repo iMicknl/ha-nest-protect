@@ -979,7 +979,7 @@ dev = [
 ]
 test = [
     { name = "googleapis-common-protos", specifier = ">=1.56.0" },
-    { name = "protobuf", specifier = ">=4.21.0" },
+    { name = "protobuf", specifier = ">=6.31.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.8" },
     { name = "pytest-homeassistant-custom-component", specifier = ">=0.13.348" },

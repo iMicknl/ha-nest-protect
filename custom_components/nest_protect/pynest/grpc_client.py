@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientTimeout
 
+from .const import PROTOBUF_USER_AGENT
+from .exceptions import NestLockAuthException, NestLockCommandException
 from .lock_models import LockBoltState, LockState
 from .protobuf_gen.nest.trait import located_pb2 as nest_located_pb2
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
@@ -34,13 +36,23 @@ OBSERVE_ENDPOINT = "/nestlabs.gateway.v2.GatewayService/Observe"
 SEND_COMMAND_ENDPOINT = "/nestlabs.gateway.v1.ResourceApi/SendCommand"
 
 _NESTLABS_TYPE_URL_PREFIX = "type.nestlabs.com/"
-_USER_AGENT = "Nest/5.82.2 (iOScom.nestlabs.jasper.release) os=18.5"
 
-_OBSERVE_TIMEOUT = 600  # seconds — long-lived stream
+_SOCK_READ_TIMEOUT = 300  # seconds without data before treating the stream as dead
 _CONNECT_TIMEOUT = 60
 _SEND_COMMAND_TIMEOUT = 30
 _RECONNECT_INITIAL_DELAY = 1.0
 _RECONNECT_MAX_DELAY = 60.0
+
+# How long the observe stream must have been running, cumulatively across
+# reconnects, before an account is declared lock-less. The gateway sends its
+# resource metas and the initial trait states in the first moments of a stream,
+# but the ordering between the two isn't guaranteed, so a settle window keeps a
+# slow initial dump from being mistaken for "no locks here".
+_NO_LOCK_SETTLE_SECONDS = 30.0
+
+# HTTP statuses that mean the session token was rejected rather than that the
+# gateway had a transient problem. Retrying these forever never recovers.
+_AUTH_ERROR_STATUSES = frozenset({401, 403})
 
 # Protobuf wire-type for length-delimited fields. The Observe stream wraps
 # each ObserveResponse in a length-delimited field (tag wire-type == 2);
@@ -162,8 +174,15 @@ def _extract_lock_state(
     identity = traits.get(
         weave_description_pb2.DeviceIdentityTrait.DESCRIPTOR.full_name
     )
-    serial = identity.serialNumber if identity else resource_id
-    software_version = identity.softwareVersion if identity else None
+    # proto3 scalars have no presence, so a DeviceIdentityTrait that omits these
+    # yields "" rather than None. An empty serial would collapse every lock into
+    # one device registry entry, and an empty sw_version would be rendered.
+    serial = (
+        identity.serialNumber if identity and identity.serialNumber else resource_id
+    )
+    software_version = (
+        identity.softwareVersion if identity and identity.softwareVersion else None
+    )
 
     label = traits.get(weave_description_pb2.LabelSettingsTrait.DESCRIPTOR.full_name)
     name = label.label if label and label.label else "Lock"
@@ -209,20 +228,34 @@ class GrpcLockClient:
         # Global where_id -> room label, rebuilt whenever the structure-level
         # annotation traits change. Locks use this to resolve their location.
         self._wheres_map: dict[str, str] = {}
+        # Tri-state: None until the gateway has told us enough to decide, then
+        # True once any BoltLockTrait is seen, or False once the initial
+        # enumeration has settled without one. See `_evaluate_lock_presence`.
+        self._locks_present: bool | None = None
+        # Whether the gateway has sent any resourceMetas yet, and whether it
+        # says more of the initial batch is still coming.
+        self._seen_resource_metas = False
+        self._initial_metas_continue = False
+        # Monotonic timestamp of the first observe attempt, used for the settle
+        # window. Set once and kept across reconnects.
+        self._first_observe_at: float | None = None
 
     def _headers(self) -> dict[str, str]:
         """Build the protobuf headers using the current session token."""
         session = self._nest_client.nest_session
         if session is None or not session.access_token:
-            raise RuntimeError("No active Nest session — cannot call gRPC-web")
+            raise NestLockAuthException("No active Nest session — cannot call gRPC-web")
+        # NestEnvironment.host already carries the scheme ("https://home.nest.com"),
+        # which is why client.py uses it bare.
+        host = self._nest_client.environment.host
         return {
             "Authorization": f"Basic {session.access_token}",
-            "User-Agent": _USER_AGENT,
+            "User-Agent": PROTOBUF_USER_AGENT,
             "Content-Type": "application/x-protobuf",
             "X-Accept-Response-Streaming": "true",
             "X-Accept-Content-Transfer-Encoding": "binary",
-            "Referer": f"https://{self._nest_client.environment.host}/",
-            "Origin": f"https://{self._nest_client.environment.host}",
+            "Referer": f"{host}/",
+            "Origin": host,
         }
 
     def _build_observe_request(self) -> bytes:
@@ -245,6 +278,15 @@ class GrpcLockClient:
         directly-touched lock resources plus, if a structure-level annotation
         trait changed, every cached lock (so the new location propagates).
         """
+        if inner.resourceMetas:
+            self._seen_resource_metas = True
+            self._initial_metas_continue = inner.initialResourceMetasContinue
+            for meta in inner.resourceMetas:
+                for trait_meta in meta.traitMetas:
+                    name = trait_meta.type.removeprefix(_NESTLABS_TYPE_URL_PREFIX)
+                    if name == _BOLT_LOCK_TRAIT_NAME:
+                        self._locks_present = True
+
         touched: set[str] = set()
         annotations_changed = False
         for state in inner.traitStates:
@@ -260,6 +302,9 @@ class GrpcLockClient:
             resource_id = state.traitId.resourceId
             cache_entry = self._trait_cache.setdefault(resource_id, {})
             cache_entry[full_name] = unpacked
+
+            if full_name == _BOLT_LOCK_TRAIT_NAME:
+                self._locks_present = True
 
             if full_name in _STRUCTURE_ANNOTATION_TRAIT_NAMES:
                 annotations_changed = True
@@ -304,7 +349,20 @@ class GrpcLockClient:
         self._wheres_map = wheres
 
     def _parse_observe_buffer(self, buffer: bytearray) -> list[set[str]]:
-        """Drain complete frames from `buffer`, returning lists of touched resource sets."""
+        """Drain complete frames from `buffer`, returning lists of touched resource sets.
+
+        The response body is a stream of `google.rpc.StreamBody` frames, each of
+        which is a length-delimited `repeated bytes message = 1` entry.
+
+        Note that the frame is handed to `ObserveResponse.ParseFromString()`
+        *including* its own tag and length prefix, rather than the payload
+        alone. That is deliberate and not a slicing bug: `StreamBody.message`
+        and `ObserveResponse.observeResponse` are both field number 1 with
+        wire type 2, so parsing the wrapper as an `ObserveResponse` makes
+        protobuf reinterpret the StreamBody envelope as the repeated
+        `observeResponse` field. This saves vendoring `StreamBody` itself,
+        at the cost of depending on those two field numbers staying aligned.
+        """
         results: list[set[str]] = []
         while buffer:
             tag, tag_size = _decode_varint(buffer)
@@ -360,11 +418,34 @@ class GrpcLockClient:
                 out[rid] = lock
         return out
 
+    def _evaluate_lock_presence(self, now: float) -> None:
+        """Decide whether this account has no locks at all.
+
+        Called after each chunk. Flips `_locks_present` from undetermined to
+        False once the gateway has finished its initial resource enumeration
+        without ever mentioning a `BoltLockTrait`, and the settle window has
+        passed. Never overrides a True — one BoltLockTrait anywhere is enough.
+        """
+        if self._locks_present is not None:
+            return
+        if not self._seen_resource_metas or self._initial_metas_continue:
+            return
+        if self._first_observe_at is None:
+            return
+        if now - self._first_observe_at < _NO_LOCK_SETTLE_SECONDS:
+            return
+        self._locks_present = False
+
     async def observe_locks(self) -> AsyncIterator[dict[str, LockState]]:
         """Long-lived observer. Yields `{resource_id: LockState}` per update batch.
 
-        Reconnects on transient errors with exponential backoff. Caller is
-        responsible for cancelling the consuming task on shutdown.
+        Reconnects on transient errors with exponential backoff. Ends the
+        iteration — rather than reconnecting forever — once the account is
+        known to have no locks, so accounts without a Nest x Yale lock stop
+        talking to the gateway entirely. Auth failures propagate to the caller
+        instead of being retried, since retrying a rejected token never
+        recovers. Caller is responsible for cancelling the consuming task on
+        shutdown.
         """
         delay = _RECONNECT_INITIAL_DELAY
         while True:
@@ -372,14 +453,30 @@ class GrpcLockClient:
                 async for batch in self._observe_once():
                     delay = _RECONNECT_INITIAL_DELAY
                     yield batch
-                # Clean stream end — short pause then reconnect.
-                _LOGGER.debug("Observe stream ended cleanly; reconnecting")
+                # Re-check on the way out too: a stream that ends right after
+                # the enumeration would otherwise need another connection
+                # before the verdict could be reached.
+                self._evaluate_lock_presence(asyncio.get_running_loop().time())
+                if self._locks_present is False:
+                    return
+                # A clean end isn't an error, but still back off. An account
+                # with no lock resources can get the stream closed immediately,
+                # which would otherwise reconnect once a second forever.
+                _LOGGER.debug("Observe stream ended; reconnecting in %.1fs", delay)
                 await asyncio.sleep(delay)
+                delay = min(delay * 2, _RECONNECT_MAX_DELAY)
             except asyncio.CancelledError:
                 raise
+            except NestLockAuthException:
+                raise
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Lock observe stream error: %s. Reconnecting in %.1fs",
+                # Until a lock is known to exist, stream trouble isn't
+                # actionable for the user — most accounts have no lock, and
+                # their first stream idles out before the presence check can
+                # settle. Only warn once we know there is something to watch.
+                log = _LOGGER.warning if self._locks_present else _LOGGER.debug
+                log(
+                    "Lock observe stream error: %r. Reconnecting in %.1fs",
                     err,
                     delay,
                 )
@@ -390,12 +487,24 @@ class GrpcLockClient:
         """Single observe-stream session. Yields LockState batches until stream ends."""
         url = f"https://{self._grpc_host}{OBSERVE_ENDPOINT}"
         body = self._build_observe_request()
+        loop = asyncio.get_running_loop()
+        if self._first_observe_at is None:
+            self._first_observe_at = loop.time()
+        # The gateway re-enumerates resources on every new stream.
+        self._seen_resource_metas = False
+        self._initial_metas_continue = False
         async with self._nest_client.session.post(
             url,
             data=body,
             headers=self._headers(),
-            timeout=ClientTimeout(total=_OBSERVE_TIMEOUT, connect=_CONNECT_TIMEOUT),
+            timeout=ClientTimeout(
+                total=None, connect=_CONNECT_TIMEOUT, sock_read=_SOCK_READ_TIMEOUT
+            ),
         ) as response:
+            if response.status in _AUTH_ERROR_STATUSES:
+                raise NestLockAuthException(
+                    f"Observe rejected with HTTP {response.status}"
+                )
             response.raise_for_status()
             buffer = bytearray()
             async for chunk in response.content.iter_chunked(4096):
@@ -406,6 +515,14 @@ class GrpcLockClient:
                     locks = self._snapshot_locks(touched)
                     if locks:
                         yield locks
+                self._evaluate_lock_presence(loop.time())
+                if self._locks_present is False:
+                    _LOGGER.debug(
+                        "Observe enumeration completed with no BoltLockTrait; "
+                        "no Nest x Yale lock on this account. Reload the "
+                        "integration if you add one later"
+                    )
+                    return
 
     async def send_lock_command(self, resource_id: str, lock: bool) -> None:
         """Send a lock or unlock command. Raises on failure."""
@@ -438,9 +555,15 @@ class GrpcLockClient:
             headers=self._headers(),
             timeout=ClientTimeout(total=_SEND_COMMAND_TIMEOUT),
         ) as response:
+            if response.status in _AUTH_ERROR_STATUSES:
+                raise NestLockAuthException(
+                    f"SendCommand rejected with HTTP {response.status}"
+                )
             if not response.ok:
                 text = await response.text()
-                raise RuntimeError(f"SendCommand HTTP {response.status}: {text[:200]}")
+                raise NestLockCommandException(
+                    f"SendCommand HTTP {response.status}: {text[:200]}"
+                )
             raw = await response.read()
 
         resp = v1_pb2.SendCommandResponse()
@@ -452,6 +575,6 @@ class GrpcLockClient:
             resp.status.message,
         )
         if resp.status.code != 0:
-            raise RuntimeError(
+            raise NestLockCommandException(
                 f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
             )

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from aiohttp import ClientError
 from homeassistant.components.lock import LockEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -20,6 +21,7 @@ from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
+from .pynest.exceptions import PynestException
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
 
@@ -143,14 +145,17 @@ class NestLockEntity(LockEntity):
 
     @property
     def is_locking(self) -> bool:
+        """Return true if the bolt is extending."""
         return self._lock_state.bolt_state == LockBoltState.LOCKING
 
     @property
     def is_unlocking(self) -> bool:
+        """Return true if the bolt is retracting."""
         return self._lock_state.bolt_state == LockBoltState.UNLOCKING
 
     @property
     def is_jammed(self) -> bool:
+        """Return true if the bolt is jammed."""
         return self._lock_state.bolt_state == LockBoltState.JAMMED
 
     async def async_added_to_hass(self) -> None:
@@ -178,7 +183,7 @@ class NestLockEntity(LockEntity):
             await self._grpc_client.send_lock_command(
                 self._lock_state.resource_id, lock=True
             )
-        except Exception as err:
+        except (ClientError, TimeoutError, PynestException) as err:
             raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_unlock(self, **kwargs: Any) -> None:
@@ -187,7 +192,7 @@ class NestLockEntity(LockEntity):
             await self._grpc_client.send_lock_command(
                 self._lock_state.resource_id, lock=False
             )
-        except Exception as err:
+        except (ClientError, TimeoutError, PynestException) as err:
             raise HomeAssistantError(f"Failed to unlock: {err}") from err
 
 
@@ -196,8 +201,8 @@ class NestLockBatterySensor(SensorEntity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
-    _attr_translation_key = "lock_battery"
-    _attr_name = "Battery"
+    # No _attr_name / translation key: with has_entity_name and the BATTERY
+    # device class, HA names this entity "Battery" on its own.
     _attr_device_class = SensorDeviceClass.BATTERY
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
