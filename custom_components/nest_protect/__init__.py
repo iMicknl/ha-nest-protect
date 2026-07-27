@@ -27,7 +27,6 @@ from .const import (
     CONF_REFRESH_TOKEN,
     DOMAIN,
     LOGGER,
-    MAX_AUTH_FAILURES,
     PLATFORMS,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
@@ -168,16 +167,20 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
     account has no locks, so accounts without a Nest x Yale lock stop talking to
     the gateway after the first stream. Auth failures are retried with a session
     refresh, and escalate to re-auth after MAX_AUTH_FAILURES.
+
+    Auth health is tracked on the shared NestSessionManager rather than locally,
+    so this loop and the REST subscriber can't each sit below the threshold
+    while the session is thoroughly broken.
     """
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     cache = entry_data.lock_state_cache
     sm = entry_data.session_manager
-    auth_failures = 0
 
     while True:
         try:
             async for batch in entry_data.grpc_lock_client.observe_locks():
-                auth_failures = 0
+                # A working stream clears failures recorded by either transport.
+                sm.record_success()
                 new_locks: dict[str, LockState] = {}
                 for resource_id, lock_state in batch.items():
                     previous = cache.get(resource_id)
@@ -195,12 +198,12 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
-            auth_failures += 1
-            if auth_failures >= MAX_AUTH_FAILURES:
+            sm.record_failure()
+            if sm.should_trigger_reauth:
                 LOGGER.warning(
                     "Lock observer: %d consecutive auth failures, triggering "
                     "re-authentication",
-                    auth_failures,
+                    sm.consecutive_failures,
                 )
                 entry.async_start_reauth(hass)
                 return
@@ -214,6 +217,8 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
             # Entry may have been unloaded during the backoff sleep
             if entry.entry_id not in hass.data.get(DOMAIN, {}):
                 return
+
+            _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
         except Exception:
             LOGGER.exception("Lock observe loop failed unexpectedly")
             return

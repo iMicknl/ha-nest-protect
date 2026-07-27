@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -171,10 +172,21 @@ class NestLockEntity(LockEntity):
     @callback
     def _handle_update(self, lock_state: LockState) -> None:
         """Receive a new LockState from the observe loop."""
+        previous = self._lock_state
         self._lock_state = lock_state
-        # Rebuild device_info so a later-arriving location or sw_version
-        # propagates to the device registry on the next state write.
-        self._attr_device_info = self._build_device_info()
+        # DeviceInfo is only read when the entity is added, so a location or
+        # sw_version that arrives later has to be written to the registry
+        # directly. Locks get their room label from the structure-level
+        # annotation traits, which routinely arrive after the lock itself.
+        if (
+            lock_state.location != previous.location
+            or lock_state.software_version != previous.software_version
+        ) and (device_id := self.device_entry and self.device_entry.id):
+            dr.async_get(self.hass).async_update_device(
+                device_id,
+                name=_compose_lock_device_name(lock_state.location, lock_state.name),
+                sw_version=lock_state.software_version,
+            )
         self.async_write_ha_state()
 
     async def async_lock(self, **kwargs: Any) -> None:
