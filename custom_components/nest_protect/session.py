@@ -176,7 +176,6 @@ class NestSessionManager:
             self._client.auth.access_token
         )
         await self._async_persist(self._client.nest_session)
-        self.record_success()
         return True
 
     async def _async_persist(self, nest_session: NestResponse) -> None:

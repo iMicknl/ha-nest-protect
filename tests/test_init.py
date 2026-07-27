@@ -445,10 +445,16 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
     client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
+    # Google still accepts the cookies, so the refresh itself succeeds while Nest
+    # keeps rejecting the session. async_refresh_session is deliberately not
+    # mocked here: it must not reset the failure counter it was called to recover.
+    client.auth = MagicMock(is_expired=lambda: False)
+    client.authenticate = AsyncMock(return_value=MagicMock(to_dict=dict))
+    sm._store.async_save = AsyncMock()
+
     with (
         patch("custom_components.nest_protect._register_subscribe_task"),
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
-        patch.object(sm, "async_refresh_session", new_callable=AsyncMock),
         patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
         patch.object(entry, "async_start_reauth") as mock_reauth,
     ):
