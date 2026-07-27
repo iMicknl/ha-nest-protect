@@ -20,6 +20,9 @@ from custom_components.nest_protect.pynest.grpc_client import (
     _resolve_lock_location,
 )
 from custom_components.nest_protect.pynest.lock_models import LockBoltState
+from custom_components.nest_protect.pynest.protobuf_gen.google.rpc import (
+    streambody_pb2,
+)
 from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
     located_pb2 as nest_located_pb2,
 )
@@ -506,13 +509,42 @@ def _make_inner(
 
 
 def _build_frame(inner: v2_pb2.ObserveResponse.ObserveResponse) -> bytes:
-    """Serialize one StreamBody-framed observe frame.
+    """Serialize one StreamBody frame carrying a single inner ObserveResponse."""
+    return streambody_pb2.StreamBody(
+        message=[inner.SerializeToString()]
+    ).SerializeToString()
 
-    A frame is exactly the wire encoding of an ObserveResponse holding a single
-    inner response, tag and length prefix included — see the note in
-    `_parse_observe_buffer` about the field-1 aliasing this relies on.
+
+def test_streambody_frame_matches_the_observeresponse_encoding():
+    """Pin the field-1 aliasing the client used to depend on implicitly.
+
+    `StreamBody.message` and `ObserveResponse.observeResponse` are both field 1
+    with wire type 2, so the two encodings are byte-identical. The client used
+    to exploit that by parsing frames straight into an `ObserveResponse`; it now
+    parses `StreamBody` explicitly. This keeps the equivalence asserted, so the
+    switch is demonstrably behaviour-preserving rather than merely believed to
+    be.
     """
-    return v2_pb2.ObserveResponse(observeResponse=[inner]).SerializeToString()
+    inner = _make_inner(trait_states=[("DEVICE_X", _make_bolt_trait())])
+    via_streambody = streambody_pb2.StreamBody(
+        message=[inner.SerializeToString()]
+    ).SerializeToString()
+    via_observe_response = v2_pb2.ObserveResponse(
+        observeResponse=[inner]
+    ).SerializeToString()
+    assert via_streambody == via_observe_response
+
+
+def test_streambody_status_comes_from_googleapis_common_protos():
+    """StreamBody is generated locally; its Status still comes from upstream.
+
+    google/rpc/status.proto is deliberately left source-only so we don't
+    register a second `google/rpc/status.proto` in the default descriptor pool.
+    """
+    from google.rpc import status_pb2 as upstream
+
+    body = streambody_pb2.StreamBody()
+    assert body.status.DESCRIPTOR is upstream.Status.DESCRIPTOR
 
 
 def test_parse_observe_buffer_single_frame():
@@ -570,6 +602,48 @@ def test_parse_observe_buffer_handles_a_split_mid_varint():
 
     assert results == [{"DEVICE_X"}]
     assert buffer == bytearray()
+
+
+def test_parse_observe_buffer_handles_several_messages_in_one_streambody():
+    body = streambody_pb2.StreamBody(
+        message=[
+            _make_inner(
+                trait_states=[("DEVICE_A", _make_bolt_trait())]
+            ).SerializeToString(),
+            _make_inner(
+                trait_states=[("DEVICE_B", _make_bolt_trait())]
+            ).SerializeToString(),
+        ]
+    )
+    buffer = bytearray(body.SerializeToString())
+
+    client = _make_client()
+    assert client._parse_observe_buffer(buffer) == [{"DEVICE_A"}, {"DEVICE_B"}]
+    assert buffer == bytearray()
+
+
+def test_parse_observe_buffer_surfaces_a_gateway_status_frame(caplog):
+    # StreamBody.status (field 2) reports an error for the stream as a whole.
+    # The old ObserveResponse-reinterpreting parser skipped these frames.
+    body = streambody_pb2.StreamBody()
+    body.status.code = 7
+    body.status.message = "permission denied"
+    buffer = bytearray(body.SerializeToString())
+
+    client = _make_client()
+    assert client._parse_observe_buffer(buffer) == []
+    assert "code=7" in caplog.text
+    assert "permission denied" in caplog.text
+
+
+def test_parse_observe_buffer_ignores_a_zero_status_frame(caplog):
+    body = streambody_pb2.StreamBody()
+    body.status.code = 0
+    buffer = bytearray(body.SerializeToString())
+
+    client = _make_client()
+    assert client._parse_observe_buffer(buffer) == []
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
 def test_parse_observe_buffer_resets_on_unexpected_wire_type():

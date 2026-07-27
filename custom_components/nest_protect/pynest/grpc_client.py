@@ -21,6 +21,7 @@ from aiohttp import ClientTimeout
 from .const import PROTOBUF_USER_AGENT
 from .exceptions import NestLockAuthException, NestLockCommandException
 from .lock_models import LockBoltState, LockState
+from .protobuf_gen.google.rpc import streambody_pb2
 from .protobuf_gen.nest.trait import located_pb2 as nest_located_pb2
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
 from .protobuf_gen.weave.trait import description_pb2 as weave_description_pb2
@@ -54,9 +55,9 @@ _NO_LOCK_SETTLE_SECONDS = 30.0
 # gateway had a transient problem. Retrying these forever never recovers.
 _AUTH_ERROR_STATUSES = frozenset({401, 403})
 
-# Protobuf wire-type for length-delimited fields. The Observe stream wraps
-# each ObserveResponse in a length-delimited field (tag wire-type == 2);
-# any other wire-type means the buffer is out of sync and must be reset.
+# Protobuf wire-type for length-delimited fields. Every StreamBody field the
+# gateway sends is length-delimited (tag wire-type == 2); any other wire-type
+# means the buffer is out of sync and must be reset.
 _WIRE_TYPE_LENGTH_DELIMITED = 2
 
 # The lock-relevant trait types we ask the server to stream. Limited set keeps
@@ -349,19 +350,15 @@ class GrpcLockClient:
         self._wheres_map = wheres
 
     def _parse_observe_buffer(self, buffer: bytearray) -> list[set[str]]:
-        """Drain complete frames from `buffer`, returning lists of touched resource sets.
+        """Drain complete `google.rpc.StreamBody` frames from `buffer`.
 
-        The response body is a stream of `google.rpc.StreamBody` frames, each of
-        which is a length-delimited `repeated bytes message = 1` entry.
+        The gateway streams its response as a sequence of length-delimited
+        StreamBody fields. A `message` entry (field 1) holds one serialized
+        `ObserveResponse.ObserveResponse`; a `status` entry (field 2) carries a
+        gateway-side error for the stream as a whole.
 
-        Note that the frame is handed to `ObserveResponse.ParseFromString()`
-        *including* its own tag and length prefix, rather than the payload
-        alone. That is deliberate and not a slicing bug: `StreamBody.message`
-        and `ObserveResponse.observeResponse` are both field number 1 with
-        wire type 2, so parsing the wrapper as an `ObserveResponse` makes
-        protobuf reinterpret the StreamBody envelope as the repeated
-        `observeResponse` field. This saves vendoring `StreamBody` itself,
-        at the cost of depending on those two field numbers staying aligned.
+        Returns one set of touched resource_ids per entry that changed
+        something, so the caller can snapshot just those resources.
         """
         results: list[set[str]] = []
         while buffer:
@@ -389,18 +386,28 @@ class GrpcLockClient:
             frame_data = bytes(buffer[:frame_size])
             del buffer[:frame_size]
 
-            if tag >> 3 != 1:
-                _LOGGER.debug("Skipping unknown field tag %s", tag >> 3)
-                continue
-
-            outer = v2_pb2.ObserveResponse()
+            body = streambody_pb2.StreamBody()
             try:
-                outer.ParseFromString(frame_data)
+                body.ParseFromString(frame_data)
             except Exception:
-                _LOGGER.exception("Failed to parse outer ObserveResponse")
+                _LOGGER.exception("Failed to parse observe StreamBody frame")
                 continue
 
-            for inner in outer.observeResponse:
+            if body.HasField("status") and body.status.code != 0:
+                _LOGGER.warning(
+                    "Observe stream reported status code=%s message=%r",
+                    body.status.code,
+                    body.status.message,
+                )
+
+            for raw_response in body.message:
+                inner = v2_pb2.ObserveResponse.ObserveResponse()
+                try:
+                    inner.ParseFromString(raw_response)
+                except Exception:
+                    _LOGGER.exception("Failed to parse ObserveResponse")
+                    continue
+
                 touched = self._ingest_observe_response(inner)
                 if touched:
                     results.append(touched)

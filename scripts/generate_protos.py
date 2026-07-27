@@ -24,6 +24,23 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 _LOGGER = logging.getLogger(__name__)
 
+# google/* protos that are source-only: vendored so protoc can resolve imports,
+# but not generated, because an installed package already provides the runtime
+# module. Generating google/rpc/status.proto here would register a second
+# `google/rpc/status.proto` in the default descriptor pool, which protobuf
+# rejects with `duplicate file name` unless the contents match byte for byte.
+# Not worth the risk for one dependency HA installs carry anyway.
+SOURCE_ONLY_PROTOS = ("google/rpc/status.proto",)
+
+
+def _keeps_absolute_import(pkg: str) -> bool:
+    """Return True if `pkg` must not be rewritten to a relative import.
+
+    The whole google namespace stays absolute: google.protobuf comes from the
+    protobuf runtime and google.rpc.status from googleapis-common-protos.
+    """
+    return pkg.startswith((".", "google.")) or pkg == "google"
+
 
 def generate_protos() -> None:
     """Run the protoc command to generate Python files from .proto definitions."""
@@ -37,12 +54,13 @@ def generate_protos() -> None:
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # List of proto files to generate. google/* are source-only — the runtime
-    # uses googleapis-common-protos from PyPI for those.
+    # Everything except SOURCE_ONLY_PROTOS. Note google/rpc/streambody.proto
+    # *is* generated: googleapis-common-protos doesn't ship StreamBody, so
+    # there's nothing for it to collide with.
     proto_files = [
-        str(p.relative_to(proto_dir))
+        rel
         for p in proto_dir.rglob("*.proto")
-        if p.relative_to(proto_dir).parts[:1] != ("google",)
+        if (rel := p.relative_to(proto_dir).as_posix()) not in SOURCE_ONLY_PROTOS
     ]
 
     # Construct the protoc command
@@ -83,8 +101,8 @@ def _get_from_replacement(match: re.Match, dots: str, output_dir: Path) -> str:
     pkg = match.group(1)
     mod = match.group(2)
 
-    # Exclude already relative imports and the 'google' namespace
-    if pkg.startswith((".", "google.")) or pkg == "google":
+    # Exclude already relative imports and any google package we don't vendor
+    if _keeps_absolute_import(pkg):
         return match.group(0)
 
     # Case 1: `from nest.trait import selftest_pb2`
@@ -104,8 +122,8 @@ def _get_import_replacement(match: re.Match, dots: str, output_dir: Path) -> str
     """Process 'import X' replacements."""
     mod = match.group(1)
 
-    # Exclude already relative imports and the 'google' namespace
-    if mod.startswith((".", "google.")) or mod == "google":
+    # Exclude already relative imports and any google package we don't vendor
+    if _keeps_absolute_import(mod):
         return match.group(0)
 
     # Case: `import wdl_event_importance_pb2`
