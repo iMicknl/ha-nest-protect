@@ -100,21 +100,6 @@ class NestEntity(Entity):
                 suggested_area=self.area,
             )
 
-        if self.bucket.object_key.startswith("kryptonite."):
-            identifier = (
-                self.bucket.value.get("serial_number") or self.bucket.object_key
-            )
-
-            return DeviceInfo(
-                identifiers={(DOMAIN, identifier)},
-                name=f"Nest Temperature Sensor ({label})"
-                if label
-                else "Nest Temperature Sensor",
-                manufacturer="Google",
-                model=self.bucket.value.get("model"),
-                suggested_area=self.area,
-            )
-
         return None
 
     async def async_added_to_hass(self) -> None:
