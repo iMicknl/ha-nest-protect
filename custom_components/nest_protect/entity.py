@@ -34,7 +34,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self.client = client
-        self.area = areas.get(self.bucket.value["where_id"])
+        self.area = areas.get(self.bucket.value.get("where_id"))
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
