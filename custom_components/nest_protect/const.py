@@ -20,6 +20,7 @@ CONF_AUTH_CODE: Final = "auth_code"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.LOCK,
     Platform.SENSOR,
     Platform.SELECT,
     Platform.SWITCH,

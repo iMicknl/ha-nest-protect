@@ -20,6 +20,7 @@ from homeassistant.helpers.typing import StateType
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
 from .entity import NestDescriptiveEntity
+from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
 
@@ -146,6 +147,9 @@ async def async_setup_entry(hass, entry, async_add_devices):
                 )
 
     async_add_devices(entities)
+
+    # Battery sensors for any discovered Nest x Yale locks.
+    subscribe_to_lock_discovery(hass, entry, async_add_devices, NestLockBatterySensor)
 
 
 class NestProtectSensor(NestDescriptiveEntity, SensorEntity):

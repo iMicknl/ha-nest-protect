@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from aiohttp import (
     ClientConnectorError,
@@ -31,16 +31,20 @@ from .const import (
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
 )
+from .lock import discovery_signal, lock_signal
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import BucketType, Environment
 from .pynest.exceptions import (
     BadCredentialsException,
     EmptyResponseException,
+    NestLockAuthException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
 )
+from .pynest.grpc_client import GrpcLockClient
+from .pynest.lock_models import LockState
 from .pynest.models import (
     Bucket,
     FirstDataAPIResponse,
@@ -58,7 +62,10 @@ class HomeAssistantNestProtectData:
     areas: dict[str, str]
     client: NestClient
     session_manager: NestSessionManager
+    grpc_lock_client: GrpcLockClient
     subscription_task: asyncio.Task | None = None
+    lock_observe_task: asyncio.Task | None = None
+    lock_state_cache: dict[str, LockState] = field(default_factory=dict)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -134,6 +141,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         areas=areas,
         client=client,
         session_manager=session_manager,
+        grpc_lock_client=GrpcLockClient(client),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
@@ -143,19 +151,98 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         _async_subscribe_for_data(hass, entry, data)
     )
 
+    entry_data.lock_observe_task = entry.async_create_background_task(
+        hass,
+        _async_observe_locks_loop(hass, entry),
+        name=f"{DOMAIN}_lock_observe_{entry.entry_id}",
+    )
+
     return True
+
+
+async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Consume the gRPC observe stream and dispatch lock updates.
+
+    Returns — ending the background task — when the observer reports that this
+    account has no locks, so accounts without a Nest x Yale lock stop talking to
+    the gateway after the first stream. Auth failures are retried with a session
+    refresh, and escalate to re-auth after MAX_AUTH_FAILURES.
+
+    Auth health is tracked on the shared NestSessionManager rather than locally,
+    so this loop and the REST subscriber can't each sit below the threshold
+    while the session is thoroughly broken.
+    """
+    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    cache = entry_data.lock_state_cache
+    sm = entry_data.session_manager
+
+    while True:
+        try:
+            async for batch in entry_data.grpc_lock_client.observe_locks():
+                # A working stream clears failures recorded by either transport.
+                sm.record_success()
+                new_locks: dict[str, LockState] = {}
+                for resource_id, lock_state in batch.items():
+                    previous = cache.get(resource_id)
+                    cache[resource_id] = lock_state
+                    if previous is None:
+                        new_locks[resource_id] = lock_state
+                    else:
+                        async_dispatcher_send(
+                            hass, lock_signal(resource_id), lock_state
+                        )
+                if new_locks:
+                    async_dispatcher_send(
+                        hass, discovery_signal(entry.entry_id), new_locks
+                    )
+        except asyncio.CancelledError:
+            raise
+        except NestLockAuthException as err:
+            sm.record_failure()
+            if sm.should_trigger_reauth:
+                LOGGER.warning(
+                    "Lock observer: %d consecutive auth failures, triggering "
+                    "re-authentication",
+                    sm.consecutive_failures,
+                )
+                entry.async_start_reauth(hass)
+                return
+
+            LOGGER.debug(
+                "Lock observer: credentials rejected (%r), refreshing session", err
+            )
+            await asyncio.sleep(sm.backoff_interval)
+            await sm.async_refresh_session()
+
+            # Entry may have been unloaded during the backoff sleep
+            if entry.entry_id not in hass.data.get(DOMAIN, {}):
+                return
+
+            _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+        except Exception:
+            LOGGER.exception("Lock observe loop failed unexpectedly")
+            return
+        else:
+            # observe_locks() only ends the iteration when it has concluded
+            # there is nothing to watch on this account.
+            LOGGER.debug("Lock observer: no locks on this account, stopping")
+            return
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Cancel subscription task only after successful platform unload
+        # Cancel background tasks only after successful platform unload
         if entry.entry_id in hass.data.get(DOMAIN, {}):
             entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
             if entry_data.subscription_task:
                 entry_data.subscription_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await entry_data.subscription_task
+            if entry_data.lock_observe_task:
+                entry_data.lock_observe_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await entry_data.lock_observe_task
             hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok

@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+import "google/protobuf/any.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+import "nest/messages.proto";
+import "nestlabs/gateway/v1.proto";
+
+package nestlabs.gateway.v2;
+
+enum ResourceStatus {
+    NORMAL = 0;
+    ADDED = 1;
+    REMOVED = 2;
+}
+
+enum StateType {
+    STATE_TYPE_UNSPECIFIED = 0;
+    CONFIRMED = 1;
+    ACCEPTED = 2;
+}
+
+message TraitMeta {
+    string traitLabel = 1;
+    string type = 2;
+    nest.messages.SchemaVersion schemaVersion = 3;
+}
+
+message IfaceMeta {
+    string ifaceLabel = 1;
+    string type = 2;
+    map<string, string> traitLabelMapping = 3;
+    nest.messages.SchemaVersion schemaVersion = 4;
+}
+
+message ResourceMeta {
+    string resourceId = 1;
+    string type = 2;
+    ResourceStatus status = 3;
+    repeated TraitMeta traitMetas = 4;
+    uint32 currentSchemaVersion = 6;
+    repeated IfaceMeta ifaceMetas = 7;
+}
+
+message TraitId {
+    string resourceId = 1;
+    string traitLabel = 2;
+}
+
+message Patch {
+    google.protobuf.Any values = 1;
+}
+
+message TraitState {
+    TraitId traitId = 1;
+    repeated StateType stateTypes = 2;
+    Patch patch = 3;
+    uint64 monotonicVersion = 4;
+    uint64 publisherVersion = 5;
+}
+
+message TraitTypeObserveParams {
+    string traitType = 1;
+    google.protobuf.FieldMask stateFieldMask = 2;
+    uint32 observerSchemaVersion = 3;
+}
+
+message TraitInstanceObserveParams {
+    TraitId traitId = 1;
+    repeated uint64 monotonicVersionFilters = 2;
+}
+
+message ObserveRequest {
+    repeated StateType stateTypes = 1;
+    repeated string resourceIds = 2;
+    repeated TraitTypeObserveParams traitTypeParams = 3;
+    repeated TraitInstanceObserveParams traitInstanceParams = 4;
+    string userId = 5;
+}
+
+message TraitOperationList {
+    TraitId traitId = 1;
+    repeated nestlabs.gateway.v1.TraitOperation traitOperations = 2;
+}
+
+message ObserveResponse {
+    message ObserveResponse {
+        repeated ResourceMeta resourceMetas = 1;
+        bool initialResourceMetasContinue = 2;
+        repeated TraitState traitStates = 3;
+        repeated TraitOperationList traitOperationLists = 4;
+        google.protobuf.Timestamp currentTime = 5;
+    }
+
+    repeated ObserveResponse observeResponse = 1;
+}
+
+service GatewayService {
+  rpc Observe (ObserveRequest) returns (stream ObserveResponse);
+}
