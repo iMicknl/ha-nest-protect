@@ -34,7 +34,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self.client = client
-        self.area = areas.get(self.bucket.value["where_id"])
+        self.area = areas.get(self.bucket.value.get("where_id"))
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
@@ -53,21 +53,39 @@ class NestEntity(Entity):
         label = self._device_label()
 
         if self.bucket.object_key.startswith("topaz."):
+            connections = set()
+            mac = self.bucket.value.get("wifi_mac_address")
+            if mac:
+                connections.add((dr.CONNECTION_NETWORK_MAC, mac))
+
+            identifier = (
+                self.bucket.value.get("serial_number") or self.bucket.object_key
+            )
+
+            structure_id = self.bucket.value.get("structure_id")
+            device_id = self.bucket.object_key.removeprefix("topaz.")
+
+            # Absent means unknown, not battery-powered
+            wired_or_battery = self.bucket.value.get("wired_or_battery")
+            if wired_or_battery is None:
+                hw_version = None
+            else:
+                hw_version = "Wired" if wired_or_battery == 0 else "Battery"
+
             return DeviceInfo(
-                connections={
-                    (dr.CONNECTION_NETWORK_MAC, self.bucket.value["wifi_mac_address"])
-                },
-                identifiers={(DOMAIN, self.bucket.value["serial_number"])},
+                connections=connections,
+                identifiers={(DOMAIN, identifier)},
                 name=f"Nest Protect ({label})" if label else "Nest Protect",
                 manufacturer="Google",
-                model=self.bucket.value["model"],
-                sw_version=self.bucket.value["software_version"],
-                hw_version=(
-                    "Wired" if self.bucket.value["wired_or_battery"] == 0 else "Battery"
-                ),
+                model=self.bucket.value.get("model"),
+                sw_version=self.bucket.value.get("software_version"),
+                hw_version=hw_version,
                 suggested_area=self.area,
-                configuration_url="https://home.nest.com/protect/"
-                + self.bucket.value["structure_id"],  # TODO change url based on device
+                configuration_url=(
+                    f"https://home.nest.com/protect/{structure_id}/settings/device/{device_id}#about"
+                    if structure_id
+                    else None
+                ),
             )
 
         if self.bucket.object_key.startswith("kryptonite."):
