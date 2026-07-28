@@ -65,6 +65,13 @@ class NestEntity(Entity):
             structure_id = self.bucket.value.get("structure_id")
             device_id = self.bucket.object_key.removeprefix("topaz.")
 
+            # Absent means unknown, not battery-powered
+            wired_or_battery = self.bucket.value.get("wired_or_battery")
+            if wired_or_battery is None:
+                hw_version = None
+            else:
+                hw_version = "Wired" if wired_or_battery == 0 else "Battery"
+
             return DeviceInfo(
                 connections=connections,
                 identifiers={(DOMAIN, identifier)},
@@ -72,11 +79,7 @@ class NestEntity(Entity):
                 manufacturer="Google",
                 model=self.bucket.value.get("model"),
                 sw_version=self.bucket.value.get("software_version"),
-                hw_version=(
-                    "Wired"
-                    if self.bucket.value.get("wired_or_battery") == 0
-                    else "Battery"
-                ),
+                hw_version=hw_version,
                 suggested_area=self.area,
                 configuration_url=(
                     f"https://home.nest.com/protect/{structure_id}/settings/device/{device_id}#about"
