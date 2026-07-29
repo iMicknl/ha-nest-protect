@@ -11,32 +11,155 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.nest_protect import (
     DOMAIN,
     HomeAssistantNestProtectData,
+    _async_mirror_credentials,
+    _async_observe_locks_loop,
     _async_subscribe_for_data,
+    async_remove_entry,
 )
-from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
-from custom_components.nest_protect.pynest.exceptions import NotAuthenticatedException
+from custom_components.nest_protect.const import (
+    CONF_AUTH_GENERATION,
+    CONF_PREVIOUS_AUTH_GENERATION,
+)
+from custom_components.nest_protect.pynest.exceptions import (
+    BadCredentialsException,
+    NestLockAuthException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN, ComponentSetup
 
 
-@pytest.mark.skip(
-    reason="Needs to be fixed. _async_subscribe_for_data should be cancelled when the component is unloaded."
-)
+async def test_stale_manager_cannot_mirror_credentials_after_reauth(hass):
+    """A late callback from the replaced manager must not poison the new login."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "cookies": "SID=new-login",
+            CONF_AUTH_GENERATION: "new-generation",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    await _async_mirror_credentials(
+        hass,
+        entry,
+        {
+            "cookies": "SID=old-rotated",
+            CONF_AUTH_GENERATION: "old-generation",
+        },
+    )
+
+    assert entry.data["cookies"] == "SID=new-login"
+    assert entry.data[CONF_AUTH_GENERATION] == "new-generation"
+
+
+async def test_crash_handoff_can_advance_the_config_entry_generation(hass):
+    """A durable reauth handoff must pass the normal generation fence."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": "SID=old",
+            CONF_AUTH_GENERATION: "old-generation",
+        },
+    )
+    entry.add_to_hass(hass)
+    client = MagicMock(
+        issue_token=ISSUE_TOKEN,
+        cookies="SID=old",
+        refresh_token=None,
+        refreshed_cookies=None,
+        auth=None,
+        nest_session=None,
+        transport_url=None,
+    )
+    client.get_access_token_from_cookies = AsyncMock(
+        side_effect=PynestException("stop after handoff")
+    )
+    store = MagicMock()
+    store.async_load = AsyncMock(
+        return_value={
+            CONF_AUTH_GENERATION: "new-generation",
+            CONF_PREVIOUS_AUTH_GENERATION: "old-generation",
+            "credentials": {"cookies": "SID=new-login"},
+        }
+    )
+    store.async_save = AsyncMock()
+
+    async def mirror_credentials(updates):
+        await _async_mirror_credentials(hass, entry, updates)
+
+    manager = NestSessionManager(
+        client,
+        store,
+        credential_generation="old-generation",
+        credential_update_callback=mirror_credentials,
+        retry_delays=(),
+    )
+
+    with pytest.raises(PynestException, match="stop after handoff"):
+        await manager.async_setup()
+
+    assert entry.data[CONF_AUTH_GENERATION] == "new-generation"
+    assert entry.data["cookies"] == "SID=new-login"
+    assert CONF_PREVIOUS_AUTH_GENERATION not in entry.data
+
+
+async def test_remove_entry_cleans_session_and_pending_reauth_stores(hass):
+    """Removing an entry must delete both stores that can contain credentials."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+
+    with patch(
+        "custom_components.nest_protect.Store.async_remove",
+        new_callable=AsyncMock,
+    ) as remove_store:
+        await async_remove_entry(hass, entry)
+
+    assert remove_store.await_count == 2
+
+
 async def test_init_with_refresh_token(
     hass,
     component_setup_with_refresh_token: ComponentSetup,
     config_entry_with_refresh_token: MockConfigEntry,
 ):
     """Test initialization."""
+    google_auth = MagicMock(access_token="google-token")
+    nest_session = MagicMock(
+        access_token="nest-token",
+        userid="user1",
+    )
+    nest_session.to_dict.return_value = {"access_token": "nest-token"}
+    first_data = MagicMock(
+        updated_buckets=[],
+        service_urls={"urls": {"transport_url": "https://transport.example.com"}},
+    )
+
     with (
         patch(
-            "custom_components.nest_protect.NestClient.get_access_token_from_refresh_token"
+            "custom_components.nest_protect.NestClient.get_access_token_from_refresh_token",
+            return_value=google_auth,
         ),
-        patch("custom_components.nest_protect.NestClient.authenticate"),
-        patch("custom_components.nest_protect.NestClient.get_first_data"),
+        patch(
+            "custom_components.nest_protect.NestClient.authenticate",
+            return_value=nest_session,
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.get_first_data",
+            return_value=first_data,
+        ),
         patch("custom_components.nest_protect.Store.async_load", return_value=None),
         patch("custom_components.nest_protect.Store.async_save"),
+        patch(
+            "custom_components.nest_protect._async_subscribe_for_data",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.nest_protect._async_observe_locks_loop",
+            new_callable=AsyncMock,
+        ),
     ):
         await component_setup_with_refresh_token()
 
@@ -82,23 +205,46 @@ async def test_authenticate_failure_with_refresh_token(
     assert config_entry_with_refresh_token.state is ConfigEntryState.SETUP_RETRY
 
 
-@pytest.mark.skip(
-    reason="Needs to be fixed. _async_subscribe_for_data should be cancelled when the component is unloaded."
-)
 async def test_init_with_cookies(
     hass,
     component_setup_with_cookies: ComponentSetup,
     config_entry_with_cookies: MockConfigEntry,
 ):
     """Test initialization."""
+    google_auth = MagicMock(access_token="google-token")
+    nest_session = MagicMock(
+        access_token="nest-token",
+        userid="user1",
+    )
+    nest_session.to_dict.return_value = {"access_token": "nest-token"}
+    first_data = MagicMock(
+        updated_buckets=[],
+        service_urls={"urls": {"transport_url": "https://transport.example.com"}},
+    )
+
     with (
         patch(
-            "custom_components.nest_protect.NestClient.get_access_token_from_cookies"
+            "custom_components.nest_protect.NestClient.get_access_token_from_cookies",
+            return_value=google_auth,
         ),
-        patch("custom_components.nest_protect.NestClient.authenticate"),
-        patch("custom_components.nest_protect.NestClient.get_first_data"),
+        patch(
+            "custom_components.nest_protect.NestClient.authenticate",
+            return_value=nest_session,
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.get_first_data",
+            return_value=first_data,
+        ),
         patch("custom_components.nest_protect.Store.async_load", return_value=None),
         patch("custom_components.nest_protect.Store.async_save"),
+        patch(
+            "custom_components.nest_protect._async_subscribe_for_data",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.nest_protect._async_observe_locks_loop",
+            new_callable=AsyncMock,
+        ),
     ):
         await component_setup_with_cookies()
 
@@ -303,18 +449,14 @@ async def test_startup_falls_through_on_401_from_persisted_session(
     assert config_entry_with_cookies.state is ConfigEntryState.LOADED
 
 
-def _make_subscriber_entry_data(
-    hass, entry, consecutive_failures=0, refreshed_cookies=None
-):
+def _make_subscriber_entry_data(hass, entry):
     """Build minimal HomeAssistantNestProtectData for subscriber tests."""
     client = MagicMock()
     client.nest_session = MagicMock(is_expired=lambda buffer_seconds=0: False)
-    client.refreshed_cookies = refreshed_cookies
 
     store = MagicMock()
     store.async_load = AsyncMock(return_value=None)
     sm = NestSessionManager(client, store)
-    sm._consecutive_failures = consecutive_failures
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices={},
@@ -333,8 +475,8 @@ def _make_subscribe_data():
     return data
 
 
-async def test_subscriber_timeout_resets_failure_counter(hass):
-    """TimeoutError resets failure counter — it's not an auth failure."""
+async def test_subscriber_timeout_retries_without_reauthentication(hass):
+    """A long-poll timeout is normal and must not start reauthentication."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -344,20 +486,22 @@ async def test_subscriber_timeout_resets_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=2)
+    client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(side_effect=TimeoutError())
 
     with (
-        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch("custom_components.nest_protect._register_subscribe_task") as register,
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(entry, "async_start_reauth") as start_reauth,
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 0
+    register.assert_called_once()
+    start_reauth.assert_not_called()
 
 
-async def test_subscriber_401_accumulates_failure_counter(hass):
-    """401 path must not reset the counter — repeated 401s should reach MAX_AUTH_FAILURES."""
+async def test_subscriber_401_recovers_the_exact_rejected_session(hass):
+    """A concurrent refresh is de-duplicated against the session that failed."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -367,22 +511,24 @@ async def test_subscriber_401_accumulates_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.nest_session.access_token = "rejected-token"
+    rejected_session = client.nest_session
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task"),
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
-        patch.object(sm, "async_refresh_session", new_callable=AsyncMock),
+        patch.object(sm, "async_refresh_session", new_callable=AsyncMock) as refresh,
         patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 1
+    refresh.assert_awaited_once_with(rejected_session=rejected_session)
 
 
-async def test_subscriber_401_persists_refreshed_cookies(hass):
-    """401 path persists refreshed cookies into the config entry."""
+async def test_subscriber_bad_credentials_requests_reauth_without_escaping(hass):
+    """Exhausted provider rejection must stop the subscriber and start reauth."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -392,26 +538,64 @@ async def test_subscriber_401_persists_refreshed_cookies(hass):
         },
     )
     entry.add_to_hass(hass)
-    new_cookies = "SID=new-sid; HSID=new-hsid"
-    client, sm = _make_subscriber_entry_data(hass, entry, refreshed_cookies=new_cookies)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.nest_session.access_token = "rejected-token"
+    client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
+    sm.set_reauthentication_callback(lambda: entry.async_start_reauth(hass))
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as register,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(
+            sm,
+            "async_refresh_session",
+            new_callable=AsyncMock,
+            side_effect=BadCredentialsException("USER_LOGGED_OUT"),
+        ),
+        patch.object(entry, "async_start_reauth") as start_reauth,
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    start_reauth.assert_called_once_with(hass)
+    register.assert_not_called()
+
+
+async def test_subscriber_transient_refresh_failure_retries_without_reauth(hass):
+    """A transient coordinator failure must keep the entry and retry later."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.nest_session.access_token = "rejected-token"
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     with (
-        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch("custom_components.nest_protect._register_subscribe_task") as register,
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
-        patch.object(sm, "async_refresh_session", new_callable=AsyncMock),
+        patch.object(
+            sm,
+            "async_refresh_session",
+            new_callable=AsyncMock,
+            side_effect=PynestException("temporary"),
+        ),
+        patch.object(entry, "async_start_reauth") as start_reauth,
         patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert entry.data.get(CONF_COOKIES) == new_cookies
-    # In-memory client must also be updated so the next refresh in this HA
-    # session uses fresh cookies (regression guard for bc05166).
-    assert client.cookies == new_cookies
+    start_reauth.assert_not_called()
+    register.assert_called_once()
 
 
-async def test_subscriber_ensure_session_persists_refreshed_cookies(hass):
-    """Proactive session refresh persists refreshed cookies before subscribing."""
+async def test_lock_observer_recovers_the_exact_rejected_session(hass):
+    """Lock and REST failures for one session share one recovery generation."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -421,72 +605,27 @@ async def test_subscriber_ensure_session_persists_refreshed_cookies(hass):
         },
     )
     entry.add_to_hass(hass)
-    new_cookies = "SID=new-sid; HSID=new-hsid"
-    client, sm = _make_subscriber_entry_data(hass, entry, refreshed_cookies=new_cookies)
-    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.nest_session.access_token = "rejected-token"
+    rejected_session = client.nest_session
 
-    with (
-        patch("custom_components.nest_protect._register_subscribe_task"),
-        patch.object(sm, "ensure_session", new_callable=AsyncMock),
-    ):
-        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+    async def rejected_observer():
+        raise NestLockAuthException("401")
+        yield
 
-    assert entry.data.get(CONF_COOKIES) == new_cookies
-    assert client.cookies == new_cookies
+    async def empty_observer():
+        if False:
+            yield
 
-
-async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
-    """Repeated 401s should reach MAX_AUTH_FAILURES and trigger reauth."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            "issue_token": ISSUE_TOKEN,
-            "cookies": COOKIES,
-            "account_type": "production",
-        },
+    grpc_client = hass.data[DOMAIN][entry.entry_id].grpc_lock_client
+    grpc_client.observe_locks = MagicMock(
+        side_effect=[rejected_observer(), empty_observer()]
     )
-    entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
-    client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
-
-    # Google still accepts the cookies, so the refresh itself succeeds while Nest
-    # keeps rejecting the session. async_refresh_session is deliberately not
-    # mocked here: it must not reset the failure counter it was called to recover.
-    client.auth = MagicMock(is_expired=lambda: False)
-    client.authenticate = AsyncMock(return_value=MagicMock(to_dict=dict))
-    sm._store.async_save = AsyncMock()
 
     with (
-        patch("custom_components.nest_protect._register_subscribe_task"),
-        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(sm, "async_refresh_session", new_callable=AsyncMock) as refresh,
         patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
-        patch.object(entry, "async_start_reauth") as mock_reauth,
     ):
-        for _ in range(MAX_AUTH_FAILURES):
-            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+        await _async_observe_locks_loop(hass, entry)
 
-    assert sm.consecutive_failures == MAX_AUTH_FAILURES
-    mock_reauth.assert_called_once_with(hass)
-
-
-async def test_subscriber_success_resets_failure_counter(hass):
-    """A successful subscribe call must reset the failure counter to zero."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            "issue_token": ISSUE_TOKEN,
-            "cookies": COOKIES,
-            "account_type": "production",
-        },
-    )
-    entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=2)
-    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
-
-    with (
-        patch("custom_components.nest_protect._register_subscribe_task"),
-        patch.object(sm, "ensure_session", new_callable=AsyncMock),
-    ):
-        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
-
-    assert sm.consecutive_failures == 0
+    refresh.assert_awaited_once_with(rejected_session=rejected_session)
