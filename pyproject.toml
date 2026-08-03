@@ -15,7 +15,7 @@ test = [
     "pytest-homeassistant-custom-component>=0.13.348",
     "pytest-socket>=0.7",
     "pytest-timeout>=2.3",
-    "protobuf>=6.31.1",
+    "protobuf>=7.35.1",
     "googleapis-common-protos>=1.56.0",
 ]
 
