@@ -231,11 +231,14 @@ class NestSessionManager:
                 return False
         elif (
             not force
-            and (time.time() - self._google_refreshed_at)
+            and 0
+            <= (time.time() - self._google_refreshed_at)
             < GOOGLE_REFRESH_INTERVAL_SECONDS
         ):
             # No token in memory yet, but the cookies were exercised recently
-            # enough for a restored session to keep skipping Google.
+            # enough for a restored session to keep skipping Google. A negative
+            # elapsed time means the clock went backwards, which must not
+            # suppress the refresh until it catches up.
             return False
 
         LOGGER.debug("Retrieving new Google access token")
@@ -253,52 +256,57 @@ class NestSessionManager:
     def _notify_credentials_refreshed(self, refreshed: bool) -> None:
         """Let the caller persist cookies Google rotated during a refresh.
 
-        Called outside the lock: the callback reaches into Home Assistant to
-        update the config entry and has no business holding up other refreshes.
+        Called outside the lock, and from a finally block: the callback reaches
+        into Home Assistant to update the config entry, so it has no business
+        holding up other refreshes — and once Google has rotated the cookies a
+        later failure must not strand the superseded set in the config entry.
         """
         if refreshed and self.on_credentials_refreshed:
             self.on_credentials_refreshed()
 
     async def ensure_session(self) -> None:
         """Ensure valid Google credentials and a valid Nest session."""
-        # Serialised as a whole: the subscriber, entities and the lock observer
-        # share one manager. Concurrent refreshes would each rotate the cookies
-        # while only the last response survives — losing the value Google now
-        # expects — and would authenticate against Nest twice over.
-        async with self._refresh_lock:
-            # Keep the Google cookies warm even while the Nest session is still
-            # valid — Nest issues sessions lasting weeks, far longer than
-            # Google honours a given cookie set.
-            refreshed = await self._async_refresh_google_credentials(force=False)
+        refreshed = False
+        try:
+            # Serialised as a whole: the subscriber, entities and the lock
+            # observer share one manager. Concurrent refreshes would each
+            # rotate the cookies while only the last response survives —
+            # losing the value Google now expects — and would authenticate
+            # against Nest twice over.
+            async with self._refresh_lock:
+                # Keep the Google cookies warm even while the Nest session is
+                # still valid — Nest issues sessions lasting weeks, far longer
+                # than Google honours a given cookie set.
+                refreshed = await self._async_refresh_google_credentials(force=False)
 
-            # Re-read validity now the lock is held: a caller that waited here
-            # may find the session it was about to replace already renewed.
-            nest_session_valid = self._client.nest_session is not None and not (
-                self._client.nest_session.is_expired(
-                    buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
+                # Re-read validity now the lock is held: a caller that waited
+                # here may find the session it was about to replace renewed.
+                nest_session_valid = self._client.nest_session is not None and not (
+                    self._client.nest_session.is_expired(
+                        buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
+                    )
                 )
-            )
 
-            if not nest_session_valid:
-                # Persists the session and the refresh clock together.
-                await self._async_refresh_nest_session()
-            elif refreshed:
-                await self._async_persist(self._client.nest_session)
-
-        self._notify_credentials_refreshed(refreshed)
+                if not nest_session_valid:
+                    # Persists the session and the refresh clock together.
+                    await self._async_refresh_nest_session()
+                elif refreshed:
+                    await self._async_persist(self._client.nest_session)
+        finally:
+            self._notify_credentials_refreshed(refreshed)
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
 
         Returns True when a fresh Nest session was obtained and persisted.
         """
-        async with self._refresh_lock:
-            refreshed = await self._async_refresh_google_credentials(force=True)
-            renewed = await self._async_refresh_nest_session()
-
-        self._notify_credentials_refreshed(refreshed)
-
-        return renewed
+        refreshed = False
+        try:
+            async with self._refresh_lock:
+                refreshed = await self._async_refresh_google_credentials(force=True)
+                return await self._async_refresh_nest_session()
+        finally:
+            self._notify_credentials_refreshed(refreshed)
 
     async def _async_refresh_nest_session(self) -> bool:
         """Re-authenticate against Nest and persist. Caller must hold the lock."""

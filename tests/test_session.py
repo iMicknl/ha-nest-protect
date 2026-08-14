@@ -770,3 +770,98 @@ async def test_unchanged_expired_token_is_not_reported_as_refreshed():
     assert await manager.ensure_google_credentials(force=True) is False
     manager.on_credentials_refreshed.assert_not_called()
     store.async_save.assert_not_called()
+
+
+def _rotation_then_nest_failure_manager():
+    """Build a manager whose Google refresh succeeds but Nest then fails."""
+    stale_auth = MagicMock(access_token="stale")
+    stale_auth.is_expired = MagicMock(return_value=True)
+
+    client = MagicMock()
+    client.auth = stale_auth
+    client.nest_session = _make_nest_response(expired=True)
+    client.transport_url = None
+
+    async def rotate_credentials():
+        fresh_auth = MagicMock(access_token="fresh")
+        fresh_auth.is_expired = MagicMock(return_value=False)
+        client.auth = fresh_auth
+        client.refreshed_cookies = "SID=new"
+
+    client.get_access_token = AsyncMock(side_effect=rotate_credentials)
+    client.authenticate = AsyncMock(side_effect=PynestException("Nest unavailable"))
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    manager.on_credentials_refreshed = MagicMock()
+    return manager, client
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_notifies_rotation_when_nest_auth_fails():
+    """Cookies rotated before a Nest failure still reach the config entry.
+
+    Otherwise the in-memory client holds the new cookies while the entry keeps
+    the superseded set, and a restart reproduces the very USER_LOGGED_OUT this
+    is meant to prevent.
+    """
+    manager, _client = _rotation_then_nest_failure_manager()
+
+    with pytest.raises(PynestException):
+        await manager.ensure_session()
+
+    manager.on_credentials_refreshed.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_notifies_rotation_when_nest_auth_fails():
+    """Same guarantee on the 401 recovery path."""
+    manager, _client = _rotation_then_nest_failure_manager()
+
+    with pytest.raises(PynestException):
+        await manager.async_refresh_session()
+
+    manager.on_credentials_refreshed.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_lock_is_released_after_nest_auth_failure():
+    """A failed refresh must not strand the lock and wedge every later one."""
+    manager, client = _rotation_then_nest_failure_manager()
+
+    with pytest.raises(PynestException):
+        await manager.async_refresh_session()
+
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+
+    assert await asyncio.wait_for(manager.async_refresh_session(), timeout=1) is True
+
+
+@pytest.mark.asyncio
+async def test_clock_rollback_does_not_suppress_due_refresh():
+    """A backwards system clock must not park the refresh indefinitely."""
+    client = MagicMock()
+    client.auth = None
+    client.nest_session = _make_nest_response(expired=False)
+    client.transport_url = None
+
+    async def refresh_credentials():
+        fresh_auth = MagicMock(access_token="fresh")
+        fresh_auth.is_expired = MagicMock(return_value=False)
+        client.auth = fresh_auth
+
+    client.get_access_token = AsyncMock(side_effect=refresh_credentials)
+    client.authenticate = AsyncMock()
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    # Recorded before the clock jumped backwards.
+    manager._google_refreshed_at = time.time() + 10_000
+
+    await manager.ensure_session()
+
+    client.get_access_token.assert_called_once()
