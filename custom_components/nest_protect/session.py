@@ -212,9 +212,11 @@ class NestSessionManager:
         which point Google has moved on and invalidates the session
         (USER_LOGGED_OUT) the next time they are presented.
 
-        The last refresh time is persisted, so a restart does not reset the
-        clock. force skips that interval but still reuses a valid in-memory
-        token; it is for the paths recovering from a rejected session.
+        Records the refresh time in memory; ensure_session() and
+        async_refresh_session() are what write it to the store alongside the
+        Nest session. force skips the interval but still reuses a valid
+        in-memory token; it is for the paths recovering from a rejected
+        session.
 
         Returns True when the credentials were actually refreshed.
         """

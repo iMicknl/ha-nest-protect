@@ -666,11 +666,15 @@ async def test_refresh_notifies_caller_to_persist_rotated_cookies():
     client.auth = expired_auth
     client.transport_url = None
     client.authenticate = AsyncMock()
+    # Explicitly nothing rotated yet, so the assertion below can't pass on an
+    # auto-created truthy attribute.
+    client.refreshed_cookies = None
 
     def refresh(*args, **kwargs):
         fresh = MagicMock(access_token="fresh")
         fresh.is_expired = MagicMock(return_value=False)
         client.auth = fresh
+        client.refreshed_cookies = "SID=rotated"
 
     client.get_access_token = AsyncMock(side_effect=refresh)
 
