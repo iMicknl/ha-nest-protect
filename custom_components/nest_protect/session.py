@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import time
+
 from homeassistant.helpers.storage import Store
 
 from .const import (
     BACKOFF_INTERVALS,
+    GOOGLE_REFRESH_INTERVAL_SECONDS,
     LOGGER,
     MAX_AUTH_FAILURES,
     SESSION_EXPIRY_BUFFER_SECONDS,
@@ -33,6 +36,7 @@ class NestSessionManager:
         self._client = client
         self._store = store
         self._consecutive_failures: int = 0
+        self._google_refreshed_at: float = 0.0
 
     @property
     def refreshed_cookies(self) -> str | None:
@@ -86,6 +90,11 @@ class NestSessionManager:
 
         if not persisted or not persisted.get("nest_session"):
             return None
+
+        # A store written before this key existed says nothing about how stale
+        # the cookies are; treat it as fresh so the existing "skip Google
+        # entirely" startup path is preserved. The next hourly check refreshes.
+        self._google_refreshed_at = persisted.get("google_refreshed_at") or time.time()
 
         restored_session = NestResponse.from_dict(persisted["nest_session"])
 
@@ -149,10 +158,53 @@ class NestSessionManager:
         else:
             return None
 
+        self._google_refreshed_at = time.time()
+
         return await self._client.authenticate(auth.access_token)
 
+    async def ensure_google_credentials(self, *, force: bool = False) -> None:
+        """Refresh the Google access token when it is due.
+
+        Deliberately independent of Nest session validity. Google rotates the
+        auth cookies on every token refresh and only honours the previous
+        values for a limited grace window, so the stored cookies have to be
+        exercised on their own cadence. Gating this on the Nest session instead
+        leaves them untouched for that session's full lifetime — weeks — by
+        which point Google has moved on and invalidates the session
+        (USER_LOGGED_OUT) the next time they are presented.
+
+        The last refresh time is persisted, so a restart does not reset the
+        clock and a still-valid persisted session can keep skipping Google.
+        Pass force to bypass that interval when recovering from a rejection.
+        """
+        if self._client.auth:
+            if not self._client.auth.is_expired():
+                return
+        elif (
+            not force
+            and (time.time() - self._google_refreshed_at)
+            < GOOGLE_REFRESH_INTERVAL_SECONDS
+        ):
+            # No token in memory yet, but the cookies were exercised recently
+            # enough that a restored session can keep skipping Google.
+            return
+
+        LOGGER.debug("Retrieving new Google access token")
+        await self._client.get_access_token()
+        self._google_refreshed_at = time.time()
+
+        # Record the new refresh time so a restart doesn't reset the clock.
+        # Only possible once there is a session to persist alongside it.
+        if self._client.nest_session:
+            await self._async_persist(self._client.nest_session)
+
     async def ensure_session(self) -> None:
-        """Ensure a valid Nest session exists, refreshing if needed."""
+        """Ensure valid Google credentials and a valid Nest session."""
+        # Keep the Google cookies warm even while the Nest session is still
+        # valid — Nest issues sessions lasting weeks, far longer than Google
+        # honours a given cookie set.
+        await self.ensure_google_credentials()
+
         if self._client.nest_session and not self._client.nest_session.is_expired(
             buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
         ):
@@ -165,9 +217,7 @@ class NestSessionManager:
 
         Returns True when a fresh Nest session was obtained and persisted.
         """
-        if not self._client.auth or self._client.auth.is_expired():
-            LOGGER.debug("Retrieving new Google access token")
-            await self._client.get_access_token()
+        await self.ensure_google_credentials(force=True)
 
         if not self._client.auth:
             return False
@@ -184,5 +234,6 @@ class NestSessionManager:
             {
                 "nest_session": nest_session.to_dict(),
                 "transport_url": self._client.transport_url,
+                "google_refreshed_at": self._google_refreshed_at,
             }
         )

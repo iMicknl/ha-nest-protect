@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -202,13 +203,128 @@ async def test_no_persisted_session_uses_cookies():
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_valid():
-    """ensure_session is a no-op when session is still valid."""
+async def test_stale_persisted_refresh_time_rewarms_cookies_after_restart():
+    """A restored session whose cookies are overdue refreshes them immediately.
+
+    The refresh clock is persisted precisely so that restarting HA cannot keep
+    postponing the refresh indefinitely.
+    """
     valid_session = _make_nest_response(expired=False)
 
     client = MagicMock()
     client.nest_session = valid_session
     client.auth = None
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
+    client.transport_url = None
+    client.get_access_token = AsyncMock()
+    client.get_first_data = AsyncMock(return_value=_make_first_data())
+    client.authenticate = AsyncMock()
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+    store.async_load = AsyncMock(
+        return_value={
+            "nest_session": valid_session.to_dict(),
+            "transport_url": "https://transport.example.com",
+            # Last exercised two days ago — long past the refresh interval.
+            "google_refreshed_at": time.time() - 2 * 24 * 60 * 60,
+        }
+    )
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await manager.async_setup()
+    client.get_access_token.assert_not_called()
+
+    await manager.ensure_session()
+
+    client.get_access_token.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_recent_persisted_refresh_time_skips_google_after_restart():
+    """A restored session whose cookies are still warm does not call Google."""
+    valid_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = valid_session
+    client.auth = None
+    client.transport_url = None
+    client.get_access_token = AsyncMock()
+    client.get_first_data = AsyncMock(return_value=_make_first_data())
+    client.authenticate = AsyncMock()
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+    store.async_load = AsyncMock(
+        return_value={
+            "nest_session": valid_session.to_dict(),
+            "transport_url": "https://transport.example.com",
+            "google_refreshed_at": time.time() - 60,
+        }
+    )
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await manager.async_setup()
+    await manager.ensure_session()
+
+    client.get_access_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_ignores_interval_after_restart():
+    """async_refresh_session always reaches Google, even inside the interval.
+
+    It is the 401 recovery path, so throttling it would leave a restored
+    session that Nest has rejected with no way back.
+    """
+    new_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=False)
+    client.auth = None
+    client.transport_url = None
+    client.get_first_data = AsyncMock(return_value=_make_first_data())
+    client.authenticate = AsyncMock(return_value=new_session)
+
+    def set_auth(*args, **kwargs):
+        client.auth = MagicMock(access_token="new-google-token")
+        client.auth.is_expired = MagicMock(return_value=False)
+
+    client.get_access_token = AsyncMock(side_effect=set_auth)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+    store.async_load = AsyncMock(
+        return_value={
+            "nest_session": client.nest_session.to_dict(),
+            "transport_url": "https://transport.example.com",
+            # Well inside the interval — ensure_session would skip Google here.
+            "google_refreshed_at": time.time() - 60,
+        }
+    )
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await manager.async_setup()
+
+    assert await manager.async_refresh_session() is True
+    client.get_access_token.assert_called_once()
+    client.authenticate.assert_called_once_with("new-google-token")
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_valid():
+    """ensure_session is a no-op when both the Nest and Google tokens are valid."""
+    valid_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = valid_session
+    client.auth = MagicMock(access_token="existing-google-token")
+    client.auth.is_expired = MagicMock(return_value=False)
     client.refresh_token = "test-refresh-token"
     client.get_access_token = AsyncMock()
     client.authenticate = AsyncMock()
@@ -224,6 +340,42 @@ async def test_ensure_session_valid():
     client.get_access_token.assert_not_called()
     client.authenticate.assert_not_called()
     store.async_save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_session_refreshes_google_token_while_nest_session_valid():
+    """An expired Google token is refreshed even while the Nest session is valid.
+
+    Regression test: Nest issues sessions lasting weeks, so gating the Google
+    refresh on Nest session expiry left the auth cookies untouched for that
+    whole period. Google rotates them on a far shorter cycle, so by the time
+    they were next used the session had been invalidated (USER_LOGGED_OUT),
+    forcing a re-authentication every day or two.
+    """
+    valid_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = valid_session
+    client.auth = MagicMock(access_token="stale-google-token")
+    client.auth.is_expired = MagicMock(return_value=True)
+    client.refresh_token = "test-refresh-token"
+    client.get_access_token = AsyncMock()
+    client.authenticate = AsyncMock()
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await manager.ensure_session()
+
+    # The Google token — and with it the cookies — must be refreshed.
+    client.get_access_token.assert_called_once()
+    # But the still-valid Nest session must not be needlessly replaced.
+    client.authenticate.assert_not_called()
+    # The refresh time is persisted so a restart doesn't reset the clock.
+    assert store.async_save.call_count == 1
+    assert store.async_save.call_args[0][0]["google_refreshed_at"] > 0
 
 
 @pytest.mark.asyncio
