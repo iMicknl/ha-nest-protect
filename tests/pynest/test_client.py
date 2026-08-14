@@ -1,6 +1,6 @@
 """Tests for NestClient."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import ClientSession, web
@@ -219,7 +219,7 @@ async def test_get_access_token_prefers_cookies_over_legacy_refresh_token():
     Regression test: preferring the refresh token meant the cookies were never
     exercised, so they went stale and Google eventually rejected the session.
     """
-    nest_client = NestClient(session=None)
+    nest_client = NestClient(session=MagicMock())
     nest_client.issue_token = "https://accounts.google.com/o/oauth2/iframerpc"
     nest_client.cookies = "SID=current"
     nest_client.refresh_token = "obsolete-legacy-token"
@@ -238,7 +238,7 @@ async def test_get_access_token_prefers_cookies_over_legacy_refresh_token():
 
 async def test_get_access_token_falls_back_to_refresh_token():
     """Entries with only a refresh token keep using it."""
-    nest_client = NestClient(session=None)
+    nest_client = NestClient(session=MagicMock())
     nest_client.issue_token = None
     nest_client.cookies = None
     nest_client.refresh_token = "legacy-token"

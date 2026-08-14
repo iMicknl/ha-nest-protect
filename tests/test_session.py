@@ -12,6 +12,7 @@ import pytest
 from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
 from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
+    PynestException,
 )
 from custom_components.nest_protect.pynest.models import NestResponse
 from custom_components.nest_protect.session import NestSessionManager
@@ -360,8 +361,13 @@ async def test_ensure_session_refreshes_google_token_while_nest_session_valid():
     client.auth = MagicMock(access_token="stale-google-token")
     client.auth.is_expired = MagicMock(return_value=True)
     client.refresh_token = "test-refresh-token"
-    client.get_access_token = AsyncMock()
     client.authenticate = AsyncMock()
+
+    def issue_fresh_token(*args, **kwargs):
+        client.auth = MagicMock(access_token="fresh-google-token")
+        client.auth.is_expired = MagicMock(return_value=False)
+
+    client.get_access_token = AsyncMock(side_effect=issue_fresh_token)
 
     store = MagicMock()
     store.async_save = AsyncMock()
@@ -674,3 +680,93 @@ async def test_refresh_notifies_caller_to_persist_rotated_cookies():
     await manager.ensure_session()
 
     manager.on_credentials_refreshed.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_expired_session_coalesces_nest_authentication():
+    """The whole refresh is single-flight, not just the Google half.
+
+    Two callers finding an expired Nest session would otherwise authenticate
+    twice and write twice, and a reordered response could leave the client
+    holding the session Nest had already superseded.
+    """
+    fresh_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=True)
+    client.auth = MagicMock(access_token="google-token")
+    client.auth.is_expired = MagicMock(return_value=False)
+    client.transport_url = None
+
+    async def authenticate(_token):
+        await asyncio.sleep(0)
+        return fresh_session
+
+    client.authenticate = AsyncMock(side_effect=authenticate)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await asyncio.gather(manager.ensure_session(), manager.ensure_session())
+
+    assert client.authenticate.call_count == 1
+    assert store.async_save.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_rotation_is_notified_before_nest_authentication():
+    """Cookies rotated at startup survive a later failure talking to Nest.
+
+    Google has already moved on by the time authenticate() runs, so a retry
+    starting from the superseded cookies would be rejected.
+    """
+    client = MagicMock()
+    client.nest_session = None
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=old"
+    client.refresh_token = None
+    client.transport_url = None
+
+    def rotate_cookies(*args, **kwargs):
+        client.refreshed_cookies = "SID=new"
+        client.cookies = "SID=new"
+        return MagicMock(access_token="google-token")
+
+    client.get_access_token_from_cookies = AsyncMock(side_effect=rotate_cookies)
+    client.authenticate = AsyncMock(side_effect=PynestException("Nest unavailable"))
+
+    store = MagicMock()
+    store.async_load = AsyncMock(return_value=None)
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    manager.on_credentials_refreshed = MagicMock()
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    manager.on_credentials_refreshed.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_unchanged_expired_token_is_not_reported_as_refreshed():
+    """A token request that changed nothing must not advance the clock."""
+    expired_auth = MagicMock(access_token="expired")
+    expired_auth.is_expired = MagicMock(return_value=True)
+
+    client = MagicMock()
+    client.nest_session = None
+    client.auth = expired_auth
+    client.get_access_token = AsyncMock(return_value=expired_auth)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    manager.on_credentials_refreshed = MagicMock()
+
+    assert await manager.ensure_google_credentials(force=True) is False
+    manager.on_credentials_refreshed.assert_not_called()
+    store.async_save.assert_not_called()
