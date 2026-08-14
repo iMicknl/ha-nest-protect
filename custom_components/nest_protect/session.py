@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
+from collections.abc import Callable
 
 from homeassistant.helpers.storage import Store
 
@@ -37,6 +39,12 @@ class NestSessionManager:
         self._store = store
         self._consecutive_failures: int = 0
         self._google_refreshed_at: float = 0.0
+        self._google_refresh_lock = asyncio.Lock()
+
+        # Invoked after Google credentials are refreshed, so the caller can
+        # persist the cookies Google rotated during it. Every refresh path
+        # runs through here, which the individual call sites did not.
+        self.on_credentials_refreshed: Callable[[], None] | None = None
 
     @property
     def refreshed_cookies(self) -> str | None:
@@ -91,10 +99,8 @@ class NestSessionManager:
         if not persisted or not persisted.get("nest_session"):
             return None
 
-        # A store written before this key existed says nothing about how stale
-        # the cookies are; treat it as fresh so the existing "skip Google
-        # entirely" startup path is preserved. The next hourly check refreshes.
-        self._google_refreshed_at = persisted.get("google_refreshed_at") or time.time()
+        stored_refreshed_at = persisted.get("google_refreshed_at")
+        self._google_refreshed_at = self._coerce_refresh_time(stored_refreshed_at)
 
         restored_session = NestResponse.from_dict(persisted["nest_session"])
 
@@ -114,7 +120,7 @@ class NestSessionManager:
 
         # Validate the session is actually accepted by Nest
         try:
-            return await self._client.get_first_data(
+            first_data = await self._client.get_first_data(
                 restored_session.access_token, restored_session.userid
             )
         except (NotAuthenticatedException, PynestException):  # fmt: skip
@@ -123,6 +129,14 @@ class NestSessionManager:
             )
             self._client.nest_session = None
             return None
+
+        if stored_refreshed_at != self._google_refreshed_at:
+            # Write the assumed clock straight back, otherwise every restart
+            # would assume "fresh" again and could postpone the refresh
+            # indefinitely on a frequently restarted instance.
+            await self._async_persist(restored_session)
+
+        return first_data
 
     async def _async_authenticate_and_fetch(self) -> FirstDataAPIResponse | None:
         """Authenticate with credentials and fetch first data.
@@ -162,7 +176,25 @@ class NestSessionManager:
 
         return await self._client.authenticate(auth.access_token)
 
-    async def ensure_google_credentials(self, *, force: bool = False) -> None:
+    @staticmethod
+    def _coerce_refresh_time(value: object) -> float:
+        """Normalise a persisted refresh timestamp into a usable value."""
+        now = time.time()
+
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            # Missing (store predates this key) or corrupt. Assume the cookies
+            # are fresh so the "skip Google entirely" startup path survives;
+            # the caller writes this assumption back to make it durable.
+            return now
+
+        if value > now:
+            # A future timestamp — clock skew or a corrupt store — must not
+            # suppress the refresh until the wall clock catches up.
+            return now
+
+        return float(value)
+
+    async def ensure_google_credentials(self, *, force: bool = False) -> bool:
         """Refresh the Google access token when it is due.
 
         Deliberately independent of Nest session validity. Google rotates the
@@ -174,43 +206,61 @@ class NestSessionManager:
         (USER_LOGGED_OUT) the next time they are presented.
 
         The last refresh time is persisted, so a restart does not reset the
-        clock and a still-valid persisted session can keep skipping Google.
-        Pass force to bypass that interval when recovering from a rejection.
+        clock. force skips that interval but still reuses a valid in-memory
+        token; it is for the paths recovering from a rejected session.
+
+        Returns True when the credentials were actually refreshed.
         """
-        if self._client.auth:
-            if not self._client.auth.is_expired():
-                return
-        elif (
-            not force
-            and (time.time() - self._google_refreshed_at)
-            < GOOGLE_REFRESH_INTERVAL_SECONDS
-        ):
-            # No token in memory yet, but the cookies were exercised recently
-            # enough that a restored session can keep skipping Google.
-            return
+        # Serialised: the subscriber, entities and the lock observer share one
+        # manager, and concurrent refreshes would each rotate the cookies while
+        # only the last response survives — losing the cookie Google expects.
+        async with self._google_refresh_lock:
+            if self._client.auth:
+                if not self._client.auth.is_expired():
+                    return False
+            elif (
+                not force
+                and (time.time() - self._google_refreshed_at)
+                < GOOGLE_REFRESH_INTERVAL_SECONDS
+            ):
+                # No token in memory yet, but the cookies were exercised
+                # recently enough for a restored session to keep skipping
+                # Google.
+                return False
 
-        LOGGER.debug("Retrieving new Google access token")
-        await self._client.get_access_token()
-        self._google_refreshed_at = time.time()
+            LOGGER.debug("Retrieving new Google access token")
+            await self._client.get_access_token()
 
-        # Record the new refresh time so a restart doesn't reset the clock.
-        # Only possible once there is a session to persist alongside it.
-        if self._client.nest_session:
-            await self._async_persist(self._client.nest_session)
+            if not self._client.auth:
+                # No usable credentials — don't record a refresh that the
+                # cookies never actually went through.
+                return False
+
+            self._google_refreshed_at = time.time()
+
+        if self.on_credentials_refreshed:
+            self.on_credentials_refreshed()
+
+        return True
 
     async def ensure_session(self) -> None:
         """Ensure valid Google credentials and a valid Nest session."""
+        nest_session_valid = self._client.nest_session is not None and not (
+            self._client.nest_session.is_expired(
+                buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
+            )
+        )
+
         # Keep the Google cookies warm even while the Nest session is still
         # valid — Nest issues sessions lasting weeks, far longer than Google
         # honours a given cookie set.
-        await self.ensure_google_credentials()
+        refreshed = await self.ensure_google_credentials()
 
-        if self._client.nest_session and not self._client.nest_session.is_expired(
-            buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
-        ):
-            return
-
-        await self.async_refresh_session()
+        if not nest_session_valid:
+            # Persists the session and the refresh clock together.
+            await self.async_refresh_session()
+        elif refreshed:
+            await self._async_persist(self._client.nest_session)
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.

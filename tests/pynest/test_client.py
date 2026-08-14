@@ -211,3 +211,45 @@ def test_merge_cookies_empty_new():
     original = "SID=old; HSID=val"
     result = merge_cookies(original, {})
     assert result == original
+
+
+async def test_get_access_token_prefers_cookies_over_legacy_refresh_token():
+    """Cookies win when a re-authenticated entry still carries a refresh token.
+
+    Regression test: preferring the refresh token meant the cookies were never
+    exercised, so they went stale and Google eventually rejected the session.
+    """
+    nest_client = NestClient(session=None)
+    nest_client.issue_token = "https://accounts.google.com/o/oauth2/iframerpc"
+    nest_client.cookies = "SID=current"
+    nest_client.refresh_token = "obsolete-legacy-token"
+
+    with (
+        patch.object(NestClient, "get_access_token_from_cookies") as mock_cookie_auth,
+        patch.object(
+            NestClient, "get_access_token_from_refresh_token"
+        ) as mock_token_auth,
+    ):
+        await nest_client.get_access_token()
+
+    mock_cookie_auth.assert_called_once()
+    mock_token_auth.assert_not_called()
+
+
+async def test_get_access_token_falls_back_to_refresh_token():
+    """Entries with only a refresh token keep using it."""
+    nest_client = NestClient(session=None)
+    nest_client.issue_token = None
+    nest_client.cookies = None
+    nest_client.refresh_token = "legacy-token"
+
+    with (
+        patch.object(NestClient, "get_access_token_from_cookies") as mock_cookie_auth,
+        patch.object(
+            NestClient, "get_access_token_from_refresh_token"
+        ) as mock_token_auth,
+    ):
+        await nest_client.get_access_token()
+
+    mock_cookie_auth.assert_not_called()
+    mock_token_auth.assert_called_once()

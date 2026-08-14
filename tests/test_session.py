@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import time
 from unittest.mock import AsyncMock, MagicMock
@@ -521,3 +522,155 @@ async def test_backoff_interval_increases():
     for _ in range(10):
         manager.record_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[-1]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ensure_session_coalesces_google_refresh():
+    """Concurrent callers must not each rotate the cookies.
+
+    The subscriber, entities and the lock observer share one manager. Two
+    refreshes in flight would both rotate, and only the last response would be
+    kept — discarding the cookie Google now expects.
+    """
+    expired_auth = MagicMock(access_token="stale")
+    expired_auth.is_expired = MagicMock(return_value=True)
+
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=False)
+    client.auth = expired_auth
+    client.transport_url = None
+    client.authenticate = AsyncMock()
+
+    async def refresh(*args, **kwargs):
+        await asyncio.sleep(0)
+        fresh = MagicMock(access_token="fresh")
+        fresh.is_expired = MagicMock(return_value=False)
+        client.auth = fresh
+
+    client.get_access_token = AsyncMock(side_effect=refresh)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await asyncio.gather(manager.ensure_session(), manager.ensure_session())
+
+    client.get_access_token.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_missing_credentials_do_not_advance_refresh_clock():
+    """A refresh that produced no token must not count as one."""
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=False)
+    client.auth = None
+    client.transport_url = None
+    client.get_access_token = AsyncMock(return_value=None)
+    client.authenticate = AsyncMock()
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    assert await manager.ensure_google_credentials(force=True) is False
+    store.async_save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_legacy_store_persists_assumed_refresh_clock():
+    """A store predating the clock writes the assumed value back.
+
+    Otherwise every restart would assume "fresh" again, letting a frequently
+    restarted instance postpone the refresh indefinitely.
+    """
+    valid_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = None
+    client.auth = None
+    client.transport_url = None
+    client.get_access_token = AsyncMock()
+    client.get_first_data = AsyncMock(return_value=_make_first_data())
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+    store.async_load = AsyncMock(
+        return_value={
+            "nest_session": valid_session.to_dict(),
+            "transport_url": "https://transport.example.com",
+        }
+    )
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await manager.async_setup()
+
+    store.async_save.assert_called_once()
+    assert store.async_save.call_args[0][0]["google_refreshed_at"] > 0
+
+
+@pytest.mark.asyncio
+async def test_future_refresh_time_does_not_suppress_refresh():
+    """A corrupt or skewed future timestamp must not disable refreshing."""
+    valid_session = _make_nest_response(expired=False)
+
+    client = MagicMock()
+    client.nest_session = None
+    client.auth = None
+    client.transport_url = None
+    client.get_access_token = AsyncMock()
+    client.get_first_data = AsyncMock(return_value=_make_first_data())
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+    store.async_load = AsyncMock(
+        return_value={
+            "nest_session": valid_session.to_dict(),
+            "transport_url": "https://transport.example.com",
+            "google_refreshed_at": time.time() + 365 * 24 * 60 * 60,
+        }
+    )
+
+    manager = NestSessionManager(client=client, store=store)
+
+    await manager.async_setup()
+
+    # Clamped to now and written back, rather than trusted.
+    store.async_save.assert_called_once()
+    assert store.async_save.call_args[0][0]["google_refreshed_at"] <= time.time()
+
+
+@pytest.mark.asyncio
+async def test_refresh_notifies_caller_to_persist_rotated_cookies():
+    """Every refresh path reports back so rotated cookies can be persisted.
+
+    Entity updates refresh through the manager directly and have no
+    persistence step of their own.
+    """
+    expired_auth = MagicMock(access_token="stale")
+    expired_auth.is_expired = MagicMock(return_value=True)
+
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=False)
+    client.auth = expired_auth
+    client.transport_url = None
+    client.authenticate = AsyncMock()
+
+    def refresh(*args, **kwargs):
+        fresh = MagicMock(access_token="fresh")
+        fresh.is_expired = MagicMock(return_value=False)
+        client.auth = fresh
+
+    client.get_access_token = AsyncMock(side_effect=refresh)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    manager.on_credentials_refreshed = MagicMock()
+
+    await manager.ensure_session()
+
+    manager.on_credentials_refreshed.assert_called_once()
