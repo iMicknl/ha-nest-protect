@@ -162,9 +162,16 @@ class NestSessionManager:
         Raises authentication exceptions from the underlying client on failure.
         """
         if self._client.issue_token and self._client.cookies:
-            auth = await self._client.get_access_token_from_cookies(
-                self._client.issue_token, self._client.cookies
-            )
+            try:
+                auth = await self._client.get_access_token_from_cookies(
+                    self._client.issue_token, self._client.cookies
+                )
+            finally:
+                # Notify here rather than after async_setup() returns: Google
+                # may already have rotated the cookies, even if the request
+                # then failed, and a retry must not start from the superseded
+                # set.
+                self._notify_credentials_refreshed()
         elif self._client.refresh_token:
             auth = await self._client.get_access_token_from_refresh_token(
                 self._client.refresh_token
@@ -173,12 +180,6 @@ class NestSessionManager:
             return None
 
         self._google_refreshed_at = time.time()
-
-        # Notify before authenticating against Nest, not after async_setup()
-        # returns: Google has already rotated the cookies by this point, and if
-        # the Nest call below fails the retry must not start from the
-        # superseded set.
-        self._notify_credentials_refreshed(True)
 
         return await self._client.authenticate(auth.access_token)
 
@@ -217,12 +218,11 @@ class NestSessionManager:
 
         Returns True when the credentials were actually refreshed.
         """
-        async with self._refresh_lock:
-            refreshed = await self._async_refresh_google_credentials(force=force)
-
-        self._notify_credentials_refreshed(refreshed)
-
-        return refreshed
+        try:
+            async with self._refresh_lock:
+                return await self._async_refresh_google_credentials(force=force)
+        finally:
+            self._notify_credentials_refreshed()
 
     async def _async_refresh_google_credentials(self, *, force: bool) -> bool:
         """Refresh the Google access token. Caller must hold the lock."""
@@ -253,15 +253,19 @@ class NestSessionManager:
 
         return True
 
-    def _notify_credentials_refreshed(self, refreshed: bool) -> None:
+    def _notify_credentials_refreshed(self) -> None:
         """Let the caller persist cookies Google rotated during a refresh.
 
-        Called outside the lock, and from a finally block: the callback reaches
-        into Home Assistant to update the config entry, so it has no business
-        holding up other refreshes — and once Google has rotated the cookies a
-        later failure must not strand the superseded set in the config entry.
+        Keyed on the cookies actually captured rather than on the token
+        request succeeding: the client applies Set-Cookie before it reads the
+        response body, so a body that fails or is cancelled still leaves the
+        rotated set authoritative and the superseded one unusable.
+
+        Called outside the lock, and from a finally block — the callback
+        reaches into Home Assistant to update the config entry, so it has no
+        business holding up other refreshes.
         """
-        if refreshed and self.on_credentials_refreshed:
+        if self._client.refreshed_cookies and self.on_credentials_refreshed:
             self.on_credentials_refreshed()
 
     async def ensure_session(self) -> None:
@@ -293,20 +297,19 @@ class NestSessionManager:
                 elif refreshed:
                     await self._async_persist(self._client.nest_session)
         finally:
-            self._notify_credentials_refreshed(refreshed)
+            self._notify_credentials_refreshed()
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
 
         Returns True when a fresh Nest session was obtained and persisted.
         """
-        refreshed = False
         try:
             async with self._refresh_lock:
-                refreshed = await self._async_refresh_google_credentials(force=True)
+                await self._async_refresh_google_credentials(force=True)
                 return await self._async_refresh_nest_session()
         finally:
-            self._notify_credentials_refreshed(refreshed)
+            self._notify_credentials_refreshed()
 
     async def _async_refresh_nest_session(self) -> bool:
         """Re-authenticate against Nest and persist. Caller must hold the lock."""

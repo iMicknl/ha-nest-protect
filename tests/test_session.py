@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import datetime
 import time
+from http.cookies import SimpleCookie
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
+from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
@@ -572,6 +574,7 @@ async def test_missing_credentials_do_not_advance_refresh_clock():
     client.nest_session = _make_nest_response(expired=False)
     client.auth = None
     client.transport_url = None
+    client.refreshed_cookies = None
     client.get_access_token = AsyncMock(return_value=None)
     client.authenticate = AsyncMock()
 
@@ -759,6 +762,7 @@ async def test_unchanged_expired_token_is_not_reported_as_refreshed():
     client = MagicMock()
     client.nest_session = None
     client.auth = expired_auth
+    client.refreshed_cookies = None
     client.get_access_token = AsyncMock(return_value=expired_auth)
 
     store = MagicMock()
@@ -865,3 +869,51 @@ async def test_clock_rollback_does_not_suppress_due_refresh():
     await manager.ensure_session()
 
     client.get_access_token.assert_called_once()
+
+
+class _RotatingThenFailingResponse:
+    """Google response that rotates cookies before the body read fails."""
+
+    def __init__(self) -> None:
+        self.cookies = SimpleCookie()
+        self.cookies["SID"] = "new"
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def json(self):
+        raise PynestException("connection dropped reading the body")
+
+
+class _RotatingThenFailingSession:
+    """Minimal ClientSession stand-in returning the response above."""
+
+    def get(self, *args, **kwargs):
+        return _RotatingThenFailingResponse()
+
+
+@pytest.mark.asyncio
+async def test_rotation_is_notified_when_google_body_read_fails():
+    """Set-Cookie is already authoritative when the body read then fails.
+
+    The client applies the rotated cookies before awaiting the response body,
+    so a failure there would otherwise leave the config entry holding a set
+    Google has already superseded.
+    """
+    client = NestClient(session=_RotatingThenFailingSession())
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=old"
+    client.nest_session = _make_nest_response(expired=False)
+
+    manager = NestSessionManager(client=client, store=MagicMock())
+    manager.on_credentials_refreshed = MagicMock()
+
+    with pytest.raises(PynestException):
+        await manager.ensure_session()
+
+    assert client.refreshed_cookies == "SID=new"
+    manager.on_credentials_refreshed.assert_called_once_with()
+    assert manager._refresh_lock.locked() is False
