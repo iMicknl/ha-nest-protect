@@ -378,10 +378,13 @@ def _apply_protobuf_structure_update(
         entry_data.protobuf_structure_map = {}
 
     if update.legacy_structure_id:
-        entry_data.protobuf_structure_map[update.resource_id] = update.legacy_structure_id
+        entry_data.protobuf_structure_map[update.resource_id] = (
+            update.legacy_structure_id
+        )
 
-    legacy_structure_id = update.legacy_structure_id or entry_data.protobuf_structure_map.get(
-        update.resource_id
+    legacy_structure_id = (
+        update.legacy_structure_id
+        or entry_data.protobuf_structure_map.get(update.resource_id)
     )
     if not legacy_structure_id:
         LOGGER.debug(
@@ -406,7 +409,9 @@ def _apply_protobuf_structure_update(
     LOGGER.debug(
         "Protobuf observe: updated structure %s with %s",
         key,
-        sorted(k for k in ("new_structure_id", "user_id", "away") if k in structure.value),
+        sorted(
+            k for k in ("new_structure_id", "user_id", "away") if k in structure.value
+        ),
     )
     async_dispatcher_send(hass, key, structure)
 

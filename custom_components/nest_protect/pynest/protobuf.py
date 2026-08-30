@@ -17,9 +17,7 @@ STRUCTURE_MODE_REASON_EXPLICIT_INTENT = 1
 
 USER_INFO_TYPE_URL = "type.nestlabs.com/nest.trait.user.UserInfoTrait"
 STRUCTURE_INFO_TYPE_URL = "type.nestlabs.com/nest.trait.structure.StructureInfoTrait"
-STRUCTURE_MODE_TYPE_URL = (
-    "type.nestlabs.com/nest.trait.occupancy.StructureModeTrait"
-)
+STRUCTURE_MODE_TYPE_URL = "type.nestlabs.com/nest.trait.occupancy.StructureModeTrait"
 PEER_DEVICES_TYPE_URL = "type.nestlabs.com/weave.trait.peerdevices.PeerDevicesTrait"
 LIVENESS_TYPE_URL = "type.nestlabs.com/weave.trait.heartbeat.LivenessTrait"
 DEVICE_IDENTITY_TYPE_URL = (

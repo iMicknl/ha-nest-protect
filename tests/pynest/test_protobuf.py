@@ -187,7 +187,9 @@ def test_decode_kryptonite_peer_devices_and_traits():
     )
 
     updates = decode_structure_updates(payload, state)
-    device_updates = [update for update in updates if isinstance(update, ProtobufDeviceUpdate)]
+    device_updates = [
+        update for update in updates if isinstance(update, ProtobufDeviceUpdate)
+    ]
 
     assert device_updates[0].object_key == "kryptonite.18B430"
     assert device_updates[0].value == {

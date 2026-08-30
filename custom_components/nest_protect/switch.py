@@ -200,7 +200,9 @@ class NestStructureHomeAwaySwitch(SwitchEntity):
     async def _async_set_home(self, home: bool) -> None:
         await self.session_manager.ensure_session()
 
-        if self.bucket.value.get("new_structure_id") and self.bucket.value.get("user_id"):
+        if self.bucket.value.get("new_structure_id") and self.bucket.value.get(
+            "user_id"
+        ):
             await self.client.send_structure_mode_command(
                 self.client.nest_session.access_token,
                 f"STRUCTURE_{self.bucket.value['new_structure_id']}",
