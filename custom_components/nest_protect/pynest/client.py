@@ -109,6 +109,10 @@ class NestClient:
         # self.issue_token = issue_token
         # self.cookies = cookies
         self.environment = environment
+        # Survives observe reconnects on purpose: the gateway re-enumerates
+        # every resource on a new stream, and the device map has to be carried
+        # over or every reconnect re-runs the trait ordering race from scratch.
+        self.protobuf_observe_state = ProtobufObserveState()
 
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
@@ -468,7 +472,7 @@ class NestClient:
     ) -> AsyncIterator[ProtobufObserveUpdate]:
         """Observe protobuf structure and temperature sensor updates."""
         pending = b""
-        state = ProtobufObserveState()
+        state = self.protobuf_observe_state
         headers = {
             "Authorization": f"Basic {nest_access_token}",
             "Content-Type": "application/x-protobuf",

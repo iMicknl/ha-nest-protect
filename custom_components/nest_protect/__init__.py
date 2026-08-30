@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field
 
+import httpx
 from aiohttp import (
     ClientConnectorError,
     ClientError,
@@ -29,6 +30,9 @@ from .const import (
     DOMAIN,
     LOGGER,
     PLATFORMS,
+    PROTOBUF_RECONNECT_INITIAL_DELAY,
+    PROTOBUF_RECONNECT_MAX_DELAY,
+    PROTOBUF_STREAM_HEALTHY_SECONDS,
     STORAGE_KEY_DEVICES_FORMAT,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
@@ -53,7 +57,11 @@ from .pynest.models import (
     TopazBucket,
     WhereBucketValue,
 )
-from .pynest.protobuf import ProtobufDeviceUpdate, ProtobufStructureUpdate
+from .pynest.protobuf import (
+    NEST_KRYPTONITE_RESOURCE,
+    ProtobufDeviceUpdate,
+    ProtobufStructureUpdate,
+)
 from .session import NestSessionManager
 from .thermostat import (
     THERMOSTAT_BUCKET_PREFIX,
@@ -175,6 +183,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
     await _async_restore_protobuf_thermostats(entry_data)
+    _seed_protobuf_observe_state(entry_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -332,13 +341,29 @@ def _register_subscribe_task(
     return task
 
 
+def _next_observe_delay(delay: int, stream_duration: float) -> int:
+    """Pace the next observe reconnect.
+
+    A stream that stayed up long enough to be doing its job resets the delay;
+    anything shorter doubles it, so an account the gateway keeps hanging up on
+    settles into a slow retry instead of hammering it for weeks.
+    """
+    if stream_duration >= PROTOBUF_STREAM_HEALTHY_SECONDS:
+        return PROTOBUF_RECONNECT_INITIAL_DELAY
+    return min(delay * 2, PROTOBUF_RECONNECT_MAX_DELAY)
+
+
 async def _async_observe_for_protobuf_data(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> None:
-    """Observe protobuf data used by Home/Away on migrated Nest accounts."""
+    """Observe protobuf data: Home/Away, thermostats and temperature sensors."""
+    delay = PROTOBUF_RECONNECT_INITIAL_DELAY
+
     while entry.entry_id in hass.data.get(DOMAIN, {}):
         entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
         sm = entry_data.session_manager
+        started = hass.loop.time()
+        received = False
 
         try:
             await sm.ensure_session()
@@ -346,13 +371,20 @@ async def _async_observe_for_protobuf_data(
             async for update in entry_data.client.observe_for_structure_updates(
                 entry_data.client.nest_session.access_token,
             ):
+                if not received:
+                    received = True
+                    # A stream that yields anything proves the shared session is
+                    # healthy, so clear failures recorded by any transport.
+                    sm.record_success()
+
                 if isinstance(update, ProtobufStructureUpdate):
                     _apply_protobuf_structure_update(hass, entry_data, update)
                 else:
                     _apply_protobuf_device_update(hass, entry, entry_data, update)
 
-            LOGGER.debug("Protobuf observe stream ended.")
-            await asyncio.sleep(5)
+            delay = _next_observe_delay(delay, hass.loop.time() - started)
+            LOGGER.debug("Protobuf observe stream ended. Reconnecting in %ds.", delay)
+            await asyncio.sleep(delay)
 
         except NotAuthenticatedException:
             LOGGER.debug("Protobuf observe: 401 exception.")
@@ -369,6 +401,12 @@ async def _async_observe_for_protobuf_data(
             await asyncio.sleep(sm.backoff_interval)
             await sm.async_refresh_session()
 
+            # Entry may have been unloaded during the backoff sleep
+            if entry.entry_id not in hass.data.get(DOMAIN, {}):
+                return
+
+            _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+
         except BadCredentialsException:
             LOGGER.warning(
                 "Bad credentials detected. Please re-authenticate the Nest Protect integration."
@@ -380,12 +418,22 @@ async def _async_observe_for_protobuf_data(
             LOGGER.debug("Protobuf observe: task cancelled, stopping.")
             raise
 
-        except Exception:  # pylint: disable=broad-except
-            LOGGER.exception(
-                "Protobuf observe failed. Updates paused for %ds.",
-                sm.backoff_interval,
+        except (httpx.HTTPError, TimeoutError, OSError) as err:
+            # Read timeouts, resets and gateway hiccups are routine on a stream
+            # that is meant to stay open for weeks. Logging a traceback for each
+            # would bury the failures that actually need attention.
+            delay = _next_observe_delay(delay, hass.loop.time() - started)
+            LOGGER.debug(
+                "Protobuf observe: transport error (%r). Reconnecting in %ds.",
+                err,
+                delay,
             )
-            await asyncio.sleep(sm.backoff_interval)
+            await asyncio.sleep(delay)
+
+        except Exception:  # pylint: disable=broad-except
+            delay = _next_observe_delay(delay, hass.loop.time() - started)
+            LOGGER.exception("Protobuf observe failed. Updates paused for %ds.", delay)
+            await asyncio.sleep(delay)
 
 
 def _apply_protobuf_structure_update(
@@ -474,6 +522,40 @@ async def _async_restore_protobuf_thermostats(
             "Restored cached thermostats: %s",
             sorted(entry_data.protobuf_thermostats),
         )
+
+
+def _seed_protobuf_observe_state(entry_data: HomeAssistantNestProtectData) -> None:
+    """Tell the observe decoder about devices we already know.
+
+    The decoder can only route a device trait once `PeerDevicesTrait` has told
+    it what type that device is, and the gateway gives no ordering guarantee
+    between the two. Everything already known from app_launch or the device
+    cache is therefore pushed in up front, so the first stream after a restart
+    doesn't have to win that race before it can accept a reading.
+    """
+    state = entry_data.client.protobuf_observe_state
+
+    for object_key, bucket in entry_data.devices.items():
+        device_id = bucket.value.get("device_id")
+        if not device_id:
+            # Legacy REST buckets are keyed `<type>.<device id>`.
+            _, _, device_id = object_key.partition(".")
+        if not device_id:
+            continue
+
+        if device_type := bucket.value.get("protobuf_device_type"):
+            state.device_types[device_id] = device_type
+        elif object_key.startswith("kryptonite."):
+            # A kryptonite bucket is a Nest Temperature Sensor by definition.
+            state.device_types[device_id] = NEST_KRYPTONITE_RESOURCE
+        elif object_key.startswith("topaz."):
+            # Protects are served over REST here; drop their protobuf traits on
+            # sight rather than holding them for a mapping that never comes.
+            state.unsupported_devices.add(device_id)
+
+    LOGGER.debug(
+        "Seeded observe decoder with %d known device(s)", len(state.device_types)
+    )
 
 
 def _save_protobuf_thermostats(entry_data: HomeAssistantNestProtectData) -> None:

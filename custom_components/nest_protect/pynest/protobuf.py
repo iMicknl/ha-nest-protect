@@ -120,6 +120,15 @@ HUMIDITY_TRAIT_LABELS = frozenset(
 # Bucketized labels carry temperature history series, not the current reading.
 BUCKETIZED_LABEL_SUFFIX = "_bucketized"
 
+# Caps on the parked-trait buffers. The observe stream is meant to run for
+# weeks, so anything keyed by a resource id the gateway never goes on to
+# explain has to be forgettable. Within one device the parked set is keyed by
+# trait, so a device republishing its temperature every minute replaces its own
+# entry instead of adding another; these caps bound the number of *resources*
+# that can be waiting at once. Oldest-first eviction.
+MAX_PENDING_DEVICES = 64
+MAX_PENDING_STRUCTURES = 8
+
 OBSERVE_TRAITS = (
     "nest.trait.user.UserInfoTrait",
     "nest.trait.structure.StructureInfoTrait",
@@ -167,13 +176,40 @@ class _TraitState:
     state_types: list[int] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _PendingTrait:
+    """A device trait held back until its device type is known."""
+
+    type_url: str
+    value: bytes
+    trait_label: str | None
+    state_types: tuple[int, ...]
+
+
 @dataclass
 class ProtobufObserveState:
-    """Mutable mapping state needed while decoding protobuf observe messages."""
+    """Mutable mapping state needed while decoding protobuf observe messages.
+
+    Owned by the caller and reused across observe streams: the gateway
+    re-enumerates from scratch on every reconnect, and re-learning the device
+    map each time would re-run the ordering race below on every reconnect.
+    """
 
     user_id: str | None = None
     legacy_structure_ids: dict[str, str] = field(default_factory=dict)
     device_types: dict[str, str] = field(default_factory=dict)
+    # Devices the gateway has named whose resource type this integration does
+    # not model. Their traits are dropped on sight rather than parked, so a
+    # Protect or Guard publishing every few seconds can't churn the buffers.
+    unsupported_devices: set[str] = field(default_factory=set)
+    # device_id -> {(type_url, trait_label): trait}. Traits that arrived before
+    # PeerDevicesTrait revealed the device they belong to.
+    pending_device_traits: dict[str, dict[tuple[str, str | None], _PendingTrait]] = (
+        field(default_factory=dict)
+    )
+    # structure_resource_id -> latest PeerDevicesTrait payload seen before
+    # StructureInfoTrait gave the structure a legacy id.
+    pending_peer_devices: dict[str, bytes] = field(default_factory=dict)
 
 
 def _varint(value: int) -> bytes:
@@ -359,19 +395,37 @@ def _decode_get_property(
         return None
 
     if type_url == USER_INFO_TYPE_URL:
+        if state.user_id == object_id:
+            return None
         state.user_id = object_id
-        return None
+        # Structures decoded before the user was known carry `user_id=None`,
+        # which leaves the Home/Away switch unable to build a command. Re-emit
+        # them now rather than waiting for the structure to publish again.
+        return [
+            ProtobufStructureUpdate(
+                resource_id=resource_id,
+                legacy_structure_id=legacy_structure_id,
+                user_id=object_id,
+            )
+            for resource_id, legacy_structure_id in state.legacy_structure_ids.items()
+        ]
 
     if type_url == STRUCTURE_INFO_TYPE_URL:
         legacy_id = _first_string_field(value, 1)
         legacy_structure_id = legacy_id.split(".", 1)[1] if legacy_id else None
+        updates: list[ProtobufObserveUpdate] = [
+            ProtobufStructureUpdate(
+                resource_id=object_id,
+                legacy_structure_id=legacy_structure_id,
+                user_id=state.user_id,
+            )
+        ]
         if legacy_structure_id:
             state.legacy_structure_ids[object_id] = legacy_structure_id
-        return ProtobufStructureUpdate(
-            resource_id=object_id,
-            legacy_structure_id=legacy_structure_id,
-            user_id=state.user_id,
-        )
+            # A PeerDevicesTrait that arrived first can now be resolved, which
+            # in turn releases every device trait parked behind it.
+            updates.extend(_drain_pending_peer_devices(object_id, state))
+        return updates
 
     if type_url == STRUCTURE_MODE_TYPE_URL:
         structure_mode = _first_varint_field(value, 1)
@@ -441,12 +495,17 @@ def _decode_peer_devices(
     structure_resource_id: str,
     payload: bytes,
     state: ProtobufObserveState,
-) -> list[ProtobufDeviceUpdate]:
+) -> list[ProtobufObserveUpdate]:
     legacy_structure_id = state.legacy_structure_ids.get(structure_resource_id)
     if not legacy_structure_id:
+        # StructureInfoTrait hasn't landed yet. Dropping the list here would
+        # leave every device on this structure unmapped for the life of the
+        # stream, so hold it until the structure is named.
+        _park_peer_devices(structure_resource_id, payload, state)
         return []
 
-    updates: list[ProtobufDeviceUpdate] = []
+    updates: list[ProtobufObserveUpdate] = []
+    resolved: list[str] = []
     for _, peer_device in _bytes_fields(payload, 1):
         data = _first_bytes_field(peer_device, 2)
         if not data:
@@ -457,27 +516,135 @@ def _decode_peer_devices(
         if not resource_id or not device_type:
             continue
 
+        device_id = _legacy_device_id(resource_id)
+
         prefix = BUCKET_PREFIXES.get(device_type)
         if not prefix:
+            # Now known to be a type we don't model, so stop holding — and stop
+            # accepting — traits for it.
+            if device_id not in state.unsupported_devices:
+                _LOGGER.debug(
+                    "Observe: device %s has unsupported resource type %s, "
+                    "ignoring its traits",
+                    device_id,
+                    device_type,
+                )
+            state.unsupported_devices.add(device_id)
+            state.pending_device_traits.pop(device_id, None)
             continue
 
-        device_id = _legacy_device_id(resource_id)
         state.device_types[device_id] = device_type
-        updates.append(
-            ProtobufDeviceUpdate(
-                object_key=f"{prefix}.{device_id}",
-                value={
-                    "using_protobuf": True,
-                    "device_id": device_id,
-                    "structure_id": legacy_structure_id,
-                    "current_version": _first_string_field(data, 5),
-                    "user_id": state.user_id,
-                    "protobuf_device_type": device_type,
-                },
+        resolved.append(device_id)
+        # `current_version` and `user_id` are absent when the gateway omits the
+        # firmware version, or when this trait wins the race against
+        # UserInfoTrait. Writing None would clobber a good value on the bucket.
+        value = {
+            "using_protobuf": True,
+            "device_id": device_id,
+            "structure_id": legacy_structure_id,
+            "protobuf_device_type": device_type,
+        } | {
+            key: optional
+            for key, optional in (
+                ("current_version", _first_string_field(data, 5)),
+                ("user_id", state.user_id),
             )
+            if optional is not None
+        }
+
+        updates.append(
+            ProtobufDeviceUpdate(object_key=f"{prefix}.{device_id}", value=value)
         )
 
+    for device_id in resolved:
+        updates.extend(_drain_pending_device_traits(device_id, state))
+
     return updates
+
+
+def _park_peer_devices(
+    structure_resource_id: str, payload: bytes, state: ProtobufObserveState
+) -> None:
+    """Hold a PeerDevicesTrait until its structure has a legacy id."""
+    pending = state.pending_peer_devices
+    if structure_resource_id not in pending:
+        _evict_oldest(pending, MAX_PENDING_STRUCTURES, "peer devices")
+    pending[structure_resource_id] = payload
+    _LOGGER.debug(
+        "Observe: holding peer devices for unmapped structure %s",
+        structure_resource_id,
+    )
+
+
+def _drain_pending_peer_devices(
+    structure_resource_id: str, state: ProtobufObserveState
+) -> list[ProtobufObserveUpdate]:
+    """Decode a PeerDevicesTrait held back for this structure, if any."""
+    payload = state.pending_peer_devices.pop(structure_resource_id, None)
+    if payload is None:
+        return []
+
+    _LOGGER.debug(
+        "Observe: replaying held peer devices for structure %s",
+        structure_resource_id,
+    )
+    return _decode_peer_devices(structure_resource_id, payload, state)
+
+
+def _park_device_trait(
+    state: ProtobufObserveState, device_id: str, pending: _PendingTrait
+) -> None:
+    """Hold a device trait until PeerDevicesTrait reveals the device's type.
+
+    Keyed by trait, so repeated publishes of the same trait supersede each
+    other rather than accumulating — a device can sit unmapped for the life of
+    the stream without the buffer growing.
+    """
+    parked = state.pending_device_traits.get(device_id)
+    if parked is None:
+        _evict_oldest(state.pending_device_traits, MAX_PENDING_DEVICES, "device traits")
+        parked = state.pending_device_traits.setdefault(device_id, {})
+
+    parked[(pending.type_url, pending.trait_label)] = pending
+    _LOGGER.debug(
+        "Observe: holding trait %s for unmapped device %s", pending.type_url, device_id
+    )
+
+
+def _drain_pending_device_traits(
+    device_id: str, state: ProtobufObserveState
+) -> list[ProtobufObserveUpdate]:
+    """Decode every trait held back for a device that is now mapped."""
+    parked = state.pending_device_traits.pop(device_id, None)
+    if not parked:
+        return []
+
+    _LOGGER.debug(
+        "Observe: replaying %d held trait(s) for device %s", len(parked), device_id
+    )
+    updates: list[ProtobufObserveUpdate] = []
+    for pending in parked.values():
+        update = _decode_device_property(
+            device_id,
+            pending.type_url,
+            pending.value,
+            state,
+            trait_label=pending.trait_label,
+            state_types=list(pending.state_types),
+        )
+        if update:
+            updates.append(update)
+    return updates
+
+
+def _evict_oldest(buffer: dict, limit: int, what: str) -> None:
+    """Make room for one more entry in a parking buffer, oldest first."""
+    while len(buffer) >= limit:
+        evicted, _ = next(iter(buffer.items()))
+        del buffer[evicted]
+        _LOGGER.debug(
+            "Observe: %s buffer full, dropping held entry for %s", what, evicted
+        )
 
 
 def _decode_device_property(
@@ -493,6 +660,22 @@ def _decode_device_property(
     device_type = state.device_types.get(device_id)
     prefix = BUCKET_PREFIXES.get(device_type) if device_type else None
     if not prefix:
+        # The gateway gives no ordering guarantee between PeerDevicesTrait —
+        # which is the only thing that maps a device id to a type — and the
+        # per-device traits. Discarding here used to lose the reading until the
+        # device next republished it, which for temperature is tens of minutes
+        # and for RCS settings can be hours.
+        if device_id not in state.unsupported_devices:
+            _park_device_trait(
+                state,
+                device_id,
+                _PendingTrait(
+                    type_url=type_url,
+                    value=payload,
+                    trait_label=trait_label,
+                    state_types=tuple(state_types or ()),
+                ),
+            )
         return None
 
     object_key = f"{prefix}.{device_id}"

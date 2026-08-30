@@ -12,12 +12,27 @@ from custom_components.nest_protect import (
     DOMAIN,
     HomeAssistantNestProtectData,
     _async_subscribe_for_data,
+    _next_observe_delay,
+    _seed_protobuf_observe_state,
 )
-from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
+from custom_components.nest_protect.const import (
+    CONF_COOKIES,
+    MAX_AUTH_FAILURES,
+    PROTOBUF_RECONNECT_INITIAL_DELAY,
+    PROTOBUF_RECONNECT_MAX_DELAY,
+    PROTOBUF_STREAM_HEALTHY_SECONDS,
+)
 from custom_components.nest_protect.pynest.exceptions import NotAuthenticatedException
+from custom_components.nest_protect.pynest.models import Bucket
+from custom_components.nest_protect.pynest.protobuf import (
+    NEST_KRYPTONITE_RESOURCE,
+    ProtobufObserveState,
+)
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN, ComponentSetup
+
+THERMOSTAT_RESOURCE = "nest.resource.NestLearningThermostat3Resource"
 
 
 @pytest.mark.skip(
@@ -491,3 +506,74 @@ async def test_subscriber_success_resets_failure_counter(hass):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
     assert sm.consecutive_failures == 0
+
+
+def _make_seed_entry_data(devices):
+    """Build entry data whose client carries a real observe state."""
+    client = MagicMock()
+    client.protobuf_observe_state = ProtobufObserveState()
+
+    return HomeAssistantNestProtectData(
+        devices=devices,
+        structures={},
+        areas={},
+        client=client,
+        session_manager=MagicMock(),
+        grpc_lock_client=MagicMock(),
+    )
+
+
+def _bucket(object_key, value):
+    return Bucket(
+        object_key=object_key, object_revision=0, object_timestamp=0, value=value
+    )
+
+
+def test_seed_observe_state_from_known_devices():
+    """Devices known at setup are pushed into the observe decoder.
+
+    Without this the first stream after a restart has to see PeerDevicesTrait
+    before it will accept any reading, and every trait that arrives first is
+    held until the device republishes.
+    """
+    entry_data = _make_seed_entry_data(
+        {
+            "device.09AB12": _bucket(
+                "device.09AB12",
+                {
+                    "device_id": "09AB12",
+                    "protobuf_device_type": THERMOSTAT_RESOURCE,
+                    "serial_number": "thermostat-serial",
+                },
+            ),
+            "kryptonite.18B430": _bucket(
+                "kryptonite.18B430", {"current_temperature": 19.0}
+            ),
+            "topaz.AABBCC": _bucket("topaz.AABBCC", {"battery_level": 5000}),
+        }
+    )
+
+    _seed_protobuf_observe_state(entry_data)
+    state = entry_data.client.protobuf_observe_state
+
+    assert state.device_types == {
+        "09AB12": THERMOSTAT_RESOURCE,
+        "18B430": NEST_KRYPTONITE_RESOURCE,
+    }
+    # Protects are served over REST, so their protobuf traits are dropped
+    # rather than held for a mapping that never arrives.
+    assert state.unsupported_devices == {"AABBCC"}
+
+
+def test_observe_reconnect_delay_backs_off_then_resets():
+    """Short-lived streams back off; a healthy one returns to the floor."""
+    delay = PROTOBUF_RECONNECT_INITIAL_DELAY
+
+    for _ in range(20):
+        delay = _next_observe_delay(delay, stream_duration=0.5)
+    assert delay == PROTOBUF_RECONNECT_MAX_DELAY
+
+    assert (
+        _next_observe_delay(delay, stream_duration=PROTOBUF_STREAM_HEALTHY_SECONDS)
+        == PROTOBUF_RECONNECT_INITIAL_DELAY
+    )

@@ -8,6 +8,7 @@ from custom_components.nest_protect.pynest.protobuf import (
     DEVICE_LOCATED_SETTINGS_TYPE_URL,
     HUMIDITY_TYPE_URL,
     LIVENESS_TYPE_URL,
+    MAX_PENDING_DEVICES,
     NEST_KRYPTONITE_RESOURCE,
     PEER_DEVICES_TYPE_URL,
     RCS_SETTINGS_TYPE_URL,
@@ -526,6 +527,273 @@ def test_decode_ignores_unsupported_peer_device_types():
     )
 
     assert decode_structure_updates(payload, state) == []
+
+
+def test_decode_replays_device_traits_that_arrive_before_peer_devices():
+    """Test a reading published before the device is mapped is not lost.
+
+    PeerDevicesTrait is the only thing that maps a device id to a type, and the
+    gateway gives no ordering guarantee against the per-device traits. Dropping
+    the early ones left the entity unknown until the device happened to
+    republish — tens of minutes for temperature, hours for RCS settings.
+    """
+    state = ProtobufObserveState(user_id="USER_123")
+    payload = _stream_body(
+        _get_property(
+            "DEVICE_09AB12",
+            TEMPERATURE_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 21.5))),
+            trait_label="current_temperature",
+        ),
+        _get_property(
+            "STRUCTURE_new",
+            STRUCTURE_INFO_TYPE_URL,
+            _field_string(1, "structure.legacy"),
+        ),
+        _get_property(
+            "STRUCTURE_new",
+            PEER_DEVICES_TYPE_URL,
+            _peer_devices(("DEVICE_09AB12", THERMOSTAT_RESOURCE)),
+        ),
+    )
+
+    updates = decode_structure_updates(payload, state)
+    device_updates = [
+        update for update in updates if isinstance(update, ProtobufDeviceUpdate)
+    ]
+
+    assert device_updates[0].value["protobuf_device_type"] == THERMOSTAT_RESOURCE
+    assert device_updates[1].object_key == "device.09AB12"
+    assert device_updates[1].value == {"current_temperature": 21.5}
+    assert state.pending_device_traits == {}
+
+
+def test_decode_replays_device_traits_held_across_frames():
+    """Test a trait parked in one frame is released by a later frame."""
+    state = ProtobufObserveState(user_id="USER_123")
+
+    early = decode_structure_updates(
+        _stream_body(
+            _get_property(
+                "DEVICE_18B430",
+                TEMPERATURE_TYPE_URL,
+                _field_bytes(1, _field_bytes(1, _field_float(1, 19.0))),
+            )
+        ),
+        state,
+    )
+    assert early == []
+    assert "18B430" in state.pending_device_traits
+
+    updates = decode_structure_updates(
+        _stream_body(
+            _get_property(
+                "STRUCTURE_new",
+                STRUCTURE_INFO_TYPE_URL,
+                _field_string(1, "structure.legacy"),
+            ),
+            _get_property(
+                "STRUCTURE_new",
+                PEER_DEVICES_TYPE_URL,
+                _peer_devices(("DEVICE_18B430", NEST_KRYPTONITE_RESOURCE)),
+            ),
+        ),
+        state,
+    )
+
+    assert updates[-1].object_key == "kryptonite.18B430"
+    assert updates[-1].value == {"current_temperature": 19.0}
+
+
+def test_decode_replays_peer_devices_that_arrive_before_structure_info():
+    """Test peer devices held until the structure has a legacy id.
+
+    Dropping the list here left every device on that structure unmapped for the
+    life of the stream, which is the all-sensors-unknown case after a restart.
+    """
+    state = ProtobufObserveState(user_id="USER_123")
+    payload = _stream_body(
+        _get_property(
+            "DEVICE_09AB12",
+            TEMPERATURE_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 21.5))),
+            trait_label="current_temperature",
+        ),
+        _get_property(
+            "STRUCTURE_new",
+            PEER_DEVICES_TYPE_URL,
+            _peer_devices(("DEVICE_09AB12", THERMOSTAT_RESOURCE)),
+        ),
+        _get_property(
+            "STRUCTURE_new",
+            STRUCTURE_INFO_TYPE_URL,
+            _field_string(1, "structure.legacy"),
+        ),
+    )
+
+    updates = decode_structure_updates(payload, state)
+    device_updates = [
+        update for update in updates if isinstance(update, ProtobufDeviceUpdate)
+    ]
+
+    assert device_updates[0].value["structure_id"] == "legacy"
+    assert device_updates[1].value == {"current_temperature": 21.5}
+    assert state.pending_peer_devices == {}
+    assert state.pending_device_traits == {}
+
+
+def test_decode_drops_traits_for_devices_known_to_be_unsupported():
+    """Test an unsupported device's traits are dropped, not held.
+
+    A Protect or Guard on the protobuf stream publishes constantly; parking
+    every one of those would keep the buffer churning for the life of the run.
+    """
+    state = ProtobufObserveState(
+        user_id="USER_123",
+        legacy_structure_ids={"STRUCTURE_new": "legacy"},
+    )
+    decode_structure_updates(
+        _stream_body(
+            _get_property(
+                "STRUCTURE_new",
+                PEER_DEVICES_TYPE_URL,
+                _peer_devices(("DEVICE_CAM01", "nest.resource.NestCamIndoorResource")),
+            )
+        ),
+        state,
+    )
+    assert state.unsupported_devices == {"CAM01"}
+
+    updates = decode_structure_updates(
+        _stream_body(
+            _get_property(
+                "DEVICE_CAM01",
+                TEMPERATURE_TYPE_URL,
+                _field_bytes(1, _field_bytes(1, _field_float(1, 21.5))),
+            )
+        ),
+        state,
+    )
+
+    assert updates == []
+    assert state.pending_device_traits == {}
+
+
+def test_pending_device_traits_supersede_rather_than_accumulate():
+    """Test repeated publishes by an unmapped device don't grow the buffer.
+
+    The stream is meant to stay up for weeks; a device that never gets mapped
+    must not be able to grow memory one sample at a time.
+    """
+    state = ProtobufObserveState()
+
+    for sample in (19.0, 20.0, 21.0):
+        decode_structure_updates(
+            _stream_body(
+                _get_property(
+                    "DEVICE_18B430",
+                    TEMPERATURE_TYPE_URL,
+                    _field_bytes(1, _field_bytes(1, _field_float(1, sample))),
+                    trait_label="current_temperature",
+                )
+            ),
+            state,
+        )
+
+    assert len(state.pending_device_traits["18B430"]) == 1
+
+    state.legacy_structure_ids["STRUCTURE_new"] = "legacy"
+    updates = decode_structure_updates(
+        _stream_body(
+            _get_property(
+                "STRUCTURE_new",
+                PEER_DEVICES_TYPE_URL,
+                _peer_devices(("DEVICE_18B430", NEST_KRYPTONITE_RESOURCE)),
+            )
+        ),
+        state,
+    )
+
+    # Only the newest sample survives, and it is the one replayed.
+    assert updates[-1].value == {"current_temperature": 21.0}
+
+
+def test_pending_device_traits_are_capped():
+    """Test the parked-trait buffer is bounded, oldest evicted first."""
+    state = ProtobufObserveState()
+
+    for index in range(MAX_PENDING_DEVICES + 5):
+        decode_structure_updates(
+            _stream_body(
+                _get_property(
+                    f"DEVICE_{index:06X}",
+                    TEMPERATURE_TYPE_URL,
+                    _field_bytes(1, _field_bytes(1, _field_float(1, 19.0))),
+                )
+            ),
+            state,
+        )
+
+    assert len(state.pending_device_traits) == MAX_PENDING_DEVICES
+    assert f"{0:06X}" not in state.pending_device_traits
+    assert f"{MAX_PENDING_DEVICES + 4:06X}" in state.pending_device_traits
+
+
+def test_decode_reemits_structures_when_the_user_arrives_late():
+    """Test a late UserInfoTrait backfills the user id on known structures.
+
+    Home/Away cannot build a command without it, and structure traits are not
+    republished on any useful schedule.
+    """
+    state = ProtobufObserveState()
+    decode_structure_updates(
+        _stream_body(
+            _get_property(
+                "STRUCTURE_new",
+                STRUCTURE_INFO_TYPE_URL,
+                _field_string(1, "structure.legacy"),
+            )
+        ),
+        state,
+    )
+
+    updates = decode_structure_updates(
+        _stream_body(
+            _get_property("USER_123", USER_INFO_TYPE_URL, _field_string(1, "user.leg"))
+        ),
+        state,
+    )
+
+    assert len(updates) == 1
+    assert updates[0].resource_id == "STRUCTURE_new"
+    assert updates[0].legacy_structure_id == "legacy"
+    assert updates[0].user_id == "USER_123"
+
+    # The same user id arriving again is not worth re-emitting for.
+    assert (
+        decode_structure_updates(
+            _stream_body(
+                _get_property(
+                    "USER_123", USER_INFO_TYPE_URL, _field_string(1, "user.leg")
+                )
+            ),
+            state,
+        )
+        == []
+    )
+
+
+def _peer_devices(*devices: tuple[str, str], firmware: str | None = None) -> bytes:
+    """Build a PeerDevicesTrait payload listing `(resource_id, device_type)`."""
+    entries = b""
+    for resource_id, device_type in devices:
+        data = _field_bytes(1, _field_string(1, resource_id)) + _field_bytes(
+            2, _field_string(1, device_type)
+        )
+        if firmware is not None:
+            data += _field_string(5, firmware)
+        entries += _field_bytes(1, _field_bytes(2, data))
+    return entries
 
 
 def _stream_body(*get_properties: bytes) -> bytes:
