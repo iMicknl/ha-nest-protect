@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from struct import unpack
 from uuid import uuid4
+
+_LOGGER = logging.getLogger(__package__)
 
 NEST_KRYPTONITE_RESOURCE = "nest.resource.NestKryptoniteResource"
 
@@ -63,6 +66,15 @@ STRUCTURE_MODE_CHANGE_TYPE_URL = (
 )
 LIVENESS_DEVICE_STATUS_ONLINE = 1
 
+# DeviceLocatedSettingsTrait fields, per protobuf_gen/nest/trait/located_pb2.
+# `whereAnnotationRid` is a protobuf annotation resource id and is *not*
+# interchangeable with the legacy where uuid the `where.` REST buckets are keyed
+# by — that one lives in `whereLegacyUuid`.
+WHERE_ANNOTATION_RID_FIELD = 2
+FIXTURE_TYPE_FIELD = 4
+WHERE_LABEL_FIELD = 5
+WHERE_LEGACY_UUID_FIELD = 11
+
 # RemoteComfortSensingSettingsTrait.RcsSourceType — which temperature source the
 # thermostat is currently controlling on.
 RCS_SOURCE_TYPE_BACKPLATE = 1
@@ -79,12 +91,32 @@ WIRE_TYPE_LENGTH_DELIMITED = 2
 WIRE_TYPE_FIXED32 = 5
 OBJECT_FIELD = 1
 DYNAMIC_PROPERTY_FIELD = 3
-# ObjectIdPair is {id = 1, key = 2}, where `key` is the trait label. Thermostats
-# publish TemperatureTrait twice and only the label tells the two apart.
+# ObjectIdPair is {id = 1, key = 2}, where `key` is the trait label.
 OBJECT_ID_FIELD = 1
 TRAIT_LABEL_FIELD = 2
+# TraitState.stateTypes — whether a patch carries the confirmed (device-reported)
+# or accepted (server-side) copy of the trait. Decoded for logging only: the
+# observe request asks for both, so telling them apart matters when diagnosing
+# updates that appear to stall.
+STATE_TYPES_FIELD = 2
+STATE_TYPE_NAMES = {1: "confirmed", 2: "accepted"}
+
 TRAIT_LABEL_BACKPLATE_TEMPERATURE = "backplate_temperature"
 TRAIT_LABEL_CURRENT_TEMPERATURE = "current_temperature"
+TRAIT_LABEL_BACKPLATE_HUMIDITY = "backplate_humidity"
+TRAIT_LABEL_CURRENT_HUMIDITY = "current_humidity"
+
+# Thermostats publish TemperatureTrait and HumidityTrait twice, and only the
+# trait label tells the two instances apart: `backplate_*` is the device's own
+# sensor, `current_*` the effective reading, which follows the selected remote
+# comfort sensor. The label doubles as the bucket key. Kryptonite sensors send a
+# single unlabelled instance, which stays the current reading.
+TEMPERATURE_TRAIT_LABELS = frozenset(
+    {TRAIT_LABEL_BACKPLATE_TEMPERATURE, TRAIT_LABEL_CURRENT_TEMPERATURE}
+)
+HUMIDITY_TRAIT_LABELS = frozenset(
+    {TRAIT_LABEL_BACKPLATE_HUMIDITY, TRAIT_LABEL_CURRENT_HUMIDITY}
+)
 # Bucketized labels carry temperature history series, not the current reading.
 BUCKETIZED_LABEL_SUFFIX = "_bucketized"
 
@@ -122,6 +154,17 @@ class ProtobufDeviceUpdate:
 
 
 ProtobufObserveUpdate = ProtobufStructureUpdate | ProtobufDeviceUpdate
+
+
+@dataclass
+class _TraitState:
+    """One decoded `nestlabs.gateway.v2.TraitState` off the observe stream."""
+
+    object_id: str | None = None
+    trait_label: str | None = None
+    type_url: str | None = None
+    value: bytes | None = None
+    state_types: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -238,15 +281,35 @@ def encode_observe_request(traits: Iterable[str] = OBSERVE_TRAITS) -> bytes:
 def decode_observe_stream_frames(
     buffer: bytes,
 ) -> tuple[list[bytes], bytes]:
-    """Decode complete StreamBody messages from the observe byte stream."""
+    """Decode complete StreamBody messages from the observe byte stream.
+
+    Returns the frames that were complete plus whatever bytes are left over,
+    which the caller prepends to the next chunk. Every StreamBody field the
+    gateway sends is length-delimited, so any other wire type means the buffer
+    has lost sync — keeping those bytes around would poison every later chunk
+    and silently wedge the stream, so they are dropped instead.
+    """
     frames: list[bytes] = []
     offset = 0
 
     while offset < len(buffer):
         try:
             key, length_offset = _read_varint(buffer, offset)
-            if key & 0x07 != WIRE_TYPE_LENGTH_DELIMITED:
-                break
+        except ValueError:
+            # Varint split across chunks; wait for more bytes.
+            break
+
+        if key & 0x07 != WIRE_TYPE_LENGTH_DELIMITED:
+            _LOGGER.warning(
+                "Observe stream out of sync at offset %d (wire type %d), "
+                "discarding %d buffered bytes",
+                offset,
+                key & 0x07,
+                len(buffer) - offset,
+            )
+            return frames, b""
+
+        try:
             frame_length, body_offset = _read_varint(buffer, length_offset)
         except ValueError:
             break
@@ -284,25 +347,15 @@ def _decode_get_property(
     payload: bytes,
     state: ProtobufObserveState,
 ) -> ProtobufObserveUpdate | list[ProtobufObserveUpdate] | None:
-    object_id = None
-    trait_label = None
-    type_url = None
-    value = None
-
-    for field_number, _, field_value in _decode_fields(payload):
-        if field_number == OBJECT_FIELD and isinstance(field_value, bytes):
-            object_id = _first_string_field(field_value, OBJECT_ID_FIELD)
-            trait_label = _first_string_field(field_value, TRAIT_LABEL_FIELD)
-        elif field_number == DYNAMIC_PROPERTY_FIELD and isinstance(field_value, bytes):
-            any_payload = _first_bytes_field(field_value, 1)
-            if any_payload:
-                type_url = _first_string_field(any_payload, 1)
-                value = _first_bytes_field(any_payload, 2)
+    trait = _scan_trait_state(payload)
+    object_id = trait.object_id
+    type_url = trait.type_url
+    value = trait.value
 
     if not object_id or not type_url or value is None:
         return None
 
-    if trait_label and trait_label.endswith(BUCKETIZED_LABEL_SUFFIX):
+    if trait.trait_label and trait.trait_label.endswith(BUCKETIZED_LABEL_SUFFIX):
         return None
 
     if type_url == USER_INFO_TYPE_URL:
@@ -336,7 +389,52 @@ def _decode_get_property(
     if type_url == PEER_DEVICES_TYPE_URL:
         return _decode_peer_devices(object_id, value, state)
 
-    return _decode_device_property(object_id, type_url, value, state, trait_label)
+    return _decode_device_property(
+        object_id,
+        type_url,
+        value,
+        state,
+        trait_label=trait.trait_label,
+        state_types=trait.state_types,
+    )
+
+
+def _scan_trait_state(payload: bytes) -> _TraitState:
+    """Pull the identity, state types and Any-wrapped value out of a TraitState."""
+    trait = _TraitState()
+
+    for field_number, wire_type, field_value in _decode_fields(payload):
+        if field_number == OBJECT_FIELD and isinstance(field_value, bytes):
+            trait.object_id = _first_string_field(field_value, OBJECT_ID_FIELD)
+            trait.trait_label = _first_string_field(field_value, TRAIT_LABEL_FIELD)
+        elif field_number == STATE_TYPES_FIELD:
+            trait.state_types.extend(_state_types(wire_type, field_value))
+        elif field_number == DYNAMIC_PROPERTY_FIELD and isinstance(field_value, bytes):
+            any_payload = _first_bytes_field(field_value, 1)
+            if any_payload:
+                trait.type_url = _first_string_field(any_payload, 1)
+                trait.value = _first_bytes_field(any_payload, 2)
+
+    return trait
+
+
+def _state_types(wire_type: int, field_value: int | bytes) -> list[int]:
+    """Decode TraitState.stateTypes, packed or repeated."""
+    if wire_type == WIRE_TYPE_VARINT and isinstance(field_value, int):
+        return [field_value]
+
+    if wire_type != WIRE_TYPE_LENGTH_DELIMITED or not isinstance(field_value, bytes):
+        return []
+
+    values: list[int] = []
+    offset = 0
+    while offset < len(field_value):
+        try:
+            value, offset = _read_varint(field_value, offset)
+        except ValueError:
+            break
+        values.append(value)
+    return values
 
 
 def _decode_peer_devices(
@@ -387,7 +485,9 @@ def _decode_device_property(
     type_url: str,
     payload: bytes,
     state: ProtobufObserveState,
+    *,
     trait_label: str | None = None,
+    state_types: list[int] | None = None,
 ) -> ProtobufDeviceUpdate | None:
     device_id = _legacy_device_id(resource_id)
     device_type = state.device_types.get(device_id)
@@ -411,34 +511,40 @@ def _decode_device_property(
         )
 
     if type_url == DEVICE_LOCATED_SETTINGS_TYPE_URL:
-        update = {"where_id": _indirect_string(payload, 2)}
-        fixture_type = _first_bytes_field(payload, 4)
+        update = {
+            # Only `whereLegacyUuid` matches the keys `where.` REST buckets use,
+            # so it is the one that may be written to `where_id`. The annotation
+            # rid is kept under its own key for diagnostics.
+            "where_id": _first_string_field(payload, WHERE_LEGACY_UUID_FIELD),
+            "where_label": _indirect_string(payload, WHERE_LABEL_FIELD),
+            "where_annotation_rid": _indirect_string(
+                payload, WHERE_ANNOTATION_RID_FIELD
+            ),
+        }
+        fixture_type = _first_bytes_field(payload, FIXTURE_TYPE_FIELD)
         if fixture_type:
             update["fixture_type"] = _first_varint_field(fixture_type, 1)
         return _device_update(object_key, update)
 
     if type_url == TEMPERATURE_TYPE_URL:
-        temperature = _nested_float(payload, 1, 1, 1)
-        if temperature is None:
-            return None
-        # Thermostats publish this trait twice: `backplate_temperature` is the
-        # device's own sensor, `current_temperature` the effective reading, which
-        # follows the selected remote comfort sensor. Kryptonite sensors send a
-        # single unlabelled instance, which stays the current temperature.
-        key = (
-            TRAIT_LABEL_BACKPLATE_TEMPERATURE
-            if trait_label == TRAIT_LABEL_BACKPLATE_TEMPERATURE
-            else TRAIT_LABEL_CURRENT_TEMPERATURE
+        return _decode_sensor_sample(
+            object_key,
+            payload,
+            trait_label=trait_label,
+            state_types=state_types,
+            known_labels=TEMPERATURE_TRAIT_LABELS,
+            unlabelled_key=TRAIT_LABEL_CURRENT_TEMPERATURE,
         )
-        return ProtobufDeviceUpdate(object_key=object_key, value={key: temperature})
 
     if type_url == HUMIDITY_TYPE_URL:
-        # HumidityTrait has the same nesting as TemperatureTrait.
-        humidity = _nested_float(payload, 1, 1, 1)
-        if humidity is None:
-            return None
-        return ProtobufDeviceUpdate(
-            object_key=object_key, value={"current_humidity": humidity}
+        # HumidityTrait has the same nesting and the same paired labels.
+        return _decode_sensor_sample(
+            object_key,
+            payload,
+            trait_label=trait_label,
+            state_types=state_types,
+            known_labels=HUMIDITY_TRAIT_LABELS,
+            unlabelled_key=TRAIT_LABEL_CURRENT_HUMIDITY,
         )
 
     if type_url == BATTERY_TYPE_URL:
@@ -457,7 +563,49 @@ def _decode_device_property(
             object_key=object_key, value=_decode_rcs_settings(payload)
         )
 
+    _LOGGER.debug("Observe: ignoring trait %s on %s", type_url, object_key)
     return None
+
+
+def _decode_sensor_sample(
+    object_key: str,
+    payload: bytes,
+    *,
+    trait_label: str | None,
+    state_types: list[int] | None,
+    known_labels: frozenset[str],
+    unlabelled_key: str,
+) -> ProtobufDeviceUpdate | None:
+    """Decode a TemperatureTrait/HumidityTrait sample into its bucket key.
+
+    An unrecognised label is dropped rather than folded into the current
+    reading: a device publishing an instance this integration does not know
+    about must not be able to overwrite the ambient value with it.
+    """
+    if trait_label and trait_label not in known_labels:
+        _LOGGER.debug(
+            "Observe: ignoring unknown sensor trait label %s on %s",
+            trait_label,
+            object_key,
+        )
+        return None
+
+    key = trait_label or unlabelled_key
+
+    sample = _nested_float(payload, 1, 1, 1)
+    if sample is None:
+        _LOGGER.debug("Observe: no sample in %s trait on %s", key, object_key)
+        return None
+
+    _LOGGER.debug(
+        "Observe: %s %s=%s (%s)",
+        object_key,
+        key,
+        sample,
+        ", ".join(STATE_TYPE_NAMES.get(s, str(s)) for s in state_types or [])
+        or "no state types",
+    )
+    return ProtobufDeviceUpdate(object_key=object_key, value={key: sample})
 
 
 def _decode_rcs_settings(payload: bytes) -> dict:

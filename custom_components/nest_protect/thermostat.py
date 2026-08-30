@@ -35,6 +35,7 @@ THERMOSTAT_CACHE_KEYS = frozenset(
         "model",
         "current_version",
         "where_id",
+        "where_label",
     }
 )
 

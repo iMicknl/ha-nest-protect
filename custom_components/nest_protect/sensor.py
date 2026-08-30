@@ -22,7 +22,7 @@ from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
-from .entity import NestDescriptiveEntity
+from .entity import NestDescriptiveEntity, resolve_area
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.client import NestClient
 from .pynest.enums import BucketType
@@ -279,7 +279,7 @@ class NestThermostatSensor(NestProtectSensor):
         """
         return tuple(
             self.bucket.value.get(key)
-            for key in ("model", "current_version", "where_id")
+            for key in ("model", "current_version", "where_id", "where_label")
         )
 
     @callback
@@ -291,7 +291,7 @@ class NestThermostatSensor(NestProtectSensor):
         that first reveals the thermostat. Those have to be written to the
         registry directly, the same way `lock.py` does it.
         """
-        self.area = self._areas.get(bucket.value.get("where_id"))
+        self.area = resolve_area(bucket.value, self._areas)
         super().update_callback(bucket)
 
         if (identity := self._identity_snapshot()) == self._identity:
@@ -407,8 +407,7 @@ class NestThermostatActiveSensor(NestThermostatSensor):
         """Name a temperature sensor by its own label, else its room."""
         sensor = self._devices.get(object_key)
         label = sensor and (
-            sensor.value.get("description")
-            or self._areas.get(sensor.value.get("where_id"))
+            sensor.value.get("description") or resolve_area(sensor.value, self._areas)
         )
 
         return label or object_key.removeprefix("kryptonite.")

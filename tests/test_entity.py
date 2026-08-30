@@ -120,6 +120,31 @@ def test_kryptonite_device_info():
     assert device_info["model"] == "Kryp-1.0"
 
 
+def test_area_falls_back_to_the_protobuf_where_label():
+    """Test the room name published by DeviceLocatedSettingsTrait is used.
+
+    Thermostats have no `where.` REST bucket, so a room that never appears in
+    `areas` can still be named from the trait's own literal.
+    """
+    entity = build_entity(
+        {"where_id": "where.unmapped", "where_label": "Guest room"},
+        object_key="device.09AB12",
+    )
+
+    assert entity.area == "Guest room"
+    assert entity.device_info["name"] == "Nest Thermostat (Guest room)"
+
+
+def test_area_prefers_the_mapped_where_id_over_the_label():
+    """Test the user-facing `where.` bucket name wins when it resolves."""
+    entity = build_entity(
+        {"where_id": "where.living-room", "where_label": "Stale label"},
+        object_key="device.09AB12",
+    )
+
+    assert entity.area == "Living Room"
+
+
 def test_incomplete_kryptonite_falls_back_to_object_key():
     """Test that a temperature sensor without a serial number still sets up."""
     device_info = build_entity({}, object_key="kryptonite.5678").device_info

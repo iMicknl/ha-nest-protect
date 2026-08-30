@@ -87,6 +87,36 @@ def test_decode_observe_stream_frames():
     assert pending == b""
 
 
+def test_decode_observe_stream_frames_keeps_a_split_varint():
+    """Test a length prefix split across chunks is not treated as a desync."""
+    # Field 1, length 200 -> a two-byte varint length the first chunk cuts.
+    frame = _field_bytes(1, b"x" * 200)
+
+    frames, pending = decode_observe_stream_frames(frame[:2])
+    assert frames == []
+    assert pending == frame[:2]
+
+    frames, pending = decode_observe_stream_frames(pending + frame[2:])
+    assert frames == [frame]
+    assert pending == b""
+
+
+def test_decode_observe_stream_frames_resyncs_on_bad_wire_type():
+    """Test unparseable bytes are dropped rather than poisoning every chunk.
+
+    Keeping them meant the parser could never resynchronise, silently wedging
+    the observe stream until it reconnected.
+    """
+    good = _field_bytes(1, b"first")
+    # Field 1, wire type 0 (varint) — never emitted at StreamBody level.
+    garbage = _field_varint(1, 7)
+
+    frames, pending = decode_observe_stream_frames(good + garbage)
+
+    assert frames == [good]
+    assert pending == b""
+
+
 def test_decode_structure_updates_maps_structure_and_mode():
     """Test decoding Homebridge-equivalent structure info and mode traits."""
     state = ProtobufObserveState()
@@ -176,8 +206,12 @@ def test_decode_kryptonite_peer_devices_and_traits():
         _get_property(
             "18B430",
             DEVICE_LOCATED_SETTINGS_TYPE_URL,
-            _field_bytes(2, _field_string(1, "where-1"))
-            + _field_bytes(4, _field_varint(1, 4)),
+            _located_settings(
+                annotation_rid="ANNOTATION_BEDROOM",
+                label="Kids room",
+                legacy_uuid="where-1",
+                fixture_type=4,
+            ),
         ),
         _get_property(
             "18B430",
@@ -212,7 +246,12 @@ def test_decode_kryptonite_peer_devices_and_traits():
         "serial_number": "serial",
         "current_version": "1.2.4",
     }
-    assert device_updates[3].value == {"where_id": "where-1", "fixture_type": 4}
+    assert device_updates[3].value == {
+        "where_id": "where-1",
+        "where_label": "Kids room",
+        "where_annotation_rid": "ANNOTATION_BEDROOM",
+        "fixture_type": 4,
+    }
     assert device_updates[4].value == {"is_online": True}
     assert device_updates[5].value == {"battery_status": 1, "battery_level": 87.5}
 
@@ -301,6 +340,72 @@ def test_decode_thermostat_humidity():
 
     assert updates[0].object_key == "device.09AB12"
     assert updates[0].value == {"current_humidity": 43.5}
+
+
+def test_decode_thermostat_humidity_separates_backplate_from_current():
+    """Test the paired humidity traits do not overwrite each other."""
+    state = ProtobufObserveState(device_types={"09AB12": THERMOSTAT_RESOURCE})
+    payload = _stream_body(
+        _get_property(
+            "09AB12",
+            HUMIDITY_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 43.5))),
+            trait_label="backplate_humidity",
+        ),
+        _get_property(
+            "09AB12",
+            HUMIDITY_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 61.0))),
+            trait_label="current_humidity",
+        ),
+    )
+
+    updates = decode_structure_updates(payload, state)
+
+    assert updates[0].value == {"backplate_humidity": 43.5}
+    assert updates[1].value == {"current_humidity": 61.0}
+
+
+def test_decode_ignores_unknown_sensor_trait_labels():
+    """Test an unrecognised label cannot overwrite the ambient reading."""
+    state = ProtobufObserveState(device_types={"09AB12": THERMOSTAT_RESOURCE})
+    payload = _stream_body(
+        _get_property(
+            "09AB12",
+            TEMPERATURE_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 21.5))),
+            trait_label="some_future_temperature",
+        ),
+        _get_property(
+            "09AB12",
+            HUMIDITY_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 43.5))),
+            trait_label="some_future_humidity",
+        ),
+    )
+
+    assert decode_structure_updates(payload, state) == []
+
+
+def test_decode_located_settings_keeps_legacy_uuid_out_of_annotation_rid():
+    """Test only whereLegacyUuid is written to where_id.
+
+    The annotation rid is a protobuf-only identifier; writing it to `where_id`
+    made the room lookup miss and the label fall back to the raw device id.
+    """
+    state = ProtobufObserveState(device_types={"18B430": NEST_KRYPTONITE_RESOURCE})
+    payload = _stream_body(
+        _get_property(
+            "18B430",
+            DEVICE_LOCATED_SETTINGS_TYPE_URL,
+            _located_settings(annotation_rid="ANNOTATION_BEDROOM"),
+        )
+    )
+
+    updates = decode_structure_updates(payload, state)
+
+    assert updates[0].value == {"where_annotation_rid": "ANNOTATION_BEDROOM"}
+    assert "where_id" not in updates[0].value
 
 
 def test_decode_rcs_settings_single_sensor():
@@ -443,3 +548,28 @@ def _get_property(
 
 def _field_float(field_number: int, value: float) -> bytes:
     return bytes([(field_number << 3) | 5]) + pack("<f", value)
+
+
+def _located_settings(
+    *,
+    annotation_rid: str | None = None,
+    label: str | None = None,
+    legacy_uuid: str | None = None,
+    fixture_type: int | None = None,
+) -> bytes:
+    """Build a DeviceLocatedSettingsTrait payload.
+
+    Field numbers mirror protobuf_gen/nest/trait/located_pb2: whereAnnotationRid
+    is a ResourceId (2), whereLabel a StringRef (5) and whereLegacyUuid a plain
+    string (11).
+    """
+    payload = b""
+    if annotation_rid is not None:
+        payload += _field_bytes(2, _field_string(1, annotation_rid))
+    if fixture_type is not None:
+        payload += _field_bytes(4, _field_varint(1, fixture_type))
+    if label is not None:
+        payload += _field_bytes(5, _field_string(1, label))
+    if legacy_uuid is not None:
+        payload += _field_string(11, legacy_uuid)
+    return payload

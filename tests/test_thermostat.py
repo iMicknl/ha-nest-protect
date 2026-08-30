@@ -306,6 +306,36 @@ def test_active_sensor_is_unknown_before_the_trait_arrives():
     }
 
 
+def test_active_sensor_name_falls_back_to_the_protobuf_where_label():
+    """Test an unmapped where_id does not drop the name back to the device id.
+
+    The protobuf located-settings trait is the only room source for a sensor
+    whose `where.` bucket has not been seen, so its literal has to be used.
+    """
+    kryptonite = Bucket(
+        object_key="kryptonite.18B430",
+        object_revision=0,
+        object_timestamp=0,
+        value={"where_id": "where.unmapped", "where_label": "Roxy"},
+    )
+    thermostat = _thermostat_bucket(
+        {
+            "serial_number": "thermostat-serial",
+            "rcs_source_type": RCS_SOURCE_TYPE_SINGLE_SENSOR,
+            "active_rcs_sensors": ["kryptonite.18B430"],
+        }
+    )
+    sensor = NestThermostatActiveSensor(
+        thermostat,
+        ACTIVE_TEMPERATURE_SENSOR_DESCRIPTION,
+        {"where.hallway": "Hallway"},
+        MagicMock(),
+        {THERMOSTAT_KEY: thermostat, "kryptonite.18B430": kryptonite},
+    )
+
+    assert sensor.native_value == "Roxy"
+
+
 async def test_active_sensor_name_resolves_when_the_sensor_traits_land(hass):
     """Test a sensor's room label arriving later replaces the bare device id."""
     kryptonite = Bucket(
