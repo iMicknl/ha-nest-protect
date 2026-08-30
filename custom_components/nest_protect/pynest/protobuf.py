@@ -52,6 +52,7 @@ DEVICE_LOCATED_SETTINGS_TYPE_URL = (
     "type.nestlabs.com/nest.trait.located.DeviceLocatedSettingsTrait"
 )
 TEMPERATURE_TYPE_URL = "type.nestlabs.com/nest.trait.sensor.TemperatureTrait"
+HUMIDITY_TYPE_URL = "type.nestlabs.com/nest.trait.sensor.HumidityTrait"
 BATTERY_TYPE_URL = "type.nestlabs.com/weave.trait.power.BatteryPowerSourceTrait"
 RCS_SETTINGS_TYPE_URL = (
     "type.nestlabs.com/nest.trait.hvac.RemoteComfortSensingSettingsTrait"
@@ -96,6 +97,7 @@ OBSERVE_TRAITS = (
     "weave.trait.description.DeviceIdentityTrait",
     "nest.trait.located.DeviceLocatedSettingsTrait",
     "nest.trait.sensor.TemperatureTrait",
+    "nest.trait.sensor.HumidityTrait",
     "weave.trait.power.BatteryPowerSourceTrait",
     "nest.trait.hvac.RemoteComfortSensingSettingsTrait",
 )
@@ -429,6 +431,15 @@ def _decode_device_property(
             else TRAIT_LABEL_CURRENT_TEMPERATURE
         )
         return ProtobufDeviceUpdate(object_key=object_key, value={key: temperature})
+
+    if type_url == HUMIDITY_TYPE_URL:
+        # HumidityTrait has the same nesting as TemperatureTrait.
+        humidity = _nested_float(payload, 1, 1, 1)
+        if humidity is None:
+            return None
+        return ProtobufDeviceUpdate(
+            object_key=object_key, value={"current_humidity": humidity}
+        )
 
     if type_url == BATTERY_TYPE_URL:
         return _device_update(

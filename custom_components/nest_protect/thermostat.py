@@ -22,6 +22,31 @@ from .pynest.models import Bucket
 THERMOSTAT_SIGNAL_PREFIX = "nest_protect_thermostat_"
 THERMOSTAT_BUCKET_PREFIX = "device."
 
+# Identity worth caching across reloads. Readings are deliberately excluded:
+# they arrive within seconds of the stream reconnecting, and a restored
+# temperature would be indistinguishable from a live one.
+THERMOSTAT_CACHE_KEYS = frozenset(
+    {
+        "using_protobuf",
+        "device_id",
+        "structure_id",
+        "protobuf_device_type",
+        "serial_number",
+        "model",
+        "current_version",
+        "where_id",
+    }
+)
+
+
+def thermostat_cache_entry(bucket: Bucket) -> dict:
+    """Reduce a thermostat bucket to the fields worth persisting."""
+    return {
+        key: value
+        for key, value in bucket.value.items()
+        if key in THERMOSTAT_CACHE_KEYS
+    }
+
 
 def thermostat_discovery_signal(entry_id: str) -> str:
     """Dispatcher signal for newly-discovered thermostats on a config entry."""

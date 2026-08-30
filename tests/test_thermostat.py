@@ -1,6 +1,6 @@
 """Tests for thermostat discovery from the protobuf observe stream."""
 
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_connect,
@@ -12,13 +12,14 @@ from custom_components.nest_protect import (
     DOMAIN,
     HomeAssistantNestProtectData,
     _apply_protobuf_device_update,
+    _async_restore_protobuf_thermostats,
 )
 from custom_components.nest_protect.pynest.models import Bucket
-from custom_components.nest_protect.pynest.protobuf import ProtobufDeviceUpdate
 from custom_components.nest_protect.pynest.protobuf import (
     RCS_SOURCE_TYPE_BACKPLATE,
     RCS_SOURCE_TYPE_MULTI_SENSOR,
     RCS_SOURCE_TYPE_SINGLE_SENSOR,
+    ProtobufDeviceUpdate,
 )
 from custom_components.nest_protect.sensor import (
     ACTIVE_TEMPERATURE_SENSOR_DESCRIPTION,
@@ -166,8 +167,8 @@ async def test_subscribe_replays_already_discovered_thermostats(hass):
     assert added == [bucket]
 
 
-async def test_discovery_creates_both_temperature_sensors(hass):
-    """Test the sensor platform adds both temperatures for one thermostat."""
+async def test_discovery_creates_the_thermostat_sensors(hass):
+    """Test the sensor platform adds every thermostat reading in one go."""
     entry = MockConfigEntry(domain=DOMAIN)
     entry.add_to_hass(hass)
     bucket = _thermostat_bucket(
@@ -175,6 +176,7 @@ async def test_discovery_creates_both_temperature_sensors(hass):
             "serial_number": "thermostat-serial",
             "where_id": "where.living-room",
             "backplate_temperature": 21.51234,
+            "current_humidity": 43.6,
         }
     )
     entry_data = _entry_data(
@@ -199,11 +201,16 @@ async def test_discovery_creates_both_temperature_sensors(hass):
     )
 
     by_key = {sensor.entity_description.key: sensor for sensor in added}
-    assert set(by_key) == {"backplate_temperature", "current_temperature"}
+    assert set(by_key) == {
+        "backplate_temperature",
+        "current_temperature",
+        "current_humidity",
+    }
     assert by_key["backplate_temperature"].unique_id == (
         "device.09AB12-backplate_temperature"
     )
     assert by_key["backplate_temperature"].native_value == 21.51
+    assert by_key["current_humidity"].native_value == 44
     # Not published yet — the entity is added up front and fills in later.
     assert by_key["current_temperature"].native_value is None
     assert by_key["current_temperature"].device_info["name"] == (
@@ -297,6 +304,156 @@ def test_active_sensor_is_unknown_before_the_trait_arrives():
         "active_sensors": [],
         "associated_sensors": [],
     }
+
+
+async def test_active_sensor_name_resolves_when_the_sensor_traits_land(hass):
+    """Test a sensor's room label arriving later replaces the bare device id."""
+    kryptonite = Bucket(
+        object_key="kryptonite.18B430",
+        object_revision=0,
+        object_timestamp=0,
+        value={},
+    )
+    thermostat = _thermostat_bucket(
+        {
+            "serial_number": "thermostat-serial",
+            "rcs_source_type": RCS_SOURCE_TYPE_SINGLE_SENSOR,
+            "active_rcs_sensors": ["kryptonite.18B430"],
+        }
+    )
+    areas = {"where.hallway": "Hallway"}
+    sensor = NestThermostatActiveSensor(
+        thermostat,
+        ACTIVE_TEMPERATURE_SENSOR_DESCRIPTION,
+        areas,
+        MagicMock(),
+        {THERMOSTAT_KEY: thermostat, "kryptonite.18B430": kryptonite},
+    )
+    sensor.hass = hass
+    writes: list[str | None] = []
+    sensor.async_write_ha_state = lambda: writes.append(sensor.native_value)
+
+    # The selection is known before the sensor has published its location.
+    await sensor.async_added_to_hass()
+    assert sensor.native_value == "18B430"
+
+    # DeviceLocatedSettingsTrait lands on the sensor's own bucket.
+    kryptonite.value["where_id"] = "where.hallway"
+    async_dispatcher_send(hass, "kryptonite.18B430", kryptonite)
+    await hass.async_block_till_done()
+
+    assert writes == ["Hallway"]
+    assert sensor.native_value == "Hallway"
+
+
+async def test_active_sensor_stops_following_a_deselected_sensor(hass):
+    """Test subscriptions follow the selection instead of accumulating."""
+    thermostat = _thermostat_bucket(
+        {
+            "serial_number": "thermostat-serial",
+            "rcs_source_type": RCS_SOURCE_TYPE_SINGLE_SENSOR,
+            "active_rcs_sensors": ["kryptonite.18B430"],
+        }
+    )
+    sensor = NestThermostatActiveSensor(
+        thermostat,
+        ACTIVE_TEMPERATURE_SENSOR_DESCRIPTION,
+        {},
+        MagicMock(),
+        {THERMOSTAT_KEY: thermostat},
+    )
+    sensor.hass = hass
+    sensor.async_write_ha_state = MagicMock()
+
+    await sensor.async_added_to_hass()
+    assert set(sensor._sensor_unsubs) == {"kryptonite.18B430"}
+
+    # The thermostat switches to its own sensor.
+    thermostat.value.update(
+        {"rcs_source_type": RCS_SOURCE_TYPE_BACKPLATE, "active_rcs_sensors": []}
+    )
+    sensor.update_callback(thermostat)
+
+    assert sensor._sensor_unsubs == {}
+    assert sensor.native_value == "Thermostat"
+
+
+async def test_cached_thermostats_are_restored_before_platform_setup(hass):
+    """Test a reload recreates thermostat entities without waiting for the stream."""
+    store = MagicMock()
+    store.async_load = AsyncMock(
+        return_value={
+            THERMOSTAT_KEY: {
+                **PEER_DEVICE_VALUE,
+                "serial_number": "thermostat-serial",
+                "model": "Nest Learning Thermostat",
+            },
+            # Never cached in practice, but must not be resurrected as a device.
+            "kryptonite.18B430": {"serial_number": "sensor-serial"},
+        }
+    )
+    entry_data = _entry_data(device_store=store)
+
+    await _async_restore_protobuf_thermostats(entry_data)
+
+    assert set(entry_data.devices) == {THERMOSTAT_KEY}
+    assert entry_data.devices[THERMOSTAT_KEY].value["model"] == (
+        "Nest Learning Thermostat"
+    )
+    # Marked as announced, so live traits update the entity instead of
+    # triggering a second discovery.
+    assert entry_data.protobuf_thermostats == {THERMOSTAT_KEY}
+
+
+async def test_incomplete_cache_entries_are_ignored(hass):
+    """Test a cached thermostat without a serial number is not restored."""
+    store = MagicMock()
+    store.async_load = AsyncMock(return_value={THERMOSTAT_KEY: PEER_DEVICE_VALUE})
+    entry_data = _entry_data(device_store=store)
+
+    await _async_restore_protobuf_thermostats(entry_data)
+
+    assert entry_data.devices == {}
+    assert entry_data.protobuf_thermostats == set()
+
+
+async def test_identity_updates_are_cached_but_readings_are_not(hass):
+    """Test only identity fields are persisted, and only when they change."""
+    entry = MockConfigEntry(domain=DOMAIN)
+    store = MagicMock()
+    entry_data = _entry_data(device_store=store)
+
+    for value in (
+        PEER_DEVICE_VALUE,
+        {"serial_number": "thermostat-serial", "model": "Nest Learning Thermostat"},
+    ):
+        _apply_protobuf_device_update(
+            hass,
+            entry,
+            entry_data,
+            ProtobufDeviceUpdate(object_key=THERMOSTAT_KEY, value=value),
+        )
+
+    assert store.async_delay_save.call_count == 2
+    assert store.async_delay_save.call_args[0][0]() == {
+        THERMOSTAT_KEY: {
+            **PEER_DEVICE_VALUE,
+            "serial_number": "thermostat-serial",
+            "model": "Nest Learning Thermostat",
+        }
+    }
+
+    # A temperature update carries nothing worth persisting.
+    _apply_protobuf_device_update(
+        hass,
+        entry,
+        entry_data,
+        ProtobufDeviceUpdate(
+            object_key=THERMOSTAT_KEY, value={"backplate_temperature": 21.5}
+        ),
+    )
+
+    assert store.async_delay_save.call_count == 2
 
 
 async def test_late_identity_traits_update_the_device_registry(hass):

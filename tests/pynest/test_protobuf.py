@@ -6,6 +6,7 @@ from custom_components.nest_protect.pynest.protobuf import (
     BATTERY_TYPE_URL,
     DEVICE_IDENTITY_TYPE_URL,
     DEVICE_LOCATED_SETTINGS_TYPE_URL,
+    HUMIDITY_TYPE_URL,
     LIVENESS_TYPE_URL,
     NEST_KRYPTONITE_RESOURCE,
     PEER_DEVICES_TYPE_URL,
@@ -67,6 +68,7 @@ def test_encode_observe_request_asks_for_home_away_traits():
     assert b"nest.trait.occupancy.StructureModeTrait" in result
     assert b"weave.trait.peerdevices.PeerDevicesTrait" in result
     assert b"nest.trait.sensor.TemperatureTrait" in result
+    assert b"nest.trait.sensor.HumidityTrait" in result
     assert b"nest.trait.hvac.RemoteComfortSensingSettingsTrait" in result
 
 
@@ -281,6 +283,24 @@ def test_decode_thermostat_peer_device_and_temperatures():
         "serial_number": "thermostat-serial",
         "current_version": "6.2.2",
     }
+
+
+def test_decode_thermostat_humidity():
+    """Test HumidityTrait decodes with the same nesting as temperature."""
+    state = ProtobufObserveState(device_types={"09AB12": THERMOSTAT_RESOURCE})
+    payload = _stream_body(
+        _get_property(
+            "09AB12",
+            HUMIDITY_TYPE_URL,
+            _field_bytes(1, _field_bytes(1, _field_float(1, 43.5))),
+            trait_label="current_humidity",
+        )
+    )
+
+    updates = decode_structure_updates(payload, state)
+
+    assert updates[0].object_key == "device.09AB12"
+    assert updates[0].value == {"current_humidity": 43.5}
 
 
 def test_decode_rcs_settings_single_sensor():

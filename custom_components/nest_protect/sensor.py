@@ -14,8 +14,9 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
-from homeassistant.core import callback
+from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
@@ -140,14 +141,28 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         state_class=SensorStateClass.MEASUREMENT,
         bucket_type=BucketType.DEVICE,
     ),
+    NestProtectSensorDescription(
+        key="current_humidity",
+        translation_key="current_humidity",
+        value_fn=round,
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        bucket_type=BucketType.DEVICE,
+    ),
     # TODO Add Color Status (gray, green, yellow, red)
     # TODO Smoke Status (OK, Warning, Emergency)
     # TODO CO Status (OK, Warning, Emergency)
 ]
 
-# The thermostat's own sensor, and the effective reading it controls on — which
-# follows the selected remote comfort sensor and is what the SDM API reports.
-THERMOSTAT_SENSOR_KEYS = ("backplate_temperature", "current_temperature")
+# The thermostat's own sensor, the effective reading it controls on — which
+# follows the selected remote comfort sensor and is what the SDM API reports —
+# and its humidity.
+THERMOSTAT_SENSOR_KEYS = (
+    "backplate_temperature",
+    "current_temperature",
+    "current_humidity",
+)
 
 ACTIVE_TEMPERATURE_SENSOR_DESCRIPTION = NestProtectSensorDescription(
     key="active_temperature_sensor",
@@ -315,6 +330,50 @@ class NestThermostatActiveSensor(NestThermostatSensor):
         """Initialize with the device map, to name the selected sensor."""
         super().__init__(bucket, description, areas, client)
         self._devices = devices
+        self._sensor_unsubs: dict[str, CALLBACK_TYPE] = {}
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to this thermostat, and to the sensors it names."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._unsubscribe_sensors)
+        self._resubscribe_sensors()
+
+    @callback
+    def update_callback(self, bucket: Bucket) -> None:
+        """Handle a thermostat update, following any change of selection."""
+        super().update_callback(bucket)
+        self._resubscribe_sensors()
+
+    @callback
+    def _resubscribe_sensors(self) -> None:
+        """Track bucket updates for the sensors this entity names.
+
+        A temperature sensor's room label lands in its own `where_id` trait,
+        routinely after the selection that points at it. Without following those
+        buckets the state would keep showing the bare device id until the next
+        thermostat update happened to arrive.
+        """
+        wanted = set(self.bucket.value.get("active_rcs_sensors") or [])
+
+        for object_key in wanted - self._sensor_unsubs.keys():
+            self._sensor_unsubs[object_key] = async_dispatcher_connect(
+                self.hass, object_key, self._sensor_updated
+            )
+
+        for object_key in self._sensor_unsubs.keys() - wanted:
+            self._sensor_unsubs.pop(object_key)()
+
+    @callback
+    def _unsubscribe_sensors(self) -> None:
+        """Drop every sensor-bucket subscription."""
+        while self._sensor_unsubs:
+            _, unsub = self._sensor_unsubs.popitem()
+            unsub()
+
+    @callback
+    def _sensor_updated(self, bucket: Bucket) -> None:
+        """Re-resolve the name after a selected sensor publishes new traits."""
+        self.async_write_ha_state()
 
     @property
     def native_value(self) -> str | None:

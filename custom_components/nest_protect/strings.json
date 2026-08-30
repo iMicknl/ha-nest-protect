@@ -120,6 +120,9 @@
       "backplate_temperature": {
         "name": "Backplate temperature"
       },
+      "current_humidity": {
+        "name": "Humidity"
+      },
       "active_temperature_sensor": {
         "name": "Active temperature sensor"
       }

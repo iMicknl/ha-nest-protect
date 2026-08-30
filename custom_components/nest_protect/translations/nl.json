@@ -120,6 +120,9 @@
       "backplate_temperature": {
         "name": "Temperatuur achterplaat"
       },
+      "current_humidity": {
+        "name": "Luchtvochtigheid"
+      },
       "active_temperature_sensor": {
         "name": "Actieve temperatuursensor"
       }

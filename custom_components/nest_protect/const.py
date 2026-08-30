@@ -28,6 +28,10 @@ PLATFORMS: list[Platform] = [
 
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
+# Separate store: the session store is rewritten wholesale on every refresh.
+STORAGE_KEY_DEVICES_FORMAT: Final = "nest_protect_devices_{entry_id}"
+# Coalesce the burst of traits that arrives when the observe stream connects.
+DEVICE_CACHE_SAVE_DELAY: Final = 10
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min

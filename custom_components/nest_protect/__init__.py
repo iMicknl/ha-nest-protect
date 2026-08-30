@@ -25,9 +25,11 @@ from .const import (
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
+    DEVICE_CACHE_SAVE_DELAY,
     DOMAIN,
     LOGGER,
     PLATFORMS,
+    STORAGE_KEY_DEVICES_FORMAT,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
 )
@@ -55,7 +57,9 @@ from .pynest.protobuf import ProtobufDeviceUpdate, ProtobufStructureUpdate
 from .session import NestSessionManager
 from .thermostat import (
     THERMOSTAT_BUCKET_PREFIX,
+    THERMOSTAT_CACHE_KEYS,
     is_discoverable_thermostat,
+    thermostat_cache_entry,
     thermostat_discovery_signal,
 )
 
@@ -77,6 +81,9 @@ class HomeAssistantNestProtectData:
     protobuf_structure_map: dict[str, str] | None = None
     # Thermostat bucket keys already announced to the sensor platform.
     protobuf_thermostats: set[str] = field(default_factory=set)
+    # Persists protobuf-only devices, so a reload doesn't have to wait for the
+    # observe stream before it can recreate their entities.
+    device_store: Store | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -159,8 +166,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         client=client,
         session_manager=session_manager,
         grpc_lock_client=GrpcLockClient(client),
+        device_store=Store(
+            hass,
+            STORAGE_VERSION,
+            STORAGE_KEY_DEVICES_FORMAT.format(entry_id=entry.entry_id),
+        ),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+
+    await _async_restore_protobuf_thermostats(entry_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -273,11 +287,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Clean up persisted session data when the config entry is removed."""
-    store = Store(
-        hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
-    )
-    await store.async_remove()
+    """Clean up persisted session and device data when the entry is removed."""
+    for key_format in (STORAGE_KEY_FORMAT, STORAGE_KEY_DEVICES_FORMAT):
+        store = Store(hass, STORAGE_VERSION, key_format.format(entry_id=entry.entry_id))
+        await store.async_remove()
 
 
 def _persist_refreshed_cookies(
@@ -423,6 +436,61 @@ def _apply_protobuf_structure_update(
     async_dispatcher_send(hass, key, structure)
 
 
+async def _async_restore_protobuf_thermostats(
+    entry_data: HomeAssistantNestProtectData,
+) -> None:
+    """Recreate thermostat buckets cached by a previous run.
+
+    Thermostats exist only on the protobuf stream, so without this the sensor
+    platform has nothing to add at setup: Home Assistant remembers the entities
+    from the registry and shows them as unavailable until the stream reconnects
+    and republishes every trait.
+    """
+    if entry_data.device_store is None:
+        return
+
+    cached = await entry_data.device_store.async_load()
+
+    for object_key, value in (cached or {}).items():
+        if not object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+            continue
+
+        bucket = Bucket(
+            object_key=object_key,
+            object_revision=0,
+            object_timestamp=0,
+            value=dict(value),
+        )
+        if not is_discoverable_thermostat(bucket):
+            continue
+
+        entry_data.devices[object_key] = bucket
+        # Already known to the platform, so later trait updates go straight to
+        # the per-bucket signal instead of announcing a second discovery.
+        entry_data.protobuf_thermostats.add(object_key)
+
+    if entry_data.protobuf_thermostats:
+        LOGGER.debug(
+            "Restored cached thermostats: %s",
+            sorted(entry_data.protobuf_thermostats),
+        )
+
+
+def _save_protobuf_thermostats(entry_data: HomeAssistantNestProtectData) -> None:
+    """Persist thermostat identity, debounced past the initial trait burst."""
+    if entry_data.device_store is None:
+        return
+
+    entry_data.device_store.async_delay_save(
+        lambda: {
+            object_key: thermostat_cache_entry(bucket)
+            for object_key, bucket in entry_data.devices.items()
+            if object_key.startswith(THERMOSTAT_BUCKET_PREFIX)
+        },
+        DEVICE_CACHE_SAVE_DELAY,
+    )
+
+
 def _apply_protobuf_device_update(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -460,6 +528,9 @@ def _apply_protobuf_device_update(
         )
 
     if update.object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+        if not THERMOSTAT_CACHE_KEYS.isdisjoint(update.value):
+            _save_protobuf_thermostats(entry_data)
+
         if update.object_key in entry_data.protobuf_thermostats:
             async_dispatcher_send(hass, update.object_key, device)
         elif is_discoverable_thermostat(device):
