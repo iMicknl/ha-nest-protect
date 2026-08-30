@@ -53,6 +53,11 @@ from .pynest.models import (
 )
 from .pynest.protobuf import ProtobufDeviceUpdate, ProtobufStructureUpdate
 from .session import NestSessionManager
+from .thermostat import (
+    THERMOSTAT_BUCKET_PREFIX,
+    is_discoverable_thermostat,
+    thermostat_discovery_signal,
+)
 
 
 @dataclass
@@ -70,6 +75,8 @@ class HomeAssistantNestProtectData:
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
     protobuf_observe_task: asyncio.Task | None = None
     protobuf_structure_map: dict[str, str] | None = None
+    # Thermostat bucket keys already announced to the sensor platform.
+    protobuf_thermostats: set[str] = field(default_factory=set)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -329,7 +336,7 @@ async def _async_observe_for_protobuf_data(
                 if isinstance(update, ProtobufStructureUpdate):
                     _apply_protobuf_structure_update(hass, entry_data, update)
                 else:
-                    _apply_protobuf_device_update(hass, entry_data, update)
+                    _apply_protobuf_device_update(hass, entry, entry_data, update)
 
             LOGGER.debug("Protobuf observe stream ended.")
             await asyncio.sleep(5)
@@ -418,21 +425,50 @@ def _apply_protobuf_structure_update(
 
 def _apply_protobuf_device_update(
     hass: HomeAssistant,
+    entry: ConfigEntry,
     entry_data: HomeAssistantNestProtectData,
     update: ProtobufDeviceUpdate,
 ) -> None:
-    """Merge a protobuf temperature sensor update into the device bucket."""
+    """Merge a protobuf device update into the matching device bucket."""
     device = entry_data.devices.get(update.object_key)
     if not device:
-        LOGGER.debug("Protobuf observe: unknown device %s", update.object_key)
+        # Thermostats have no legacy bucket to merge into, so the protobuf
+        # stream is the only place they exist. Everything else is expected to
+        # come from app_launch first.
+        if not update.object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+            LOGGER.debug("Protobuf observe: unknown device %s", update.object_key)
+            return
+
+        device = Bucket(
+            object_key=update.object_key,
+            object_revision=0,
+            object_timestamp=0,
+            value=dict(update.value),
+        )
+        entry_data.devices[update.object_key] = device
+        LOGGER.debug(
+            "Protobuf observe: discovered thermostat %s (%s)",
+            update.object_key,
+            update.value.get("protobuf_device_type"),
+        )
+    else:
+        device.value.update(update.value)
+        LOGGER.debug(
+            "Protobuf observe: updated device %s with %s",
+            update.object_key,
+            sorted(update.value),
+        )
+
+    if update.object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+        if update.object_key in entry_data.protobuf_thermostats:
+            async_dispatcher_send(hass, update.object_key, device)
+        elif is_discoverable_thermostat(device):
+            entry_data.protobuf_thermostats.add(update.object_key)
+            async_dispatcher_send(
+                hass, thermostat_discovery_signal(entry.entry_id), device
+            )
         return
 
-    device.value.update(update.value)
-    LOGGER.debug(
-        "Protobuf observe: updated device %s with %s",
-        update.object_key,
-        sorted(update.value),
-    )
     async_dispatcher_send(hass, update.object_key, device)
 
 

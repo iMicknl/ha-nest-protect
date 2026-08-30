@@ -126,3 +126,30 @@ def test_incomplete_kryptonite_falls_back_to_object_key():
 
     assert device_info["identifiers"] == {(DOMAIN, "kryptonite.5678")}
     assert device_info["name"] == "Nest Temperature Sensor"
+
+
+def test_thermostat_device_info():
+    """Test that a protobuf-discovered thermostat reports its own device info."""
+    device_info = build_entity(
+        {
+            "where_id": "where.living-room",
+            "serial_number": "THERM123",
+            "model": "Nest Learning Thermostat",
+            "current_version": "6.2.2",
+        },
+        object_key="device.09AB12",
+    ).device_info
+
+    assert device_info["identifiers"] == {(DOMAIN, "THERM123")}
+    assert device_info["name"] == "Nest Thermostat (Living Room)"
+    assert device_info["model"] == "Nest Learning Thermostat"
+    assert device_info["sw_version"] == "6.2.2"
+
+
+def test_incomplete_thermostat_falls_back_to_object_key():
+    """Test that a thermostat without identity traits still sets up."""
+    device_info = build_entity({}, object_key="device.09AB12").device_info
+
+    assert device_info["identifiers"] == {(DOMAIN, "device.09AB12")}
+    assert device_info["name"] == "Nest Thermostat"
+    assert device_info["model"] is None

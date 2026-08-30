@@ -116,6 +116,12 @@
       },
       "current_temperature": {
         "name": "Temperature"
+      },
+      "backplate_temperature": {
+        "name": "Backplate temperature"
+      },
+      "active_temperature_sensor": {
+        "name": "Active temperature sensor"
       }
     },
     "select": {

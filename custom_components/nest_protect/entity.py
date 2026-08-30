@@ -88,6 +88,20 @@ class NestEntity(Entity):
                 ),
             )
 
+        if self.bucket.object_key.startswith("device."):
+            identifier = (
+                self.bucket.value.get("serial_number") or self.bucket.object_key
+            )
+
+            return DeviceInfo(
+                identifiers={(DOMAIN, identifier)},
+                name=f"Nest Thermostat ({label})" if label else "Nest Thermostat",
+                manufacturer="Google",
+                model=self.bucket.value.get("model"),
+                sw_version=self.bucket.value.get("current_version"),
+                suggested_area=self.area,
+            )
+
         if self.bucket.object_key.startswith("kryptonite."):
             identifier = (
                 self.bucket.value.get("serial_number") or self.bucket.object_key
