@@ -479,6 +479,17 @@ async def test_send_lock_command_raises_when_gateway_rejects_the_command():
         await client.send_lock_command("X", lock=True)
 
 
+async def test_send_lock_command_maps_unauthenticated_payload():
+    """gRPC status 16 must enter the shared session recovery path."""
+    resp = v1_pb2.SendCommandResponse()
+    resp.status.code = 16
+    resp.status.message = "unauthenticated"
+    client = _make_client(_FakeResponse(body=resp.SerializeToString()))
+
+    with pytest.raises(NestLockAuthException, match="code=16"):
+        await client.send_lock_command("X", lock=True)
+
+
 # -- observe frame parsing ---------------------------------------------------
 
 
@@ -634,6 +645,18 @@ def test_parse_observe_buffer_surfaces_a_gateway_status_frame(caplog):
     assert client._parse_observe_buffer(buffer) == []
     assert "code=7" in caplog.text
     assert "permission denied" in caplog.text
+
+
+def test_parse_observe_buffer_maps_unauthenticated_status():
+    """An HTTP-200 auth status must stop the observer for session recovery."""
+    body = streambody_pb2.StreamBody()
+    body.status.code = 16
+    body.status.message = "unauthenticated"
+    buffer = bytearray(body.SerializeToString())
+
+    client = _make_client()
+    with pytest.raises(NestLockAuthException, match="code=16"):
+        client._parse_observe_buffer(buffer)
 
 
 def test_parse_observe_buffer_ignores_a_zero_status_frame(caplog):

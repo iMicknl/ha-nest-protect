@@ -11,6 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
+from .pynest.exceptions import NotAuthenticatedException
 from .pynest.models import Bucket
 
 if TYPE_CHECKING:
@@ -154,9 +155,33 @@ class NestUpdatableEntity(NestDescriptiveEntity):
     async def _async_update_objects(self, objects: list[dict]) -> dict:
         """Update objects with automatic session refresh."""
         await self.session_manager.ensure_session()
-        return await self.client.update_objects(
-            self.client.nest_session.access_token,
-            self.client.nest_session.userid,
-            self.client.transport_url,
-            objects,
-        )
+        session = self.client.nest_session
+        if session is None:
+            raise NotAuthenticatedException("No active Nest session")
+
+        try:
+            return await self.client.update_objects(
+                session.access_token,
+                session.userid,
+                self.client.transport_url,
+                objects,
+            )
+        except NotAuthenticatedException:
+            await self.session_manager.async_refresh_session(rejected_session=session)
+
+        session = self.client.nest_session
+        if session is None:
+            raise NotAuthenticatedException("Nest session recovery failed")
+
+        try:
+            return await self.client.update_objects(
+                session.access_token,
+                session.userid,
+                self.client.transport_url,
+                objects,
+            )
+        except NotAuthenticatedException:
+            await self.session_manager.async_invalidate_session(
+                rejected_session=session
+            )
+            raise

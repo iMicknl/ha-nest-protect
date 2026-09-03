@@ -8,7 +8,13 @@ from random import randint
 from types import TracebackType
 from typing import Any, cast
 
-from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
+from aiohttp import (
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ContentTypeError,
+    FormData,
+)
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
@@ -38,6 +44,72 @@ from .models import (
 )
 
 _LOGGER = logging.getLogger(__package__)
+
+_AUTH_ERROR_CODES = frozenset(
+    {"access_denied", "not_authenticated", "unauthorized", "user_logged_out"}
+)
+_GOOGLE_CREDENTIAL_ERROR_CODES = frozenset(
+    {"access_denied", "invalid_grant", "user_logged_out"}
+)
+
+
+async def _raise_for_nest_status(response: ClientResponse, *, action: str) -> None:
+    """Classify HTTP failures before decoding a success payload."""
+    if response.status < 400:
+        return
+
+    detail = await response.text()
+    message = f"{response.status} error while {action} - {detail}"
+    if response.status in {401, 403}:
+        raise NotAuthenticatedException(message)
+    if response.status == 429 or response.status >= 500:
+        raise NestServiceException(message)
+    raise PynestException(message)
+
+
+async def _raise_for_google_status(response: ClientResponse, *, action: str) -> None:
+    """Classify Google token endpoint failures before JSON decoding."""
+    if response.status < 400:
+        return
+
+    if response.status == 429 or response.status >= 500:
+        raise NestServiceException(f"{response.status} error while {action}")
+
+    error = None
+    try:
+        payload = await response.json(content_type=None)
+        if isinstance(payload, dict):
+            error = payload.get("error")
+    except TypeError, ValueError:
+        pass
+
+    if _is_google_credential_error(error):
+        raise BadCredentialsException(str(error or response.status))
+    raise PynestException(f"{response.status} error while {action}")
+
+
+def _is_auth_error(error: Any) -> bool:
+    """Return whether an API error value explicitly describes rejection."""
+    if isinstance(error, str):
+        return error.lower() in _AUTH_ERROR_CODES
+    if isinstance(error, dict):
+        code = error.get("code") or error.get("status")
+        return isinstance(code, str) and code.lower() in _AUTH_ERROR_CODES
+    return False
+
+
+def _is_google_credential_error(error: Any) -> bool:
+    """Return whether Google explicitly rejected stored credentials."""
+    return isinstance(error, str) and error.lower() in _GOOGLE_CREDENTIAL_ERROR_CODES
+
+
+def _raise_for_nest_payload(payload: Any, *, action: str) -> None:
+    """Classify an API error carried inside a successful HTTP response."""
+    if not isinstance(payload, dict) or not (error := payload.get("error")):
+        return
+    if _is_auth_error(error):
+        raise NotAuthenticatedException(str(error))
+    raise PynestException(f"Nest error while {action}: {error}")
 
 
 def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
@@ -145,13 +217,16 @@ class NestClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         ) as response:
+            await _raise_for_google_status(
+                response, action="refreshing a Google access token"
+            )
             result = await response.json()
 
             if "error" in result:
-                if result["error"] == "invalid_grant":
+                if _is_google_credential_error(result["error"]):
                     raise BadCredentialsException(result["error"])
 
-                raise Exception(result["error"])
+                raise PynestException(result["error"])
 
             self.auth = GoogleAuthResponse(**result)
 
@@ -189,16 +264,18 @@ class NestClient:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
                 self.cookies = self.refreshed_cookies
 
+            await _raise_for_google_status(
+                response, action="refreshing a Google access token"
+            )
             result = await response.json()
 
             if "error" in result:
-                # Cookie method
-                if result["error"] == "USER_LOGGED_OUT":
+                if _is_google_credential_error(result["error"]):
                     raise BadCredentialsException(
-                        f"{result['error']} - {result['detail']}"
+                        f"{result['error']} - {result.get('detail', '')}"
                     )
 
-                raise Exception(result["error"])
+                raise PynestException(result["error"])
 
             self.auth = GoogleAuthResponseForCookies(**result)
 
@@ -223,7 +300,14 @@ class NestClient:
                 "Referer": self.environment.host,
             },
         ) as response:
+            await _raise_for_nest_status(
+                response, action="requesting a Nest session token"
+            )
             result = await response.json()
+            if error := result.get("error"):
+                if _is_auth_error(error):
+                    raise NotAuthenticatedException(str(error))
+                raise PynestException(str(error))
             nest_auth = NestAuthResponse(**result)
 
         async with self.session.get(
@@ -234,6 +318,7 @@ class NestClient:
                 + (nest_auth.jwt or ""),
             },
         ) as response:
+            await _raise_for_nest_status(response, action="authenticating")
             try:
                 nest_response = await response.json()
             except ContentTypeError as exception:
@@ -256,6 +341,8 @@ class NestClient:
             if nest_response.get("error"):
                 _LOGGER.error("Authentication error: %s", nest_response.get("error"))
 
+                if _is_auth_error(nest_response["error"]):
+                    raise NotAuthenticatedException(str(nest_response["error"]))
                 raise PynestException(
                     f"{response.status} error while authenticating - {nest_response}."
                 )
@@ -287,7 +374,15 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            result = await response.json()
+            await _raise_for_nest_status(response, action="fetching initial data")
+            try:
+                result = await response.json()
+            except ContentTypeError as exception:
+                detail = await response.text()
+                raise PynestException(
+                    f"{response.status} invalid response while fetching initial data"
+                    f" - {detail}"
+                ) from exception
 
             if "2fa_enabled" in result:
                 result["_2fa_enabled"] = result.pop("2fa_enabled")
@@ -297,6 +392,8 @@ class NestClient:
                     "Received error from Nest service: %s", await response.text()
                 )
 
+                if _is_auth_error(result["error"]):
+                    raise NotAuthenticatedException(str(result["error"]))
                 raise PynestException(
                     f"{response.status} error while subscribing - {result}"
                 )
@@ -328,7 +425,6 @@ class NestClient:
                 }
             )
 
-        # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
             timeout=ClientTimeout(total=timeout),
@@ -345,14 +441,13 @@ class NestClient:
         ) as response:
             _LOGGER.debug("Data received via subscriber (status: %s)", response.status)
 
-            if response.status == 401:
-                raise NotAuthenticatedException(await response.text())
-
             if response.status == 504:
                 raise GatewayTimeoutException(await response.text())
 
             if response.status == 502:
                 raise BadGatewayException(await response.text())
+
+            await _raise_for_nest_status(response, action="subscribing for data")
 
             if response.status == 200 and response.content_type == "text/plain":
                 raise EmptyResponseException(await response.text())
@@ -366,7 +461,8 @@ class NestClient:
                     f"{response.status} error while subscribing - {result}"
                 ) from error
 
-            # TODO type object
+            _raise_for_nest_payload(result, action="subscribing for data")
+
             return result
 
     async def update_objects(
@@ -376,12 +472,11 @@ class NestClient:
         transport_url: str,
         objects_to_update: dict,
     ) -> Any:
-        """Subscribe for data."""
+        """Update Nest objects."""
 
         epoch = int(time.time())
         random = str(randint(100, 999))
 
-        # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/put",
             json={
@@ -394,8 +489,7 @@ class NestClient:
                 "X-nl-protocol-version": str(1),
             },
         ) as response:
-            if response.status == 401:
-                raise NotAuthenticatedException(await response.text())
+            await _raise_for_nest_status(response, action="updating objects")
 
             try:
                 result = await response.json()
@@ -403,9 +497,9 @@ class NestClient:
                 result = await response.text()
 
                 raise PynestException(
-                    f"{response.status} error while subscribing - {result}"
+                    f"{response.status} error while updating objects - {result}"
                 ) from err
 
-            # TODO type object
+            _raise_for_nest_payload(result, action="updating objects")
 
             return result

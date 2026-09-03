@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from homeassistant.helpers import device_registry as dr
@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.lock import NestLockEntity
+from custom_components.nest_protect.pynest.exceptions import NestLockAuthException
 from custom_components.nest_protect.pynest.lock_models import LockBoltState, LockState
 
 SERIAL = "ABC123"
@@ -45,7 +46,7 @@ async def added_lock(hass):
     entry.add_to_hass(hass)
 
     initial = _lock_state()
-    entity = NestLockEntity(MagicMock(), initial)
+    entity = NestLockEntity(MagicMock(), initial, MagicMock())
 
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -111,3 +112,41 @@ async def test_update_without_a_device_entry_is_a_no_op(hass, added_lock):
         entity._handle_update(_lock_state(location="Front Door"))
 
     assert entity._lock_state.location == "Front Door"
+
+
+async def test_lock_command_recovers_rejected_session_once():
+    """A rejected lock command must refresh once through the coordinator."""
+    grpc_client = MagicMock()
+    grpc_client.send_lock_command = AsyncMock(
+        side_effect=[NestLockAuthException("401"), None]
+    )
+    old_session = MagicMock(access_token="old-token")
+    new_session = MagicMock(access_token="new-token")
+    session_manager = MagicMock(current_session=old_session)
+    session_manager.ensure_session = AsyncMock()
+
+    async def refresh_session(**kwargs):
+        session_manager.current_session = new_session
+        return True
+
+    session_manager.async_refresh_session = AsyncMock(side_effect=refresh_session)
+    entity = NestLockEntity(grpc_client, _lock_state(), session_manager)
+
+    await entity.async_lock()
+
+    session_manager.ensure_session.assert_awaited_once()
+    session_manager.async_refresh_session.assert_awaited_once_with(
+        rejected_session=old_session
+    )
+    assert grpc_client.send_lock_command.await_args_list == [
+        call(
+            entity._lock_state.resource_id,
+            lock=True,
+            nest_session=old_session,
+        ),
+        call(
+            entity._lock_state.resource_id,
+            lock=True,
+            nest_session=new_session,
+        ),
+    ]

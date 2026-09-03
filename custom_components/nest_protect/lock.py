@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError
 from homeassistant.components.lock import LockEntity
@@ -22,9 +22,18 @@ from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
-from .pynest.exceptions import PynestException
+from .pynest.exceptions import (
+    BadCredentialsException,
+    NestLockAuthException,
+    NestServiceException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
+
+if TYPE_CHECKING:
+    from .session import NestSessionManager
 
 LOCK_SIGNAL_PREFIX = "nest_protect_lock_"
 
@@ -97,12 +106,13 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up lock entities. Discovery is event-driven via dispatcher."""
-    grpc_client = hass.data[DOMAIN][entry.entry_id].grpc_lock_client
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    grpc_client = entry_data.grpc_lock_client
     subscribe_to_lock_discovery(
         hass,
         entry,
         async_add_entities,
-        lambda state: NestLockEntity(grpc_client, state),
+        lambda state: NestLockEntity(grpc_client, state, entry_data.session_manager),
     )
 
 
@@ -113,10 +123,16 @@ class NestLockEntity(LockEntity):
     _attr_should_poll = False
     _attr_name = None  # The lock is the primary feature of the device
 
-    def __init__(self, grpc_client: GrpcLockClient, lock_state: LockState) -> None:
+    def __init__(
+        self,
+        grpc_client: GrpcLockClient,
+        lock_state: LockState,
+        session_manager: NestSessionManager,
+    ) -> None:
         """Initialize."""
         self._grpc_client = grpc_client
         self._lock_state = lock_state
+        self._session_manager = session_manager
         self._attr_unique_id = f"lock_{lock_state.resource_id}"
         self._attr_attribution = ATTRIBUTION
         self._attr_device_info = self._build_device_info()
@@ -192,20 +208,59 @@ class NestLockEntity(LockEntity):
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the lock."""
         try:
-            await self._grpc_client.send_lock_command(
-                self._lock_state.resource_id, lock=True
-            )
-        except (ClientError, TimeoutError, PynestException) as err:
+            await self._async_send_command(lock=True)
+        except (
+            ClientError,
+            TimeoutError,
+            BadCredentialsException,
+            NestServiceException,
+            NotAuthenticatedException,
+            PynestException,
+        ) as err:
             raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the lock."""
         try:
-            await self._grpc_client.send_lock_command(
-                self._lock_state.resource_id, lock=False
-            )
-        except (ClientError, TimeoutError, PynestException) as err:
+            await self._async_send_command(lock=False)
+        except (
+            ClientError,
+            TimeoutError,
+            BadCredentialsException,
+            NestServiceException,
+            NotAuthenticatedException,
+            PynestException,
+        ) as err:
             raise HomeAssistantError(f"Failed to unlock: {err}") from err
+
+    async def _async_send_command(self, *, lock: bool) -> None:
+        """Send a command and retry once after coordinated session recovery."""
+        await self._session_manager.ensure_session()
+        rejected_session = self._session_manager.current_session
+
+        try:
+            await self._grpc_client.send_lock_command(
+                self._lock_state.resource_id,
+                lock=lock,
+                nest_session=rejected_session,
+            )
+        except NestLockAuthException:
+            await self._session_manager.async_refresh_session(
+                rejected_session=rejected_session
+            )
+            replacement_session = self._session_manager.current_session
+            try:
+                await self._grpc_client.send_lock_command(
+                    self._lock_state.resource_id,
+                    lock=lock,
+                    nest_session=replacement_session,
+                )
+            except NestLockAuthException:
+                if replacement_session is not None:
+                    await self._session_manager.async_invalidate_session(
+                        rejected_session=replacement_session
+                    )
+                raise
 
 
 class NestLockBatterySensor(SensorEntity):

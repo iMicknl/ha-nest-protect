@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
@@ -22,13 +24,13 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_ACCOUNT_TYPE,
-    CONF_COOKIES,
-    CONF_ISSUE_TOKEN,
-    CONF_REFRESH_TOKEN,
+    CONF_AUTH_GENERATION,
+    CONF_PREVIOUS_AUTH_GENERATION,
     DOMAIN,
     LOGGER,
     PLATFORMS,
     STORAGE_KEY_FORMAT,
+    STORAGE_PENDING_REAUTH_KEY_FORMAT,
     STORAGE_VERSION,
 )
 from .lock import discovery_signal, lock_signal
@@ -48,6 +50,7 @@ from .pynest.lock_models import LockState
 from .pynest.models import (
     Bucket,
     FirstDataAPIResponse,
+    NestResponse,
     TopazBucket,
     WhereBucketValue,
 )
@@ -68,6 +71,39 @@ class HomeAssistantNestProtectData:
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
 
 
+def _active_nest_session(client: NestClient) -> NestResponse:
+    """Return the active session after the coordinator has ensured one."""
+    if client.nest_session is None:
+        raise NotAuthenticatedException("No active Nest session")
+    return client.nest_session
+
+
+async def _async_mirror_credentials(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    updates: Mapping[str, Any],
+) -> None:
+    """Mirror provider updates only while their login generation is current."""
+    update_generation = updates.get(CONF_AUTH_GENERATION)
+    current_generation = entry.data.get(CONF_AUTH_GENERATION)
+    previous_generation = updates.get(CONF_PREVIOUS_AUTH_GENERATION)
+    is_staged_handoff = (
+        isinstance(update_generation, str) and previous_generation == current_generation
+    )
+    if (
+        current_generation is not None
+        and update_generation != current_generation
+        and not is_staged_handoff
+    ):
+        LOGGER.debug("Ignoring credentials from a replaced authentication generation")
+        return
+
+    data = {**entry.data, **updates}
+    data.pop(CONF_PREVIOUS_AUTH_GENERATION, None)
+    if data != entry.data:
+        hass.config_entries.async_update_entry(entry, data=data)
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     """Migrate old Config entries."""
     LOGGER.debug("Migrating from version %s", config_entry.version)
@@ -86,23 +122,25 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Nest Protect from a config entry."""
-    issue_token = entry.data.get(CONF_ISSUE_TOKEN)
-    cookies = entry.data.get(CONF_COOKIES)
-    refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
-
     session = async_create_clientsession(hass)
     account_type = entry.data.get(CONF_ACCOUNT_TYPE, Environment.PRODUCTION)
     client = NestClient(session=session, environment=NEST_ENVIRONMENTS[account_type])
-
-    client.issue_token = issue_token
-    client.cookies = cookies
-    client.refresh_token = refresh_token
 
     store = Store(
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
 
-    session_manager = NestSessionManager(client=client, store=store)
+    async def async_update_credentials(updates: Mapping[str, Any]) -> None:
+        """Mirror durable provider updates into the config entry."""
+        await _async_mirror_credentials(hass, entry, updates)
+
+    session_manager = NestSessionManager(
+        client=client,
+        store=store,
+        credential_generation=entry.data.get(CONF_AUTH_GENERATION),
+        credential_update_callback=async_update_credentials,
+        initial_credentials=entry.data,
+    )
 
     try:
         data = await session_manager.async_setup()
@@ -117,8 +155,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if data is None:
         raise ConfigEntryAuthFailed("No credentials available")
 
-    # Update cookies in config entry if Google returned refreshed ones
-    _persist_refreshed_cookies(hass, entry, client, session_manager)
+    session_manager.set_reauthentication_callback(
+        lambda: entry.async_start_reauth(hass)
+    )
 
     device_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
@@ -166,7 +205,7 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
     Returns — ending the background task — when the observer reports that this
     account has no locks, so accounts without a Nest x Yale lock stop talking to
     the gateway after the first stream. Auth failures are retried with a session
-    refresh, and escalate to re-auth after MAX_AUTH_FAILURES.
+    refresh and escalate only after the configured credentials are rejected.
 
     Auth health is tracked on the shared NestSessionManager rather than locally,
     so this loop and the REST subscriber can't each sit below the threshold
@@ -177,10 +216,11 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
     sm = entry_data.session_manager
 
     while True:
+        rejected_session = sm.current_session
         try:
-            async for batch in entry_data.grpc_lock_client.observe_locks():
-                # A working stream clears failures recorded by either transport.
-                sm.record_success()
+            async for batch in entry_data.grpc_lock_client.observe_locks(
+                nest_session=rejected_session
+            ):
                 new_locks: dict[str, LockState] = {}
                 for resource_id, lock_state in batch.items():
                     previous = cache.get(resource_id)
@@ -198,27 +238,26 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
-            sm.record_failure()
-            if sm.should_trigger_reauth:
-                LOGGER.warning(
-                    "Lock observer: %d consecutive auth failures, triggering "
-                    "re-authentication",
-                    sm.consecutive_failures,
-                )
-                entry.async_start_reauth(hass)
-                return
-
             LOGGER.debug(
-                "Lock observer: credentials rejected (%r), refreshing session", err
+                "Lock observer: session rejected (%r), refreshing session", err
             )
-            await asyncio.sleep(sm.backoff_interval)
-            await sm.async_refresh_session()
-
-            # Entry may have been unloaded during the backoff sleep
-            if entry.entry_id not in hass.data.get(DOMAIN, {}):
+            try:
+                await sm.async_refresh_session(rejected_session=rejected_session)
+            except BadCredentialsException:
+                sm.request_reauthentication()
                 return
-
-            _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+            except (
+                TimeoutError,
+                ClientError,
+                NestServiceException,
+                NotAuthenticatedException,
+                PynestException,
+            ) as refresh_error:
+                LOGGER.debug(
+                    "Lock observer: session recovery failed temporarily: %r",
+                    refresh_error,
+                )
+                await asyncio.sleep(60)
         except Exception:
             LOGGER.exception("Lock observe loop failed unexpectedly")
             return
@@ -253,32 +292,13 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     store = Store(
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
-    await store.async_remove()
-
-
-def _persist_refreshed_cookies(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    client: NestClient,
-    sm: NestSessionManager,
-) -> None:
-    """Persist Google-rotated cookies back to the config entry and client.
-
-    Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
-    Without writing them back, a HA restart would use stale cookies and force
-    re-authentication; the in-memory client also needs the update so the next
-    refresh in the same HA session uses fresh cookies.
-    """
-    new_cookies = sm.refreshed_cookies
-    if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
-        return
-
-    LOGGER.debug("Persisting refreshed Nest cookies")
-    hass.config_entries.async_update_entry(
-        entry,
-        data={**entry.data, CONF_COOKIES: new_cookies},
+    pending_reauth_store = Store(
+        hass,
+        STORAGE_VERSION,
+        STORAGE_PENDING_REAUTH_KEY_FORMAT.format(entry_id=entry.entry_id),
     )
-    client.cookies = new_cookies
+    await store.async_remove()
+    await pending_reauth_store.async_remove()
 
 
 def _register_subscribe_task(
@@ -304,21 +324,21 @@ async def _async_subscribe_for_data(
 
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     sm = entry_data.session_manager
+    rejected_session: NestResponse | None = None
 
     try:
         await asyncio.sleep(0)
 
         await sm.ensure_session()
-        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+        session = _active_nest_session(entry_data.client)
+        rejected_session = session
 
         result = await entry_data.client.subscribe_for_data(
-            entry_data.client.nest_session.access_token,
-            entry_data.client.nest_session.userid,
+            session.access_token,
+            session.userid,
             data.service_urls["urls"]["transport_url"],
             data.updated_buckets,
         )
-
-        sm.record_success()
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
@@ -372,7 +392,6 @@ async def _async_subscribe_for_data(
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
-        sm.record_success()
         _register_subscribe_task(hass, entry, data)
 
     except ClientConnectorError:
@@ -389,30 +408,27 @@ async def _async_subscribe_for_data(
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
-        sm.record_failure()
-
-        if sm.should_trigger_reauth:
-            LOGGER.warning(
-                "Subscriber: %d consecutive auth failures, triggering re-authentication",
-                sm.consecutive_failures,
-            )
-            entry.async_start_reauth(hass)
+        try:
+            await sm.async_refresh_session(rejected_session=rejected_session)
+        except BadCredentialsException:
+            sm.request_reauthentication()
             return
-
-        LOGGER.debug(
-            "Subscriber: retrying in %ds (attempt %d)",
-            sm.backoff_interval,
-            sm.consecutive_failures,
-        )
-        await asyncio.sleep(sm.backoff_interval)
-
-        await sm.async_refresh_session()
+        except (
+            TimeoutError,
+            ClientError,
+            NestServiceException,
+            NotAuthenticatedException,
+            PynestException,
+        ) as refresh_error:
+            LOGGER.debug(
+                "Subscriber: session recovery failed temporarily: %r",
+                refresh_error,
+            )
+            await asyncio.sleep(60)
 
         # Entry may have been unloaded during the backoff sleep
         if entry.entry_id not in hass.data.get(DOMAIN, {}):
             return
-
-        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
 
         _register_subscribe_task(hass, entry, data)
 
@@ -420,7 +436,7 @@ async def _async_subscribe_for_data(
         LOGGER.warning(
             "Bad credentials detected. Please re-authenticate the Nest Protect integration."
         )
-        entry.async_start_reauth(hass)
+        sm.request_reauthentication()
         return
 
     except NestServiceException:
@@ -440,12 +456,10 @@ async def _async_subscribe_for_data(
         raise
 
     except Exception:  # pylint: disable=broad-except
-        sm.record_failure()
         LOGGER.exception(
-            "Unknown exception. Please create an issue on GitHub with your logfile. Updates paused for %ds.",
-            sm.backoff_interval,
+            "Unknown exception. Please create an issue on GitHub with your logfile. Updates paused for 60s.",
         )
-        await asyncio.sleep(sm.backoff_interval)
+        await asyncio.sleep(60)
         _register_subscribe_task(hass, entry, data)
 
 

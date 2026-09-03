@@ -30,6 +30,7 @@ from .protobuf_gen.weave.trait import security_pb2 as weave_security_pb2
 
 if TYPE_CHECKING:
     from .client import NestClient
+    from .models import NestResponse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ _NO_LOCK_SETTLE_SECONDS = 30.0
 # HTTP statuses that mean the session token was rejected rather than that the
 # gateway had a transient problem. Retrying these forever never recovers.
 _AUTH_ERROR_STATUSES = frozenset({401, 403})
+_GRPC_UNAUTHENTICATED = 16
 
 # Protobuf wire-type for length-delimited fields. Every StreamBody field the
 # gateway sends is length-delimited (tag wire-type == 2); any other wire-type
@@ -241,9 +243,9 @@ class GrpcLockClient:
         # window. Set once and kept across reconnects.
         self._first_observe_at: float | None = None
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, nest_session: NestResponse | None = None) -> dict[str, str]:
         """Build the protobuf headers using the current session token."""
-        session = self._nest_client.nest_session
+        session = nest_session or self._nest_client.nest_session
         if session is None or not session.access_token:
             raise NestLockAuthException("No active Nest session — cannot call gRPC-web")
         # NestEnvironment.host already carries the scheme ("https://home.nest.com"),
@@ -394,6 +396,11 @@ class GrpcLockClient:
                 continue
 
             if body.HasField("status") and body.status.code != 0:
+                if body.status.code == _GRPC_UNAUTHENTICATED:
+                    raise NestLockAuthException(
+                        "Observe stream rejected: "
+                        f"code={body.status.code} message={body.status.message!r}"
+                    )
                 _LOGGER.warning(
                     "Observe stream reported status code=%s message=%r",
                     body.status.code,
@@ -443,7 +450,9 @@ class GrpcLockClient:
             return
         self._locks_present = False
 
-    async def observe_locks(self) -> AsyncIterator[dict[str, LockState]]:
+    async def observe_locks(
+        self, *, nest_session: NestResponse | None = None
+    ) -> AsyncIterator[dict[str, LockState]]:
         """Long-lived observer. Yields `{resource_id: LockState}` per update batch.
 
         Reconnects on transient errors with exponential backoff. Ends the
@@ -457,7 +466,12 @@ class GrpcLockClient:
         delay = _RECONNECT_INITIAL_DELAY
         while True:
             try:
-                async for batch in self._observe_once():
+                stream = (
+                    self._observe_once()
+                    if nest_session is None
+                    else self._observe_once(nest_session=nest_session)
+                )
+                async for batch in stream:
                     delay = _RECONNECT_INITIAL_DELAY
                     yield batch
                 # Re-check on the way out too: a stream that ends right after
@@ -490,7 +504,9 @@ class GrpcLockClient:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)
 
-    async def _observe_once(self) -> AsyncIterator[dict[str, LockState]]:
+    async def _observe_once(
+        self, *, nest_session: NestResponse | None = None
+    ) -> AsyncIterator[dict[str, LockState]]:
         """Single observe-stream session. Yields LockState batches until stream ends."""
         url = f"https://{self._grpc_host}{OBSERVE_ENDPOINT}"
         body = self._build_observe_request()
@@ -503,7 +519,7 @@ class GrpcLockClient:
         async with self._nest_client.session.post(
             url,
             data=body,
-            headers=self._headers(),
+            headers=self._headers(nest_session),
             timeout=ClientTimeout(
                 total=None, connect=_CONNECT_TIMEOUT, sock_read=_SOCK_READ_TIMEOUT
             ),
@@ -531,7 +547,13 @@ class GrpcLockClient:
                     )
                     return
 
-    async def send_lock_command(self, resource_id: str, lock: bool) -> None:
+    async def send_lock_command(
+        self,
+        resource_id: str,
+        lock: bool,
+        *,
+        nest_session: NestResponse | None = None,
+    ) -> None:
         """Send a lock or unlock command. Raises on failure."""
         state_value = (
             weave_security_pb2.BoltLockTrait.BoltState.BOLT_STATE_EXTENDED
@@ -559,7 +581,7 @@ class GrpcLockClient:
         async with self._nest_client.session.post(
             url,
             data=body,
-            headers=self._headers(),
+            headers=self._headers(nest_session),
             timeout=ClientTimeout(total=_SEND_COMMAND_TIMEOUT),
         ) as response:
             if response.status in _AUTH_ERROR_STATUSES:
@@ -581,6 +603,11 @@ class GrpcLockClient:
             resp.status.code,
             resp.status.message,
         )
+        if resp.status.code == _GRPC_UNAUTHENTICATED:
+            raise NestLockAuthException(
+                "Lock command rejected: "
+                f"code={resp.status.code} message={resp.status.message!r}"
+            )
         if resp.status.code != 0:
             raise NestLockCommandException(
                 f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
