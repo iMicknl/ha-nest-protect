@@ -23,7 +23,6 @@ from .entity import NestDescriptiveEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
-
 SMOKE_CO_STATUS_TO_STATE: dict[int, str] = {
     0: "ok",
     1: "testing",
@@ -140,6 +139,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=smoke_co_status_to_state,
         device_class=SensorDeviceClass.ENUM,
         options=["ok", "testing", "warning", "emergency"],
+        icon="mdi:smoke",
     ),
     NestProtectSensorDescription(
         key="co_status",
@@ -147,6 +147,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=smoke_co_status_to_state,
         device_class=SensorDeviceClass.ENUM,
         options=["ok", "testing", "warning", "emergency"],
+        icon="mdi:molecule-co",
     ),
     # TODO Add Color Status (gray, green, yellow, red)
 ]

@@ -118,7 +118,7 @@
         "name": "Temperature"
       },
       "smoke_status_sensor": {
-        "name": "Smoke status",
+        "name": "Smoke status (text)",
         "state": {
           "ok": "OK",
           "testing": "Testing",
@@ -127,7 +127,7 @@
         }
       },
       "co_status_sensor": {
-        "name": "CO status",
+        "name": "CO status (text)",
         "state": {
           "ok": "OK",
           "testing": "Testing",
