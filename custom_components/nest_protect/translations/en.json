@@ -116,6 +116,24 @@
       },
       "current_temperature": {
         "name": "Temperature"
+      },
+      "smoke_status_sensor": {
+        "name": "Smoke status (text)",
+        "state": {
+          "ok": "OK",
+          "testing": "Testing",
+          "warning": "Warning",
+          "emergency": "Emergency"
+        }
+      },
+      "co_status_sensor": {
+        "name": "CO status (text)",
+        "state": {
+          "ok": "OK",
+          "testing": "Testing",
+          "warning": "Warning",
+          "emergency": "Emergency"
+        }
       }
     },
     "select": {
