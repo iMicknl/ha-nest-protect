@@ -24,6 +24,19 @@ from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
 
+SMOKE_CO_STATUS_TO_STATE: dict[int, str] = {
+    0: "ok",
+    1: "testing",
+    2: "warning",
+    3: "emergency",
+}
+
+
+def smoke_co_status_to_state(state: int) -> str:
+    """Convert the raw smoke/CO status code to an enum state."""
+    return SMOKE_CO_STATUS_TO_STATE.get(state, "ok")
+
+
 def milli_volt_to_percentage(state: int):
     """
     Convert battery level in mV to a percentage.
@@ -121,9 +134,21 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    NestProtectSensorDescription(
+        key="smoke_status",
+        translation_key="smoke_status_sensor",
+        value_fn=smoke_co_status_to_state,
+        device_class=SensorDeviceClass.ENUM,
+        options=["ok", "testing", "warning", "emergency"],
+    ),
+    NestProtectSensorDescription(
+        key="co_status",
+        translation_key="co_status_sensor",
+        value_fn=smoke_co_status_to_state,
+        device_class=SensorDeviceClass.ENUM,
+        options=["ok", "testing", "warning", "emergency"],
+    ),
     # TODO Add Color Status (gray, green, yellow, red)
-    # TODO Smoke Status (OK, Warning, Emergency)
-    # TODO CO Status (OK, Warning, Emergency)
 ]
 
 
