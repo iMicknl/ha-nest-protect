@@ -116,6 +116,15 @@
       },
       "current_temperature": {
         "name": "Temperatuur"
+      },
+      "backplate_temperature": {
+        "name": "Temperatuur achterplaat"
+      },
+      "current_humidity": {
+        "name": "Luchtvochtigheid"
+      },
+      "active_temperature_sensor": {
+        "name": "Actieve temperatuursensor"
       }
     },
     "select": {
@@ -140,6 +149,9 @@
       },
       "steam_detection_enable": {
         "name": "Stoomcontrole"
+      },
+      "home_away": {
+        "name": "Thuis bezet"
       }
     }
   }

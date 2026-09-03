@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field
 
+import httpx
 from aiohttp import (
     ClientConnectorError,
     ClientError,
@@ -25,9 +26,14 @@ from .const import (
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
+    DEVICE_CACHE_SAVE_DELAY,
     DOMAIN,
     LOGGER,
     PLATFORMS,
+    PROTOBUF_RECONNECT_INITIAL_DELAY,
+    PROTOBUF_RECONNECT_MAX_DELAY,
+    PROTOBUF_STREAM_HEALTHY_SECONDS,
+    STORAGE_KEY_DEVICES_FORMAT,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
 )
@@ -51,7 +57,19 @@ from .pynest.models import (
     TopazBucket,
     WhereBucketValue,
 )
+from .pynest.protobuf import (
+    NEST_KRYPTONITE_RESOURCE,
+    ProtobufDeviceUpdate,
+    ProtobufStructureUpdate,
+)
 from .session import NestSessionManager
+from .thermostat import (
+    THERMOSTAT_BUCKET_PREFIX,
+    THERMOSTAT_CACHE_KEYS,
+    is_discoverable_thermostat,
+    thermostat_cache_entry,
+    thermostat_discovery_signal,
+)
 
 
 @dataclass
@@ -59,6 +77,7 @@ class HomeAssistantNestProtectData:
     """Nest Protect data stored in the Home Assistant data object."""
 
     devices: dict[str, Bucket]
+    structures: dict[str, Bucket]
     areas: dict[str, str]
     client: NestClient
     session_manager: NestSessionManager
@@ -66,6 +85,13 @@ class HomeAssistantNestProtectData:
     subscription_task: asyncio.Task | None = None
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
+    protobuf_observe_task: asyncio.Task | None = None
+    protobuf_structure_map: dict[str, str] | None = None
+    # Thermostat bucket keys already announced to the sensor platform.
+    protobuf_thermostats: set[str] = field(default_factory=set)
+    # Persists protobuf-only devices, so a reload doesn't have to wait for the
+    # observe stream before it can recreate their entities.
+    device_store: Store | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -121,11 +147,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     _persist_refreshed_cookies(hass, entry, client, session_manager)
 
     device_buckets: list[Bucket] = []
+    structure_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
 
     for bucket in data.updated_buckets:
         if bucket.type in {BucketType.TOPAZ, BucketType.KRYPTONITE}:
             device_buckets.append(bucket)
+
+        if bucket.type == BucketType.STRUCTURE:
+            structure_buckets.append(bucket)
 
         if bucket.type == BucketType.WHERE and isinstance(
             bucket.value, WhereBucketValue
@@ -135,20 +165,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
                 areas[area.where_id] = area.name
 
     devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
+    structures: dict[str, Bucket] = {b.object_key: b for b in structure_buckets}
 
     entry_data = HomeAssistantNestProtectData(
         devices=devices,
+        structures=structures,
         areas=areas,
         client=client,
         session_manager=session_manager,
         grpc_lock_client=GrpcLockClient(client),
+        device_store=Store(
+            hass,
+            STORAGE_VERSION,
+            STORAGE_KEY_DEVICES_FORMAT.format(entry_id=entry.entry_id),
+        ),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+
+    await _async_restore_protobuf_thermostats(entry_data)
+    _seed_protobuf_observe_state(entry_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry_data.subscription_task = asyncio.create_task(
         _async_subscribe_for_data(hass, entry, data)
+    )
+    entry_data.protobuf_observe_task = asyncio.create_task(
+        _async_observe_for_protobuf_data(hass, entry)
     )
 
     entry_data.lock_observe_task = entry.async_create_background_task(
@@ -243,17 +286,20 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry_data.lock_observe_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await entry_data.lock_observe_task
+            if entry_data.protobuf_observe_task:
+                entry_data.protobuf_observe_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await entry_data.protobuf_observe_task
             hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Clean up persisted session data when the config entry is removed."""
-    store = Store(
-        hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
-    )
-    await store.async_remove()
+    """Clean up persisted session and device data when the entry is removed."""
+    for key_format in (STORAGE_KEY_FORMAT, STORAGE_KEY_DEVICES_FORMAT):
+        store = Store(hass, STORAGE_VERSION, key_format.format(entry_id=entry.entry_id))
+        await store.async_remove()
 
 
 def _persist_refreshed_cookies(
@@ -293,6 +339,290 @@ def _register_subscribe_task(
     task = asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
     entry_data.subscription_task = task
     return task
+
+
+def _next_observe_delay(delay: int, stream_duration: float) -> int:
+    """Pace the next observe reconnect.
+
+    A stream that stayed up long enough to be doing its job resets the delay;
+    anything shorter doubles it, so an account the gateway keeps hanging up on
+    settles into a slow retry instead of hammering it for weeks.
+    """
+    if stream_duration >= PROTOBUF_STREAM_HEALTHY_SECONDS:
+        return PROTOBUF_RECONNECT_INITIAL_DELAY
+    return min(delay * 2, PROTOBUF_RECONNECT_MAX_DELAY)
+
+
+async def _async_observe_for_protobuf_data(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Observe protobuf data: Home/Away, thermostats and temperature sensors."""
+    delay = PROTOBUF_RECONNECT_INITIAL_DELAY
+
+    while entry.entry_id in hass.data.get(DOMAIN, {}):
+        entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+        sm = entry_data.session_manager
+        started = hass.loop.time()
+        received = False
+
+        try:
+            await sm.ensure_session()
+
+            async for update in entry_data.client.observe_for_structure_updates(
+                entry_data.client.nest_session.access_token,
+            ):
+                if not received:
+                    received = True
+                    # A stream that yields anything proves the shared session is
+                    # healthy, so clear failures recorded by any transport.
+                    sm.record_success()
+
+                if isinstance(update, ProtobufStructureUpdate):
+                    _apply_protobuf_structure_update(hass, entry_data, update)
+                else:
+                    _apply_protobuf_device_update(hass, entry, entry_data, update)
+
+            delay = _next_observe_delay(delay, hass.loop.time() - started)
+            LOGGER.debug("Protobuf observe stream ended. Reconnecting in %ds.", delay)
+            await asyncio.sleep(delay)
+
+        except NotAuthenticatedException:
+            LOGGER.debug("Protobuf observe: 401 exception.")
+            sm.record_failure()
+
+            if sm.should_trigger_reauth:
+                LOGGER.warning(
+                    "Protobuf observe: %d consecutive auth failures, triggering re-authentication",
+                    sm.consecutive_failures,
+                )
+                entry.async_start_reauth(hass)
+                return
+
+            await asyncio.sleep(sm.backoff_interval)
+            await sm.async_refresh_session()
+
+            # Entry may have been unloaded during the backoff sleep
+            if entry.entry_id not in hass.data.get(DOMAIN, {}):
+                return
+
+            _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
+
+        except BadCredentialsException:
+            LOGGER.warning(
+                "Bad credentials detected. Please re-authenticate the Nest Protect integration."
+            )
+            entry.async_start_reauth(hass)
+            return
+
+        except asyncio.CancelledError:
+            LOGGER.debug("Protobuf observe: task cancelled, stopping.")
+            raise
+
+        except (httpx.HTTPError, TimeoutError, OSError) as err:
+            # Read timeouts, resets and gateway hiccups are routine on a stream
+            # that is meant to stay open for weeks. Logging a traceback for each
+            # would bury the failures that actually need attention.
+            delay = _next_observe_delay(delay, hass.loop.time() - started)
+            LOGGER.debug(
+                "Protobuf observe: transport error (%r). Reconnecting in %ds.",
+                err,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+        except Exception:  # pylint: disable=broad-except
+            delay = _next_observe_delay(delay, hass.loop.time() - started)
+            LOGGER.exception("Protobuf observe failed. Updates paused for %ds.", delay)
+            await asyncio.sleep(delay)
+
+
+def _apply_protobuf_structure_update(
+    hass: HomeAssistant,
+    entry_data: HomeAssistantNestProtectData,
+    update: ProtobufStructureUpdate,
+) -> None:
+    """Merge a protobuf structure update into the legacy structure bucket."""
+    if entry_data.protobuf_structure_map is None:
+        entry_data.protobuf_structure_map = {}
+
+    if update.legacy_structure_id:
+        entry_data.protobuf_structure_map[update.resource_id] = (
+            update.legacy_structure_id
+        )
+
+    legacy_structure_id = (
+        update.legacy_structure_id
+        or entry_data.protobuf_structure_map.get(update.resource_id)
+    )
+    if not legacy_structure_id:
+        LOGGER.debug(
+            "Protobuf observe: no legacy structure mapping for %s", update.resource_id
+        )
+        return
+
+    key = f"structure.{legacy_structure_id}"
+    structure = entry_data.structures.get(key)
+    if not structure:
+        LOGGER.debug("Protobuf observe: unknown legacy structure %s", key)
+        return
+
+    structure.value["new_structure_id"] = update.resource_id.removeprefix("STRUCTURE_")
+    structure.value["using_protobuf"] = True
+    if update.user_id:
+        structure.value["user_id"] = update.user_id
+    if update.away is not None:
+        structure.value["away"] = update.away
+        structure.value["protobuf_away"] = update.away
+
+    LOGGER.debug(
+        "Protobuf observe: updated structure %s with %s",
+        key,
+        sorted(
+            k for k in ("new_structure_id", "user_id", "away") if k in structure.value
+        ),
+    )
+    async_dispatcher_send(hass, key, structure)
+
+
+async def _async_restore_protobuf_thermostats(
+    entry_data: HomeAssistantNestProtectData,
+) -> None:
+    """Recreate thermostat buckets cached by a previous run.
+
+    Thermostats exist only on the protobuf stream, so without this the sensor
+    platform has nothing to add at setup: Home Assistant remembers the entities
+    from the registry and shows them as unavailable until the stream reconnects
+    and republishes every trait.
+    """
+    if entry_data.device_store is None:
+        return
+
+    cached = await entry_data.device_store.async_load()
+
+    for object_key, value in (cached or {}).items():
+        if not object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+            continue
+
+        bucket = Bucket(
+            object_key=object_key,
+            object_revision=0,
+            object_timestamp=0,
+            value=dict(value),
+        )
+        if not is_discoverable_thermostat(bucket):
+            continue
+
+        entry_data.devices[object_key] = bucket
+        # Already known to the platform, so later trait updates go straight to
+        # the per-bucket signal instead of announcing a second discovery.
+        entry_data.protobuf_thermostats.add(object_key)
+
+    if entry_data.protobuf_thermostats:
+        LOGGER.debug(
+            "Restored cached thermostats: %s",
+            sorted(entry_data.protobuf_thermostats),
+        )
+
+
+def _seed_protobuf_observe_state(entry_data: HomeAssistantNestProtectData) -> None:
+    """Tell the observe decoder about devices we already know.
+
+    The decoder can only route a device trait once `PeerDevicesTrait` has told
+    it what type that device is, and the gateway gives no ordering guarantee
+    between the two. Everything already known from app_launch or the device
+    cache is therefore pushed in up front, so the first stream after a restart
+    doesn't have to win that race before it can accept a reading.
+    """
+    state = entry_data.client.protobuf_observe_state
+
+    for object_key, bucket in entry_data.devices.items():
+        device_id = bucket.value.get("device_id")
+        if not device_id:
+            # Legacy REST buckets are keyed `<type>.<device id>`.
+            _, _, device_id = object_key.partition(".")
+        if not device_id:
+            continue
+
+        if device_type := bucket.value.get("protobuf_device_type"):
+            state.device_types[device_id] = device_type
+        elif object_key.startswith("kryptonite."):
+            # A kryptonite bucket is a Nest Temperature Sensor by definition.
+            state.device_types[device_id] = NEST_KRYPTONITE_RESOURCE
+        elif object_key.startswith("topaz."):
+            # Protects are served over REST here; drop their protobuf traits on
+            # sight rather than holding them for a mapping that never comes.
+            state.unsupported_devices.add(device_id)
+
+    LOGGER.debug(
+        "Seeded observe decoder with %d known device(s)", len(state.device_types)
+    )
+
+
+def _save_protobuf_thermostats(entry_data: HomeAssistantNestProtectData) -> None:
+    """Persist thermostat identity, debounced past the initial trait burst."""
+    if entry_data.device_store is None:
+        return
+
+    entry_data.device_store.async_delay_save(
+        lambda: {
+            object_key: thermostat_cache_entry(bucket)
+            for object_key, bucket in entry_data.devices.items()
+            if object_key.startswith(THERMOSTAT_BUCKET_PREFIX)
+        },
+        DEVICE_CACHE_SAVE_DELAY,
+    )
+
+
+def _apply_protobuf_device_update(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    entry_data: HomeAssistantNestProtectData,
+    update: ProtobufDeviceUpdate,
+) -> None:
+    """Merge a protobuf device update into the matching device bucket."""
+    device = entry_data.devices.get(update.object_key)
+    if not device:
+        # Thermostats have no legacy bucket to merge into, so the protobuf
+        # stream is the only place they exist. Everything else is expected to
+        # come from app_launch first.
+        if not update.object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+            LOGGER.debug("Protobuf observe: unknown device %s", update.object_key)
+            return
+
+        device = Bucket(
+            object_key=update.object_key,
+            object_revision=0,
+            object_timestamp=0,
+            value=dict(update.value),
+        )
+        entry_data.devices[update.object_key] = device
+        LOGGER.debug(
+            "Protobuf observe: discovered thermostat %s (%s)",
+            update.object_key,
+            update.value.get("protobuf_device_type"),
+        )
+    else:
+        device.value.update(update.value)
+        LOGGER.debug(
+            "Protobuf observe: updated device %s with %s",
+            update.object_key,
+            sorted(update.value),
+        )
+
+    if update.object_key.startswith(THERMOSTAT_BUCKET_PREFIX):
+        if not THERMOSTAT_CACHE_KEYS.isdisjoint(update.value):
+            _save_protobuf_thermostats(entry_data)
+
+        if update.object_key in entry_data.protobuf_thermostats:
+            async_dispatcher_send(hass, update.object_key, device)
+        elif is_discoverable_thermostat(device):
+            entry_data.protobuf_thermostats.add(update.object_key)
+            async_dispatcher_send(
+                hass, thermostat_discovery_signal(entry.entry_id), device
+            )
+        return
+
+    async_dispatcher_send(hass, update.object_key, device)
 
 
 async def _async_subscribe_for_data(
@@ -344,6 +674,13 @@ async def _async_subscribe_for_data(
                 entry_data.devices[key] = kryptonite
 
                 async_dispatcher_send(hass, key, kryptonite)
+
+            # Structures / Home-Away
+            if key.startswith("structure."):
+                structure = Bucket(**bucket)
+                entry_data.structures[key] = structure
+
+                async_dispatcher_send(hass, key, structure)
 
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}

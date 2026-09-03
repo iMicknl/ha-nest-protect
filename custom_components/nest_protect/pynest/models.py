@@ -314,6 +314,7 @@ class NestEnvironment:
     name: str
     client_id: str
     host: str
+    grpc_host: str
 
 
 @dataclass
