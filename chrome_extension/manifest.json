@@ -3,6 +3,12 @@
   "name": "Nest Auth Helper",
   "version": "1.0.0",
   "description": "Extract authentication credentials for the ha-nest-protect Home Assistant integration",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nest-auth-helper@iMicknl",
+      "strict_min_version": "109.0"
+    }
+  },
   "permissions": [
     "cookies",
     "webRequest",
@@ -13,7 +19,8 @@
     "https://accounts.google.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   },
   "action": {
     "default_popup": "popup.html",

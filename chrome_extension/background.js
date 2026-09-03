@@ -1,8 +1,19 @@
+const browser = globalThis.browser ?? globalThis.chrome;
+const isFirefox = typeof browser.runtime.getBrowserInfo === "function";
+
 let capturedData = {
   issueToken: null,
   cookies: null,
   listening: false,
 };
+
+const debugLogs = [];
+function log(msg) {
+  const entry = `${new Date().toISOString().substring(11, 23)} ${msg}`;
+  console.log("[nest-auth]", msg);
+  debugLogs.push(entry);
+  if (debugLogs.length > 200) debugLogs.shift();
+}
 
 const FIRST_PARTY_AUTH_COOKIES = new Set([
   "SID", "HSID", "SSID", "APISID", "SAPISID",
@@ -11,65 +22,81 @@ const FIRST_PARTY_AUTH_COOKIES = new Set([
 function startListening() {
   capturedData = { issueToken: null, cookies: null, listening: true };
 
-  if (!chrome.webRequest.onBeforeRequest.hasListener(captureIssueToken)) {
-    chrome.webRequest.onBeforeRequest.addListener(captureIssueToken, {
+  if (!browser.webRequest.onBeforeRequest.hasListener(captureIssueToken)) {
+    browser.webRequest.onBeforeRequest.addListener(captureIssueToken, {
       urls: ["https://accounts.google.com/o/oauth2/iframerpc*"],
       types: ["xmlhttprequest", "sub_frame", "main_frame"],
     });
   }
 
-  if (!chrome.webRequest.onSendHeaders.hasListener(captureRequestCookies)) {
-    chrome.webRequest.onSendHeaders.addListener(
+  if (!browser.webRequest.onSendHeaders.hasListener(captureRequestCookies)) {
+    const extraOpts = isFirefox ? ["requestHeaders"] : ["requestHeaders", "extraHeaders"];
+    browser.webRequest.onSendHeaders.addListener(
       captureRequestCookies,
       {
         urls: ["https://accounts.google.com/o/oauth2/iframerpc*"],
         types: ["xmlhttprequest", "sub_frame", "main_frame"],
       },
-      ["requestHeaders", "extraHeaders"]
+      extraOpts
     );
   }
 }
 
 function stopListening() {
   capturedData.listening = false;
-  if (chrome.webRequest.onBeforeRequest.hasListener(captureIssueToken)) {
-    chrome.webRequest.onBeforeRequest.removeListener(captureIssueToken);
+  if (browser.webRequest.onBeforeRequest.hasListener(captureIssueToken)) {
+    browser.webRequest.onBeforeRequest.removeListener(captureIssueToken);
   }
-  if (chrome.webRequest.onSendHeaders.hasListener(captureRequestCookies)) {
-    chrome.webRequest.onSendHeaders.removeListener(captureRequestCookies);
+  if (browser.webRequest.onSendHeaders.hasListener(captureRequestCookies)) {
+    browser.webRequest.onSendHeaders.removeListener(captureRequestCookies);
   }
 }
 
 function captureIssueToken(details) {
+  log(`onBeforeRequest: ${details.url.substring(0, 80)}`);
   if (details.url.includes("action=issueToken")) {
+    log("issueToken captured");
     capturedData.issueToken = details.url;
     checkComplete();
   }
 }
 
 function captureRequestCookies(details) {
+  log(`onSendHeaders: ${details.url.substring(0, 80)}`);
   if (!details.url.includes("action=issueToken")) return;
+
+  const cookieMap = new Map();
 
   const cookieHeader = details.requestHeaders.find(
     (h) => h.name.toLowerCase() === "cookie"
   );
-  if (!cookieHeader) return;
+  log(`cookie header found: ${!!cookieHeader} | headers: ${details.requestHeaders.map(h => h.name).join(", ")}`);
 
-  const cookieMap = new Map();
-  cookieHeader.value.split("; ").forEach((pair) => {
-    const eqIdx = pair.indexOf("=");
-    if (eqIdx > 0) {
-      cookieMap.set(pair.substring(0, eqIdx), pair.substring(eqIdx + 1));
-    }
-  });
+  if (cookieHeader) {
+    cookieHeader.value.split("; ").forEach((pair) => {
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx > 0) {
+        cookieMap.set(pair.substring(0, eqIdx), pair.substring(eqIdx + 1));
+      }
+    });
+    log(`cookies from header: ${cookieMap.size}`);
+  }
 
-  chrome.cookies.getAll({ url: "https://accounts.google.com" }, (cookies) => {
+  browser.cookies.getAll({ url: "https://accounts.google.com" }).then((cookies) => {
+    log(`cookies.getAll: ${cookies?.length ?? 0} cookies [${cookies?.map(c => c.name).join(", ")}]`);
     if (cookies) {
       for (const c of cookies) {
-        if (FIRST_PARTY_AUTH_COOKIES.has(c.name) && !cookieMap.has(c.name)) {
-          cookieMap.set(c.name, c.value);
-        }
+        const relevant = cookieMap.size === 0
+          ? true
+          : FIRST_PARTY_AUTH_COOKIES.has(c.name) && !cookieMap.has(c.name);
+        if (relevant) cookieMap.set(c.name, c.value);
       }
+    }
+
+    log(`final cookieMap: ${cookieMap.size} keys [${[...cookieMap.keys()].join(", ")}]`);
+    if (cookieMap.size === 0) {
+      log("WARNING: no cookies found, aborting");
+      return;
     }
 
     capturedData.cookies = Array.from(cookieMap.entries())
@@ -83,21 +110,24 @@ function captureRequestCookies(details) {
 function checkComplete() {
   if (capturedData.issueToken && capturedData.cookies) {
     stopListening();
-    chrome.action.setBadgeText({ text: "✓" });
-    chrome.action.setBadgeBackgroundColor({ color: "#4CAF50" });
-    // Open the popup by programmatically triggering the action
-    chrome.action.openPopup();
+    browser.action.setBadgeText({ text: "✓" });
+    browser.action.setBadgeBackgroundColor({ color: "#4CAF50" });
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === "startCapture") {
-    startListening();
-    chrome.action.setBadgeText({ text: "..." });
-    chrome.action.setBadgeBackgroundColor({ color: "#FF9800" });
+browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.action === "getLogs") {
+    sendResponse({ logs: debugLogs.slice() });
+    return false;
+  }
 
-    // Always open a fresh tab to ensure the OAuth iframe fires
-    chrome.tabs.create({ url: "https://home.nest.com/" }, () => {
+  if (message.action === "startCapture") {
+    log("startCapture received");
+    startListening();
+    browser.action.setBadgeText({ text: "..." });
+    browser.action.setBadgeBackgroundColor({ color: "#FF9800" });
+
+    browser.tabs.create({ url: "https://home.nest.com/" }).then(() => {
       sendResponse({ status: "started" });
     });
     return true;
@@ -111,7 +141,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "reset") {
     stopListening();
     capturedData = { issueToken: null, cookies: null, listening: false };
-    chrome.action.setBadgeText({ text: "" });
+    browser.action.setBadgeText({ text: "" });
     sendResponse({ status: "reset" });
     return false;
   }
