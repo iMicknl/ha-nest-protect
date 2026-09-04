@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {
+  width: 380px;
+  padding: 20px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: #333;
+}
+h2 { margin: 0 0 12px; font-size: 16px; }
+p { margin: 8px 0; line-height: 1.5; }
+.status {
+  padding: 12px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+.status.info { background: #e3f2fd; color: #1565c0; }
+.status.success { background: #e8f5e9; color: #2e7d32; }
+.status.error { background: #fbe9e7; color: #c62828; }
+.output-area {
+  margin-top: 12px;
+}
+.output-area label {
+  display: block;
+  font-weight: 500;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.output-area textarea {
+  width: 100%;
+  height: 100px;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 11px;
+  resize: vertical;
+  word-break: break-all;
+}
+button {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px;
+  background: #1976d2;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+button:hover { background: #1565c0; }
+button:disabled { background: #bbb; cursor: not-allowed; }
+button.copy-btn {
+  background: #43a047;
+  margin-top: 8px;
+}
+button.copy-btn:hover { background: #388e3c; }
+.warning {
+  font-size: 12px;
+  color: #e65100;
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+  <h2>Nest Auth Helper</h2>
+  <p>Extract credentials for the <strong>ha-nest-protect</strong> Home Assistant integration.</p>
+  <p>Click the button below — it will open home.nest.com and capture your credentials automatically once you sign in.</p>
+  <p><em>When the toolbar icon badge shows ✓, click it to open this popup and retrieve your code.</em></p>
+
+  <button id="extract_btn">Extract Credentials</button>
+
+  <div id="status_area"></div>
+
+  <div id="output_area" class="output-area" style="display:none;">
+    <label for="auth_code">Your Authentication Code</label>
+    <textarea id="auth_code" readonly></textarea>
+    <button id="copy_btn" class="copy-btn">Copy Code</button>
+    <p class="warning">Do not share this code — it contains your Google session credentials.</p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

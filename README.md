@@ -1,3 +1,5 @@
+THIS IS AN AI AGENT VIBE-CODE FORK TRYING TO PORT THE HA-HELPER-CHROME-EXTENSION TO FIREFOX! USED SYSTEM Perplexity Computer, using Claude Sonnet 4.6. Firefox port tested working
+
 ![Detail page of a Nest Protect device](https://github.com/iMicknl/ha-nest-protect/assets/1424596/8fd15c57-2a9c-4c20-8c8f-65a526573d1e)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/hacs/integration)
