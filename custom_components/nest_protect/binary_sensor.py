@@ -180,10 +180,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
         for key in device.value:
             if description := supported_keys.get(key):
                 # Not all entities are useful for battery powered Nest Protect devices
-                if (
-                    description.wired_only
-                    and device.value.get("wired_or_battery") != 0
-                ):
+                if description.wired_only and device.value.get("wired_or_battery") != 0:
                     continue
 
                 entities.append(
