@@ -37,8 +37,8 @@
         }
       },
       "account_link": {
-        "title": "Connect Your Nest Account",
-        "description": "Follow these steps to get your credentials:\n\n1. Open an **Incognito/Private** browser window\n2. Enable **third-party cookies** in browser settings\n3. Go to [home.nest.com]({nest_url}) and sign in with Google\n4. Open **Developer Tools** (F12) → **Network** tab → Check **Preserve Log**\n5. In the filter box, type `issueToken` and copy the full **Request URL**\n6. In the filter box, type `oauth2/iframe`, click the last request, and copy the entire **Cookie** header value\n\n⚠️ Do not log out of home.nest.com after copying credentials",
+        "title": "Connect Your Nest Account (Manual)",
+        "description": "Follow these steps to get your credentials:\n\n1. Open a **regular** Chrome/Edge browser window (not Incognito — third-party cookies must be enabled)\n2. Open **Developer Tools** (F12) → **Network** tab → Check **Preserve Log**\n3. In the filter box, type `issueToken`\n4. Go to [home.nest.com]({nest_url}) and sign in with Google\n5. Click the `iframerpc` request and copy the full **Request URL**\n6. In the filter box, type `oauth2/iframe`, click the last request, and copy the entire **Cookie** header value\n\n⚠️ Do not log out of home.nest.com after copying credentials.",
         "data": {
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
