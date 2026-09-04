@@ -30,9 +30,7 @@ def test_missing_binary_values_remain_unknown(key, missing):
     """Missing samples must not be converted into an alarm or occupancy."""
     description = next(d for d in BINARY_SENSOR_DESCRIPTIONS if d.key == key)
     payload = {} if missing else {key: None}
-    entity = NestProtectBinarySensor(
-        make_bucket(payload), description, {}, MagicMock()
-    )
+    entity = NestProtectBinarySensor(make_bucket(payload), description, {}, MagicMock())
     assert entity.is_on is None
 
 

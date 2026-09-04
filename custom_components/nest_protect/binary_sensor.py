@@ -180,7 +180,10 @@ async def async_setup_entry(hass, entry, async_add_devices):
         for key in device.value:
             if description := supported_keys.get(key):
                 # Not all entities are useful for battery powered Nest Protect devices
-                if description.wired_only and device.value["wired_or_battery"] != 0:
+                if (
+                    description.wired_only
+                    and device.value.get("wired_or_battery") != 0
+                ):
                     continue
 
                 entities.append(
@@ -198,7 +201,9 @@ class NestProtectBinarySensor(NestDescriptiveEntity, BinarySensorEntity):
     entity_description: NestProtectBinarySensorDescription
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
         """Return the state of the sensor."""
         state = self.bucket.value.get(self.entity_description.key)
+        if state is None:
+            return None
         return self.entity_description.value_fn(state)

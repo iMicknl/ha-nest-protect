@@ -158,9 +158,11 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     entity_description: NestProtectSensorDescription
 
     @property
-    def native_value(self) -> bool:
+    def native_value(self) -> StateType:
         """Return the state of the sensor."""
         state = self.bucket.value.get(self.entity_description.key)
+        if state is None:
+            return None
 
         if self.entity_description.value_fn:
             return self.entity_description.value_fn(state)
