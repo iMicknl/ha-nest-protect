@@ -1,5 +1,6 @@
 """Test init."""
 
+import asyncio
 import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,10 +12,17 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.nest_protect import (
     DOMAIN,
     HomeAssistantNestProtectData,
+    _async_observe_locks_loop,
     _async_subscribe_for_data,
 )
 from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
-from custom_components.nest_protect.pynest.exceptions import NotAuthenticatedException
+from custom_components.nest_protect.pynest.exceptions import (
+    BadCredentialsException,
+    NestLockAuthException,
+    NestServiceException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN, ComponentSetup
@@ -490,3 +498,86 @@ async def test_subscriber_success_resets_failure_counter(hass):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
     assert sm.consecutive_failures == 0
+
+
+@pytest.mark.parametrize("transport", ["subscriber", "lock"])
+@pytest.mark.parametrize(
+    ("refresh_error", "reauth_expected"),
+    [
+        (aiohttp.ClientError("offline"), False),
+        (TimeoutError(), False),
+        (PynestException("temporary"), False),
+        (NestServiceException("unavailable"), False),
+        (NotAuthenticatedException("rejected"), False),
+        (BadCredentialsException("revoked"), True),
+    ],
+)
+async def test_auth_recovery_handles_refresh_errors(
+    hass, transport, refresh_error, reauth_expected
+):
+    """A failed refresh must retry or request reauth without killing the task."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
+
+    attempts = []
+
+    async def observe_locks():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise NestLockAuthException("rejected")
+        yield {}
+
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data.grpc_lock_client.observe_locks = observe_locks
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(sm, "async_refresh_session", side_effect=refresh_error),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        if transport == "subscriber":
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+            assert reschedule.call_count == (0 if reauth_expected else 1)
+        else:
+            await _async_observe_locks_loop(hass, entry)
+            assert len(attempts) == (1 if reauth_expected else 2)
+
+    assert reauth.call_count == int(reauth_expected)
+    assert any(call.args[0] > 0 for call in sleep.call_args_list)
+
+
+@pytest.mark.parametrize("transport", ["subscriber", "lock"])
+async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
+    """Unloading during a refresh must cancel without starting more work."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
+
+    async def observe_locks():
+        yield {}
+        raise NestLockAuthException("rejected")
+
+    hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    operation = (
+        _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+        if transport == "subscriber"
+        else _async_observe_locks_loop(hass, entry)
+    )
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(sm, "async_refresh_session", side_effect=asyncio.CancelledError()),
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(entry, "async_start_reauth") as reauth,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await operation
+
+    reschedule.assert_not_called()
+    reauth.assert_not_called()
