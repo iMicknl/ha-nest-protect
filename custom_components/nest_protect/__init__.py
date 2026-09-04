@@ -212,13 +212,8 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
                 "Lock observer: credentials rejected (%r), refreshing session", err
             )
             await asyncio.sleep(sm.backoff_interval)
-            await sm.async_refresh_session()
-
-            # Entry may have been unloaded during the backoff sleep
-            if entry.entry_id not in hass.data.get(DOMAIN, {}):
+            if not await _async_recover_session(hass, entry, entry_data):
                 return
-
-            _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
         except Exception:
             LOGGER.exception("Lock observe loop failed unexpectedly")
             return
@@ -279,6 +274,35 @@ def _persist_refreshed_cookies(
         data={**entry.data, CONF_COOKIES: new_cookies},
     )
     client.cookies = new_cookies
+
+
+async def _async_recover_session(
+    hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
+) -> bool:
+    """Refresh rejected credentials and report whether background work can resume."""
+    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+        return False
+
+    # Exceptions raised inside a transport's except block bypass its other handlers.
+    try:
+        await entry_data.session_manager.async_refresh_session()
+    except BadCredentialsException:
+        entry.async_start_reauth(hass)
+        return False
+    except (
+        TimeoutError,
+        ClientError,
+        NestServiceException,
+        NotAuthenticatedException,
+        PynestException,
+    ) as err:
+        LOGGER.debug("Session recovery failed; retrying background updates: %s", err)
+
+    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+        return False
+
+    _persist_refreshed_cookies(hass, entry, entry_data.client, entry_data.session_manager)
+    return True
 
 
 def _register_subscribe_task(
@@ -406,13 +430,8 @@ async def _async_subscribe_for_data(
         )
         await asyncio.sleep(sm.backoff_interval)
 
-        await sm.async_refresh_session()
-
-        # Entry may have been unloaded during the backoff sleep
-        if entry.entry_id not in hass.data.get(DOMAIN, {}):
+        if not await _async_recover_session(hass, entry, entry_data):
             return
-
-        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
 
         _register_subscribe_task(hass, entry, data)
 
