@@ -564,20 +564,20 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
         raise NestLockAuthException("rejected")
 
     hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    operation = (
+        _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+        if transport == "subscriber"
+        else _async_observe_locks_loop(hass, entry)
+    )
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
-        patch.object(
-            sm, "async_refresh_session", side_effect=asyncio.CancelledError()
-        ),
+        patch.object(sm, "async_refresh_session", side_effect=asyncio.CancelledError()),
         patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
         patch.object(entry, "async_start_reauth") as reauth,
         pytest.raises(asyncio.CancelledError),
     ):
-        if transport == "subscriber":
-            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
-        else:
-            await _async_observe_locks_loop(hass, entry)
+        await operation
 
     reschedule.assert_not_called()
     reauth.assert_not_called()

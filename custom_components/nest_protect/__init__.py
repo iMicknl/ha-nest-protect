@@ -301,7 +301,9 @@ async def _async_recover_session(
     if entry.entry_id not in hass.data.get(DOMAIN, {}):
         return False
 
-    _persist_refreshed_cookies(hass, entry, entry_data.client, entry_data.session_manager)
+    _persist_refreshed_cookies(
+        hass, entry, entry_data.client, entry_data.session_manager
+    )
     return True
 
 
