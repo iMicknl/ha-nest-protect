@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from aiohttp import (
@@ -102,7 +103,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
 
-    session_manager = NestSessionManager(client=client, store=store)
+    session_manager = NestSessionManager(
+        client=client,
+        store=store,
+        on_cookies_refreshed=_make_cookie_persister(hass, entry, client),
+    )
 
     try:
         data = await session_manager.async_setup()
@@ -256,29 +261,47 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await store.async_remove()
 
 
-def _persist_refreshed_cookies(
+def _make_cookie_persister(
     hass: HomeAssistant,
     entry: ConfigEntry,
     client: NestClient,
-    sm: NestSessionManager,
-) -> None:
-    """Persist Google-rotated cookies back to the config entry and client.
+) -> Callable[[str], None]:
+    """Build the callback that writes Google-rotated cookies back to the entry.
 
     Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
     Without writing them back, a HA restart would use stale cookies and force
     re-authentication; the in-memory client also needs the update so the next
     refresh in the same HA session uses fresh cookies.
     """
-    new_cookies = sm.refreshed_cookies
-    if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
-        return
 
-    LOGGER.debug("Persisting refreshed Nest cookies")
-    hass.config_entries.async_update_entry(
-        entry,
-        data={**entry.data, CONF_COOKIES: new_cookies},
-    )
-    client.cookies = new_cookies
+    def _persist(new_cookies: str) -> None:
+        if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
+            return
+
+        LOGGER.debug("Persisting refreshed Nest cookies")
+        hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_COOKIES: new_cookies},
+        )
+        client.cookies = new_cookies
+
+    return _persist
+
+
+def _persist_refreshed_cookies(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    client: NestClient,
+    sm: NestSessionManager,
+) -> None:
+    """Persist any cookies the session manager has not already handed over.
+
+    The session manager notifies on every path that reaches Google, so this is
+    normally a no-op. It stays as a backstop for callers holding a session
+    manager built without a callback.
+    """
+    if sm.refreshed_cookies:
+        _make_cookie_persister(hass, entry, client)(sm.refreshed_cookies)
 
 
 def _register_subscribe_task(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -28,16 +30,28 @@ class NestSessionManager:
         self,
         client: NestClient,
         store: Store,
+        on_cookies_refreshed: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize the session manager."""
         self._client = client
         self._store = store
+        self._on_cookies_refreshed = on_cookies_refreshed
         self._consecutive_failures: int = 0
 
     @property
     def refreshed_cookies(self) -> str | None:
         """Proxy to client's refreshed_cookies property."""
         return self._client.refreshed_cookies
+
+    def _notify_cookies_refreshed(self) -> None:
+        """Hand Google-rotated cookies to the owner so they outlive a restart.
+
+        Every path that can reach Google runs through this class, so notifying
+        here covers the ones that have no reference to the config entry, such as
+        an entity pushing a state change.
+        """
+        if self._on_cookies_refreshed and self._client.refreshed_cookies:
+            self._on_cookies_refreshed(self._client.refreshed_cookies)
 
     @property
     def consecutive_failures(self) -> int:
@@ -142,6 +156,7 @@ class NestSessionManager:
             auth = await self._client.get_access_token_from_cookies(
                 self._client.issue_token, self._client.cookies
             )
+            self._notify_cookies_refreshed()
         elif self._client.refresh_token:
             auth = await self._client.get_access_token_from_refresh_token(
                 self._client.refresh_token
@@ -168,6 +183,7 @@ class NestSessionManager:
         if not self._client.auth or self._client.auth.is_expired():
             LOGGER.debug("Retrieving new Google access token")
             await self._client.get_access_token()
+            self._notify_cookies_refreshed()
 
         if not self._client.auth:
             return False

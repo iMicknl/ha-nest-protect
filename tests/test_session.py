@@ -369,3 +369,70 @@ async def test_backoff_interval_increases():
     for _ in range(10):
         manager.record_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[-1]
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_notifies_owner():
+    """Cookies rotated during setup are handed to the persistence callback."""
+    client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
+    client.get_access_token_from_cookies = AsyncMock(
+        return_value=MagicMock(access_token="new-google-token")
+    )
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+    client.get_first_data = AsyncMock(return_value=_make_first_data())
+    client.nest_session = None
+    client.transport_url = None
+    client.refreshed_cookies = "SID=rotated"
+
+    store = MagicMock()
+    store.async_load = AsyncMock(return_value=None)
+    store.async_save = AsyncMock()
+
+    persisted: list[str] = []
+    manager = NestSessionManager(
+        client=client, store=store, on_cookies_refreshed=persisted.append
+    )
+
+    await manager.async_setup()
+
+    assert persisted == ["SID=rotated"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_session_notifies_owner():
+    """A refresh triggered outside setup still persists rotated cookies.
+
+    This is the path an entity takes when it pushes a state change, which has
+    no reference to the config entry of its own.
+    """
+    client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refresh_token = None
+    client.auth = None
+    client.nest_session = _make_nest_response(expired=True)
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+    client.refreshed_cookies = "SID=rotated-later"
+
+    async def _set_auth() -> None:
+        client.auth = MagicMock(
+            access_token="new-google-token", is_expired=lambda: False
+        )
+
+    client.get_access_token = AsyncMock(side_effect=_set_auth)
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    persisted: list[str] = []
+    manager = NestSessionManager(
+        client=client, store=store, on_cookies_refreshed=persisted.append
+    )
+
+    await manager.ensure_session()
+
+    client.get_access_token.assert_awaited_once()
+    assert persisted == ["SID=rotated-later"]
