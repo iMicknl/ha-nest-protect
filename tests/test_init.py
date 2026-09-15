@@ -14,7 +14,10 @@ from custom_components.nest_protect import (
     _async_subscribe_for_data,
 )
 from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
-from custom_components.nest_protect.pynest.exceptions import NotAuthenticatedException
+from custom_components.nest_protect.pynest.exceptions import (
+    BadCredentialsException,
+    NotAuthenticatedException,
+)
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN, ComponentSetup
@@ -490,3 +493,76 @@ async def test_subscriber_success_resets_failure_counter(hass):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
     assert sm.consecutive_failures == 0
+
+
+async def test_subscriber_refresh_failure_triggers_reauth(hass):
+    """Bad credentials during the 401 recovery must surface, not kill the task.
+
+    ``async_refresh_session`` is awaited from inside the NotAuthenticated
+    handler, so anything it raises bypasses the sibling BadCredentials handler.
+    Unguarded it escapes the coroutine; nothing awaits the subscribe task and the
+    entry holds a strong reference to it, so the failure is never reported at
+    all. The integration simply goes quiet until the next restart.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as resubscribe,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(
+            sm,
+            "async_refresh_session",
+            new_callable=AsyncMock,
+            side_effect=BadCredentialsException("USER_LOGGED_OUT"),
+        ),
+        patch.object(entry, "async_start_reauth") as start_reauth,
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    start_reauth.assert_called_once()
+    resubscribe.assert_not_called()
+
+
+async def test_subscriber_refresh_network_error_retries(hass):
+    """A transient failure during recovery should re-arm, not trigger reauth."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as resubscribe,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(
+            sm,
+            "async_refresh_session",
+            new_callable=AsyncMock,
+            side_effect=aiohttp.ClientError(),
+        ),
+        patch.object(entry, "async_start_reauth") as start_reauth,
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    resubscribe.assert_called_once()
+    start_reauth.assert_not_called()

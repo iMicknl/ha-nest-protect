@@ -217,7 +217,26 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
                 "Lock observer: credentials rejected (%r), refreshing session", err
             )
             await asyncio.sleep(sm.backoff_interval)
-            await sm.async_refresh_session()
+
+            try:
+                await sm.async_refresh_session()
+            except BadCredentialsException:
+                # Same trap as the subscriber below: raised from inside an
+                # except block, so the `except Exception` clause of this same
+                # try cannot catch it.
+                LOGGER.warning(
+                    "Lock observer: credentials rejected while refreshing the "
+                    "session. Please re-authenticate the Nest Protect "
+                    "integration."
+                )
+                entry.async_start_reauth(hass)
+                return
+            except (TimeoutError, ClientError) as exception:
+                LOGGER.debug(
+                    "Lock observer: session refresh failed (%r), giving up this cycle",
+                    exception,
+                )
+                return
 
             # Entry may have been unloaded during the backoff sleep
             if entry.entry_id not in hass.data.get(DOMAIN, {}):
@@ -429,7 +448,23 @@ async def _async_subscribe_for_data(
         )
         await asyncio.sleep(sm.backoff_interval)
 
-        await sm.async_refresh_session()
+        try:
+            await sm.async_refresh_session()
+        except BadCredentialsException:
+            # Raised from inside an except block, so the sibling handler below
+            # never sees it. Left unhandled it escapes the coroutine, and since
+            # nothing awaits the subscribe task the integration goes silent:
+            # no log line, no reauth prompt, no further updates until a restart.
+            LOGGER.warning(
+                "Subscriber: credentials rejected while refreshing the session. "
+                "Please re-authenticate the Nest Protect integration."
+            )
+            entry.async_start_reauth(hass)
+            return
+        except (TimeoutError, ClientError) as exception:
+            LOGGER.debug("Subscriber: session refresh failed (%r), retrying", exception)
+            _register_subscribe_task(hass, entry, data)
+            return
 
         # Entry may have been unloaded during the backoff sleep
         if entry.entry_id not in hass.data.get(DOMAIN, {}):
