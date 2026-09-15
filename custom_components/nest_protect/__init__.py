@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from aiohttp import (
@@ -102,7 +103,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
 
-    session_manager = NestSessionManager(client=client, store=store)
+    session_manager = NestSessionManager(
+        client=client,
+        store=store,
+        on_cookies_refreshed=_make_cookie_persister(hass, entry, client),
+    )
 
     try:
         data = await session_manager.async_setup()
@@ -212,7 +217,26 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
                 "Lock observer: credentials rejected (%r), refreshing session", err
             )
             await asyncio.sleep(sm.backoff_interval)
-            await sm.async_refresh_session()
+
+            try:
+                await sm.async_refresh_session()
+            except BadCredentialsException:
+                # Same trap as the subscriber below: raised from inside an
+                # except block, so the `except Exception` clause of this same
+                # try cannot catch it.
+                LOGGER.warning(
+                    "Lock observer: credentials rejected while refreshing the "
+                    "session. Please re-authenticate the Nest Protect "
+                    "integration."
+                )
+                entry.async_start_reauth(hass)
+                return
+            except (TimeoutError, ClientError) as exception:
+                LOGGER.debug(
+                    "Lock observer: session refresh failed (%r), giving up this cycle",
+                    exception,
+                )
+                return
 
             # Entry may have been unloaded during the backoff sleep
             if entry.entry_id not in hass.data.get(DOMAIN, {}):
@@ -256,29 +280,47 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await store.async_remove()
 
 
-def _persist_refreshed_cookies(
+def _make_cookie_persister(
     hass: HomeAssistant,
     entry: ConfigEntry,
     client: NestClient,
-    sm: NestSessionManager,
-) -> None:
-    """Persist Google-rotated cookies back to the config entry and client.
+) -> Callable[[str], None]:
+    """Build the callback that writes Google-rotated cookies back to the entry.
 
     Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
     Without writing them back, a HA restart would use stale cookies and force
     re-authentication; the in-memory client also needs the update so the next
     refresh in the same HA session uses fresh cookies.
     """
-    new_cookies = sm.refreshed_cookies
-    if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
-        return
 
-    LOGGER.debug("Persisting refreshed Nest cookies")
-    hass.config_entries.async_update_entry(
-        entry,
-        data={**entry.data, CONF_COOKIES: new_cookies},
-    )
-    client.cookies = new_cookies
+    def _persist(new_cookies: str) -> None:
+        if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
+            return
+
+        LOGGER.debug("Persisting refreshed Nest cookies")
+        hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_COOKIES: new_cookies},
+        )
+        client.cookies = new_cookies
+
+    return _persist
+
+
+def _persist_refreshed_cookies(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    client: NestClient,
+    sm: NestSessionManager,
+) -> None:
+    """Persist any cookies the session manager has not already handed over.
+
+    The session manager notifies on every path that reaches Google, so this is
+    normally a no-op. It stays as a backstop for callers holding a session
+    manager built without a callback.
+    """
+    if sm.refreshed_cookies:
+        _make_cookie_persister(hass, entry, client)(sm.refreshed_cookies)
 
 
 def _register_subscribe_task(
@@ -406,7 +448,23 @@ async def _async_subscribe_for_data(
         )
         await asyncio.sleep(sm.backoff_interval)
 
-        await sm.async_refresh_session()
+        try:
+            await sm.async_refresh_session()
+        except BadCredentialsException:
+            # Raised from inside an except block, so the sibling handler below
+            # never sees it. Left unhandled it escapes the coroutine, and since
+            # nothing awaits the subscribe task the integration goes silent:
+            # no log line, no reauth prompt, no further updates until a restart.
+            LOGGER.warning(
+                "Subscriber: credentials rejected while refreshing the session. "
+                "Please re-authenticate the Nest Protect integration."
+            )
+            entry.async_start_reauth(hass)
+            return
+        except (TimeoutError, ClientError) as exception:
+            LOGGER.debug("Subscriber: session refresh failed (%r), retrying", exception)
+            _register_subscribe_task(hass, entry, data)
+            return
 
         # Entry may have been unloaded during the backoff sleep
         if entry.entry_id not in hass.data.get(DOMAIN, {}):

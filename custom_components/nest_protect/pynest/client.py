@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
+from http.cookies import Morsel
 from random import randint
 from types import TracebackType
 from typing import Any, cast
@@ -40,27 +44,83 @@ from .models import (
 _LOGGER = logging.getLogger(__package__)
 
 
-def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
-    """Merge new cookie values into an existing cookie header string.
+def is_deletion_cookie(morsel: Morsel) -> bool:
+    """Return True when a Set-Cookie morsel asks the client to drop the cookie.
 
-    New values override existing cookies with the same name.
-    Preserves cookies not present in new_cookies.
-    We don't use aiohttp's cookie jar because the user-provided cookie string
-    spans multiple Google domains/paths that the jar's scoping would break.
+    Servers delete a cookie by re-sending it with an empty value and either
+    ``Max-Age=0`` or an ``Expires`` in the past. Google does this to the OAuth
+    session cookies whenever it decides the session is over. Storing such a
+    morsel as if it were a value leaves an empty ``__Secure-1PSIDTS=`` in the
+    cookie header, which Google rejects harder than a merely stale one, so
+    these have to be dropped rather than merged.
     """
-    if not new_cookies:
-        return original
+    if not morsel.value:
+        return True
 
+    max_age = morsel.get("max-age")
+    if max_age:
+        try:
+            if int(max_age) <= 0:
+                return True
+        except ValueError:
+            pass
+
+    expires = morsel.get("expires")
+    if expires:
+        parsed_expiry = parsedate_to_datetime_safe(expires)
+        if parsed_expiry is not None and parsed_expiry <= datetime.now(UTC):
+            return True
+
+    return False
+
+
+def parsedate_to_datetime_safe(value: str) -> datetime | None:
+    """Parse an HTTP date, returning None when it cannot be understood."""
+    try:
+        parsed = parsedate_to_datetime(value)
+    except TypeError, ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+
+    return parsed
+
+
+def split_cookie_header(header: str) -> dict[str, str]:
+    """Parse a ``Cookie:`` header string into a name to value mapping."""
     parsed: dict[str, str] = {}
-    for raw_part in original.split(";"):
+    for raw_part in header.split(";"):
         cookie_part = raw_part.strip()
         if "=" in cookie_part:
             name, value = cookie_part.split("=", 1)
             parsed[name.strip()] = value.strip()
 
+    return parsed
+
+
+def merge_cookies(
+    original: str,
+    new_cookies: dict[str, str],
+    deleted_cookies: Iterable[str] = (),
+) -> str:
+    """Merge new cookie values into an existing cookie header string.
+
+    New values override existing cookies with the same name.
+    Preserves cookies not present in new_cookies.
+    Names in deleted_cookies are removed from the result entirely.
+    We don't use aiohttp's cookie jar because the user-provided cookie string
+    spans multiple Google domains/paths that the jar's scoping would break.
+    """
+    deleted = set(deleted_cookies)
+
+    if not new_cookies and not deleted:
+        return original
+
+    parsed = split_cookie_header(original)
     parsed.update(new_cookies)
 
-    return "; ".join(f"{k}={v}" for k, v in parsed.items())
+    return "; ".join(f"{k}={v}" for k, v in parsed.items() if k not in deleted)
 
 
 class NestClient:
@@ -180,18 +240,18 @@ class NestClient:
                 "cookie": cookies,
             },
         ) as response:
-            # Capture refreshed cookies from Google's response
-            new_cookies: dict[str, str] = {}
-            for cookie in response.cookies.values():
-                new_cookies[cookie.key] = cookie.value
-
-            if new_cookies:
-                self.refreshed_cookies = merge_cookies(cookies, new_cookies)
-                self.cookies = self.refreshed_cookies
-
+            set_cookie_morsels = list(response.cookies.values())
             result = await response.json()
 
             if "error" in result:
+                # An error response carries Google's cookie teardown. Keep the
+                # credentials we came in with rather than storing that teardown,
+                # which would be written to the config entry by a later persist
+                # and force the user to paste fresh cookies by hand.
+                _LOGGER.debug(
+                    "Google returned %s; keeping the existing session cookies",
+                    result["error"],
+                )
                 # Cookie method
                 if result["error"] == "USER_LOGGED_OUT":
                     raise BadCredentialsException(
@@ -199,6 +259,27 @@ class NestClient:
                     )
 
                 raise Exception(result["error"])
+
+            # Capture refreshed cookies from Google's response
+            new_cookies: dict[str, str] = {}
+            deleted_cookies: list[str] = []
+            for cookie in set_cookie_morsels:
+                if is_deletion_cookie(cookie):
+                    deleted_cookies.append(cookie.key)
+                else:
+                    new_cookies[cookie.key] = cookie.value
+
+            if deleted_cookies:
+                _LOGGER.debug(
+                    "Google asked to drop %s from the session cookies",
+                    ", ".join(deleted_cookies),
+                )
+
+            if new_cookies or deleted_cookies:
+                merged = merge_cookies(cookies, new_cookies, deleted_cookies)
+                if merged != cookies:
+                    self.refreshed_cookies = merged
+                    self.cookies = merged
 
             self.auth = GoogleAuthResponseForCookies(**result)
 
