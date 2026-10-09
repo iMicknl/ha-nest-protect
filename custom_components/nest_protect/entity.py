@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
@@ -15,6 +15,19 @@ from .pynest.models import Bucket
 
 if TYPE_CHECKING:
     from .session import NestSessionManager
+
+
+def resolve_area(value: Any, areas: dict[str, str]) -> str | None:
+    """Resolve a bucket's room label.
+
+    `where_id` is the legacy where uuid the `where.` REST buckets are keyed by.
+    `where_label` is the literal room name published by the protobuf
+    `DeviceLocatedSettingsTrait`, and is the only source for devices that never
+    appear in a REST bucket, or whose room has no `where.` entry yet.
+    """
+    if not isinstance(value, dict):
+        return None
+    return areas.get(value.get("where_id")) or value.get("where_label")
 
 
 class NestEntity(Entity):
@@ -34,7 +47,7 @@ class NestEntity(Entity):
         self.entity_description = description
         self.bucket = bucket
         self.client = client
-        self.area = areas.get(self.bucket.value.get("where_id"))
+        self.area = resolve_area(self.bucket.value, areas)
 
         self._attr_unique_id = bucket.object_key
         self._attr_attribution = ATTRIBUTION
@@ -86,6 +99,20 @@ class NestEntity(Entity):
                     if structure_id
                     else None
                 ),
+            )
+
+        if self.bucket.object_key.startswith("device."):
+            identifier = (
+                self.bucket.value.get("serial_number") or self.bucket.object_key
+            )
+
+            return DeviceInfo(
+                identifiers={(DOMAIN, identifier)},
+                name=f"Nest Thermostat ({label})" if label else "Nest Thermostat",
+                manufacturer="Google",
+                model=self.bucket.value.get("model"),
+                sw_version=self.bucket.value.get("current_version"),
+                suggested_area=self.area,
             )
 
         if self.bucket.object_key.startswith("kryptonite."):

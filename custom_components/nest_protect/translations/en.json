@@ -116,6 +116,15 @@
       },
       "current_temperature": {
         "name": "Temperature"
+      },
+      "backplate_temperature": {
+        "name": "Backplate temperature"
+      },
+      "current_humidity": {
+        "name": "Humidity"
+      },
+      "active_temperature_sensor": {
+        "name": "Active temperature sensor"
       }
     },
     "select": {
@@ -140,6 +149,9 @@
       },
       "steam_detection_enable": {
         "name": "Steam check"
+      },
+      "home_away": {
+        "name": "Home occupied"
       }
     }
   }
