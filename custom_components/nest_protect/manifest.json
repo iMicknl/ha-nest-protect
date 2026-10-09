@@ -16,7 +16,7 @@
   "requirements": [
     "protobuf>=6.31.1",
     "googleapis-common-protos>=1.56.0",
-    "httpx[http2]>=0.28.1"
+    "h2>=4.0.0"
   ],
   "version": "0.4.4b3"
 }
