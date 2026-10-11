@@ -10,6 +10,7 @@ from aiohttp import (
     ClientConnectorError,
     ClientError,
     ClientOSError,
+    ConnectionTimeoutError,
     ServerDisconnectedError,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -340,7 +341,7 @@ async def _async_subscribe_for_data(
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
             entry_data.client.nest_session.userid,
-            data.service_urls["urls"]["transport_url"],
+            entry_data.client.transport_url,
             data.updated_buckets,
         )
 
@@ -394,6 +395,15 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
+        _register_subscribe_task(hass, entry, data)
+
+    # Subclass of TimeoutError, so it must be caught before the long-poll timeout.
+    except ConnectionTimeoutError:
+        sm.record_failure()
+        LOGGER.debug(
+            "Subscriber: connection timed out, retrying in %ds.", sm.backoff_interval
+        )
+        await asyncio.sleep(sm.backoff_interval)
         _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:

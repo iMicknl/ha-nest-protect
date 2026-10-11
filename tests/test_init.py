@@ -364,6 +364,60 @@ async def test_subscriber_timeout_resets_failure_counter(hass):
     assert sm.consecutive_failures == 0
 
 
+async def test_subscriber_connect_timeout_records_failure(hass):
+    """A connect timeout is an outage, unlike an idle long-poll timeout."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=1)
+    client.subscribe_for_data = AsyncMock(
+        side_effect=aiohttp.ConnectionTimeoutError("Connection timeout")
+    )
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert sm.consecutive_failures == 2
+    sleep.assert_any_await(sm.backoff_interval)
+    reschedule.assert_called_once()
+
+
+async def test_subscriber_uses_current_transport_url(hass):
+    """Subscribe to the transport URL of the current session, not the setup one."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.transport_url = "https://new.example.com"
+    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert client.subscribe_for_data.call_args.args[2] == "https://new.example.com"
+
+
 async def test_subscriber_401_accumulates_failure_counter(hass):
     """401 path must not reset the counter — repeated 401s should reach MAX_AUTH_FAILURES."""
     entry = MockConfigEntry(
