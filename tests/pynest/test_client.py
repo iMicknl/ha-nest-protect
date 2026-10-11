@@ -6,8 +6,12 @@ import pytest
 from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
-from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
+from custom_components.nest_protect.pynest.client import (
+    NestClient,
+    merge_cookies,
+)
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
+from custom_components.nest_protect.pynest.exceptions import BadCredentialsException
 
 
 @pytest.mark.enable_socket
@@ -253,3 +257,73 @@ async def test_get_access_token_falls_back_to_refresh_token():
 
     mock_cookie_auth.assert_not_called()
     mock_token_auth.assert_called_once()
+def test_merge_cookies_drops_deleted():
+    """Test that merge_cookies removes names listed as deleted."""
+    original = "SID=old; __Secure-1PSIDTS=stale; HSID=keep"
+    result = merge_cookies(original, {"SID": "new"}, ["__Secure-1PSIDTS"])
+    assert "SID=new" in result
+    assert "HSID=keep" in result
+    assert "__Secure-1PSIDTS" not in result
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_drops_expired_cookie(socket_enabled):
+    """A Set-Cookie that deletes a cookie must not be stored as a value."""
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+        response.set_cookie("SID", "new-sid-value")
+        response.del_cookie("__Secure-1PSIDTS")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        await nest_client.get_access_token_from_cookies(
+            str(url), "SID=old-sid; __Secure-1PSIDTS=stale; APISID=keep-me"
+        )
+        assert nest_client.refreshed_cookies is not None
+        assert "SID=new-sid-value" in nest_client.refreshed_cookies
+        assert "APISID=keep-me" in nest_client.refreshed_cookies
+        assert "__Secure-1PSIDTS" not in nest_client.refreshed_cookies
+        assert nest_client.cookies == nest_client.refreshed_cookies
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_keeps_cookies_on_error(socket_enabled):
+    """A logged-out response must leave the working cookies untouched."""
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {"error": "USER_LOGGED_OUT", "detail": "No active session found."}
+        )
+        response.del_cookie("SID")
+        response.del_cookie("__Secure-1PSIDTS")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    original = "SID=old-sid; __Secure-1PSIDTS=stale; APISID=keep-me"
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(BadCredentialsException):
+            await nest_client.get_access_token_from_cookies(str(url), original)
+
+        assert nest_client.refreshed_cookies is None
+        assert nest_client.cookies == original
