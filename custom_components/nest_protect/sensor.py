@@ -121,6 +121,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     NestProtectSensorDescription(
         key="latest_manual_test_end_utc_secs",
@@ -128,6 +129,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=datetime.datetime.utcfromtimestamp,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     NestProtectSensorDescription(
         key="current_temperature",
