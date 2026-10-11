@@ -6,12 +6,11 @@ import dataclasses
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
-from . import HomeAssistantNestProtectData
-from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN, DOMAIN
+from . import NestProtectConfigEntry
+from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN
 from .pynest.const import FULL_NEST_REQUEST
 
 TO_REDACT = [
@@ -49,7 +48,7 @@ TO_REDACT = [
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: NestProtectConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     issue_token = None
@@ -62,8 +61,7 @@ async def async_get_config_entry_diagnostics(
     if CONF_REFRESH_TOKEN in entry.data:
         refresh_token = entry.data[CONF_REFRESH_TOKEN]
 
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    client = entry_data.client
+    client = entry.runtime_data.client
 
     if issue_token and cookies:
         auth = await client.get_access_token_from_cookies(issue_token, cookies)
@@ -84,7 +82,7 @@ async def async_get_config_entry_diagnostics(
 
 
 async def async_get_device_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry, device: DeviceEntry
+    hass: HomeAssistant, entry: NestProtectConfigEntry, device: DeviceEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a device entry."""
     issue_token = None
@@ -97,8 +95,7 @@ async def async_get_device_diagnostics(
     if CONF_REFRESH_TOKEN in entry.data:
         refresh_token = entry.data[CONF_REFRESH_TOKEN]
 
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    client = entry_data.client
+    client = entry.runtime_data.client
 
     if issue_token and cookies:
         auth = await client.get_access_token_from_cookies(issue_token, cookies)

@@ -11,10 +11,11 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import HomeAssistantNestProtectData
-from .const import DOMAIN
+from . import NestProtectConfigEntry
 from .entity import NestDescriptiveEntity
 
 
@@ -166,10 +167,14 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
 ]
 
 
-async def async_setup_entry(hass, entry, async_add_devices):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    async_add_devices: AddEntitiesCallback,
+) -> None:
     """Set up the Nest Protect binary sensors from a config entry."""
 
-    data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    data = entry.runtime_data
     entities: list[NestProtectBinarySensor] = []
 
     supported_keys: dict[str, NestProtectBinarySensorDescription] = {

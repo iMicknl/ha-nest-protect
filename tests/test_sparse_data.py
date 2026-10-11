@@ -10,7 +10,6 @@ from custom_components.nest_protect.binary_sensor import (
     NestProtectBinarySensor,
     async_setup_entry,
 )
-from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.pynest.enums import BucketType
 from custom_components.nest_protect.pynest.models import Bucket
 from custom_components.nest_protect.sensor import (
@@ -62,12 +61,12 @@ async def test_unknown_power_source_does_not_abort_binary_platform(hass, missing
     if not missing:
         payload["wired_or_battery"] = None
     device = make_bucket(payload)
-    entry = SimpleNamespace(entry_id="test")
-    hass.data[DOMAIN] = {
-        entry.entry_id: SimpleNamespace(
+    entry = SimpleNamespace(
+        entry_id="test",
+        runtime_data=SimpleNamespace(
             devices={device.object_key: device}, areas={}, client=MagicMock()
-        )
-    }
+        ),
+    )
     add_entities = MagicMock()
 
     await async_setup_entry(hass, entry, add_entities)

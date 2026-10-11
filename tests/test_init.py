@@ -14,6 +14,7 @@ from custom_components.nest_protect import (
     HomeAssistantNestProtectData,
     _async_observe_locks_loop,
     _async_subscribe_for_data,
+    _register_subscribe_task,
 )
 from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
 from custom_components.nest_protect.pynest.exceptions import (
@@ -324,7 +325,7 @@ def _make_subscriber_entry_data(
     sm = NestSessionManager(client, store)
     sm._consecutive_failures = consecutive_failures
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
+    entry.runtime_data = HomeAssistantNestProtectData(
         devices={},
         areas={},
         client=client,
@@ -529,8 +530,7 @@ async def test_auth_recovery_handles_refresh_errors(
             raise NestLockAuthException("rejected")
         yield {}
 
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    entry_data.grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
@@ -563,7 +563,7 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
         yield {}
         raise NestLockAuthException("rejected")
 
-    hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
     operation = (
         _async_subscribe_for_data(hass, entry, _make_subscribe_data())
         if transport == "subscriber"
@@ -581,3 +581,15 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
 
     reschedule.assert_not_called()
     reauth.assert_not_called()
+
+
+async def test_unloaded_entry_does_not_resubscribe(hass):
+    """Without runtime data the subscriber must neither run nor reschedule."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+
+    with patch.object(entry, "async_create_background_task") as create_task:
+        assert _register_subscribe_task(hass, entry, _make_subscribe_data()) is None
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    create_task.assert_not_called()

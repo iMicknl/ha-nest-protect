@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError
 from homeassistant.components.lock import LockEntity
@@ -12,7 +12,6 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -25,6 +24,9 @@ from .const import ATTRIBUTION, DOMAIN
 from .pynest.exceptions import PynestException
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
+
+if TYPE_CHECKING:
+    from . import NestProtectConfigEntry
 
 LOCK_SIGNAL_PREFIX = "nest_protect_lock_"
 
@@ -57,7 +59,7 @@ def discovery_signal(entry_id: str) -> str:
 
 def subscribe_to_lock_discovery(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NestProtectConfigEntry,
     async_add_entities: AddEntitiesCallback,
     factory: Callable[[LockState], Entity],
 ) -> None:
@@ -67,7 +69,7 @@ def subscribe_to_lock_discovery(
     already cached on the config entry (from observe events that arrived before
     this platform set up) are replayed immediately.
     """
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     known: set[str] = set()
 
     @callback
@@ -93,11 +95,11 @@ def subscribe_to_lock_discovery(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NestProtectConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up lock entities. Discovery is event-driven via dispatcher."""
-    grpc_client = hass.data[DOMAIN][entry.entry_id].grpc_lock_client
+    grpc_client = entry.runtime_data.grpc_lock_client
     subscribe_to_lock_discovery(
         hass,
         entry,

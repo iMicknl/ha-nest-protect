@@ -68,6 +68,9 @@ class HomeAssistantNestProtectData:
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
 
 
+type NestProtectConfigEntry = ConfigEntry[HomeAssistantNestProtectData]
+
+
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     """Migrate old Config entries."""
     LOGGER.debug("Migrating from version %s", config_entry.version)
@@ -84,7 +87,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
     """Set up Nest Protect from a config entry."""
     issue_token = entry.data.get(CONF_ISSUE_TOKEN)
     cookies = entry.data.get(CONF_COOKIES)
@@ -143,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         session_manager=session_manager,
         grpc_lock_client=GrpcLockClient(client),
     )
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+    entry.runtime_data = entry_data
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -160,7 +163,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     return True
 
 
-async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _async_observe_locks_loop(
+    hass: HomeAssistant, entry: NestProtectConfigEntry
+) -> None:
     """Consume the gRPC observe stream and dispatch lock updates.
 
     Returns — ending the background task — when the observer reports that this
@@ -172,7 +177,7 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
     so this loop and the REST subscriber can't each sit below the threshold
     while the session is thoroughly broken.
     """
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     cache = entry_data.lock_state_cache
     sm = entry_data.session_manager
 
@@ -224,21 +229,21 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
             return
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: NestProtectConfigEntry
+) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         # Cancel background tasks only after successful platform unload
-        if entry.entry_id in hass.data.get(DOMAIN, {}):
-            entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-            if entry_data.subscription_task:
-                entry_data.subscription_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await entry_data.subscription_task
-            if entry_data.lock_observe_task:
-                entry_data.lock_observe_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await entry_data.lock_observe_task
-            hass.data[DOMAIN].pop(entry.entry_id)
+        entry_data = entry.runtime_data
+        if entry_data.subscription_task:
+            entry_data.subscription_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await entry_data.subscription_task
+        if entry_data.lock_observe_task:
+            entry_data.lock_observe_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await entry_data.lock_observe_task
 
     return unload_ok
 
@@ -253,7 +258,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 def _persist_refreshed_cookies(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NestProtectConfigEntry,
     client: NestClient,
     sm: NestSessionManager,
 ) -> None:
@@ -277,10 +282,12 @@ def _persist_refreshed_cookies(
 
 
 async def _async_recover_session(
-    hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    entry_data: HomeAssistantNestProtectData,
 ) -> bool:
     """Refresh rejected credentials and report whether background work can resume."""
-    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+    if not _is_loaded(entry):
         return False
 
     # Exceptions raised inside a transport's except block bypass its other handlers.
@@ -298,7 +305,7 @@ async def _async_recover_session(
     ) as err:
         LOGGER.debug("Session recovery failed; retrying background updates: %s", err)
 
-    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+    if not _is_loaded(entry):
         return False
 
     _persist_refreshed_cookies(
@@ -307,28 +314,33 @@ async def _async_recover_session(
     return True
 
 
+def _is_loaded(entry: NestProtectConfigEntry) -> bool:
+    """Return whether the entry's runtime data is still in place."""
+    # HA deletes runtime_data once the entry has been unloaded.
+    return hasattr(entry, "runtime_data")
+
+
 def _register_subscribe_task(
-    hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
+    hass: HomeAssistant, entry: NestProtectConfigEntry, data: FirstDataAPIResponse
 ) -> asyncio.Task | None:
     """Create a new subscription task and update the reference."""
-    # Check if entry is still loaded before creating new task
-    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+    if not _is_loaded(entry):
         return None
 
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     task = asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
     entry_data.subscription_task = task
     return task
 
 
 async def _async_subscribe_for_data(
-    hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
+    hass: HomeAssistant, entry: NestProtectConfigEntry, data: FirstDataAPIResponse
 ):
     """Subscribe for new data."""
-    if entry.entry_id not in hass.data.get(DOMAIN, {}):
+    if not _is_loaded(entry):
         return
 
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     sm = entry_data.session_manager
 
     try:
@@ -471,7 +483,7 @@ async def _async_subscribe_for_data(
 
 
 async def async_remove_config_entry_device(
-    hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
+    hass: HomeAssistant, config_entry: NestProtectConfigEntry, device_entry: DeviceEntry
 ) -> bool:
     """Remove a config entry from a device."""
     return True
