@@ -18,6 +18,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import NestProtectConfigEntry
 from .entity import NestDescriptiveEntity
 
+PARALLEL_UPDATES = 0
+
 
 @dataclass
 class NestProtectBinarySensorDescriptionMixin:

@@ -28,6 +28,8 @@ from .pynest.lock_models import LockBoltState, LockState
 if TYPE_CHECKING:
     from . import NestProtectConfigEntry
 
+PARALLEL_UPDATES = 1
+
 LOCK_SIGNAL_PREFIX = "nest_protect_lock_"
 
 

@@ -24,6 +24,8 @@ from .entity import NestDescriptiveEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
+PARALLEL_UPDATES = 0
+
 SMOKE_CO_STATUS_TO_STATE: dict[int, str] = {
     0: "ok",
     1: "testing",

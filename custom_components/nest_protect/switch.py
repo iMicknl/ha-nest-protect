@@ -14,6 +14,8 @@ from . import NestProtectConfigEntry
 from .const import LOGGER
 from .entity import NestUpdatableEntity
 
+PARALLEL_UPDATES = 1
+
 
 @dataclass
 class NestProtectSwitchDescriptionMixin:
