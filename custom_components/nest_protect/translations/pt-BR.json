@@ -1,0 +1,19 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "A conta já está configurada"
+    },
+    "error": {
+      "cannot_connect": "Falhou ao se conectar",
+      "invalid_auth": "Autenticação inválida",
+      "unknown": "Erro inesperado"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "account_type": "Tipo de conta"
+        }
+      }
+    }
+  }
+}

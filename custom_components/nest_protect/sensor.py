@@ -20,6 +20,7 @@ from homeassistant.helpers.typing import StateType
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
 from .entity import NestDescriptiveEntity
+from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
 
@@ -147,6 +148,9 @@ async def async_setup_entry(hass, entry, async_add_devices):
 
     async_add_devices(entities)
 
+    # Battery sensors for any discovered Nest x Yale locks.
+    subscribe_to_lock_discovery(hass, entry, async_add_devices, NestLockBatterySensor)
+
 
 class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     """Representation of a Nest Protect Sensor."""
@@ -154,9 +158,11 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     entity_description: NestProtectSensorDescription
 
     @property
-    def native_value(self) -> bool:
+    def native_value(self) -> StateType | datetime.datetime:
         """Return the state of the sensor."""
         state = self.bucket.value.get(self.entity_description.key)
+        if state is None:
+            return None
 
         if self.entity_description.value_fn:
             return self.entity_description.value_fn(state)

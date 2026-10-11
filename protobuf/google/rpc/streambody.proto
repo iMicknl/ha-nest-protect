@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package google.rpc;
+
+import "google/rpc/status.proto";
+
+// The envelope the gRPC-web gateway wraps a server-streaming response in.
+//
+// Only the two fields this integration reads are declared. Upstream may carry
+// more (the canonical definition is not published alongside status.proto), but
+// protobuf keeps unrecognised fields as unknown fields, so a partial
+// declaration parses the wire format correctly.
+//
+// `message` is `bytes` rather than a concrete type because StreamBody is
+// generic over the RPC being streamed. For the Observe RPC each entry is a
+// serialized nestlabs.gateway.v2.ObserveResponse.ObserveResponse.
+message StreamBody {
+    repeated bytes message = 1;
+    Status status = 2;
+}

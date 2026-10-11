@@ -31,7 +31,9 @@ DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
     "issue_token_prefix": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken",
     "accounts_url": "https://accounts.google.com/",
-    "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip",
+    # Pinned to a specific release rather than "latest", which may resolve to a
+    # pre-release that is incompatible with this version of the integration.
+    "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip",
 }
 
 
@@ -80,11 +82,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         session = async_create_clientsession(self.hass)
         client = NestClient(session=session, environment=NEST_ENVIRONMENTS[environment])
 
-        if CONF_ISSUE_TOKEN in user_input and CONF_COOKIES in user_input:
-            issue_token = user_input[CONF_ISSUE_TOKEN]
-            cookies = user_input[CONF_COOKIES]
-        if CONF_REFRESH_TOKEN in user_input:
-            refresh_token = user_input[CONF_REFRESH_TOKEN]
+        issue_token = user_input.get(CONF_ISSUE_TOKEN)
+        cookies = user_input.get(CONF_COOKIES)
+        refresh_token = user_input.get(CONF_REFRESH_TOKEN)
 
         if issue_token and cookies:
             auth = await client.get_access_token_from_cookies(issue_token, cookies)
@@ -93,6 +93,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         nest = await client.authenticate(auth.access_token)
         data = await client.get_first_data(nest.access_token, nest.userid)
+
+        if client.refreshed_cookies:
+            cookies = client.refreshed_cookies
 
         email = ""
         for bucket in data.updated_buckets:
@@ -257,6 +260,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         user_input
                     )
+                    user_input[CONF_ISSUE_TOKEN] = issue_token
+                    user_input[CONF_COOKIES] = cookies
                 except TimeoutError, ClientError:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
