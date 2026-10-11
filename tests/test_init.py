@@ -15,7 +15,11 @@ from custom_components.nest_protect import (
     _async_observe_locks_loop,
     _async_subscribe_for_data,
 )
-from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
+from custom_components.nest_protect.const import (
+    BACKOFF_INTERVALS,
+    CONF_COOKIES,
+    MAX_AUTH_FAILURES,
+)
 from custom_components.nest_protect.pynest.exceptions import (
     BadCredentialsException,
     NestLockAuthException,
@@ -364,7 +368,7 @@ async def test_subscriber_timeout_resets_failure_counter(hass):
     assert sm.consecutive_failures == 0
 
 
-async def test_subscriber_connect_timeout_records_failure(hass):
+async def test_subscriber_connect_timeout_backs_off(hass):
     """A connect timeout is an outage, unlike an idle long-poll timeout."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -376,6 +380,7 @@ async def test_subscriber_connect_timeout_records_failure(hass):
     )
     entry.add_to_hass(hass)
     client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=1)
+    entry_data = hass.data[DOMAIN][entry.entry_id]
     client.subscribe_for_data = AsyncMock(
         side_effect=aiohttp.ConnectionTimeoutError("Connection timeout")
     )
@@ -388,10 +393,82 @@ async def test_subscriber_connect_timeout_records_failure(hass):
         ) as sleep,
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 2
-    sleep.assert_any_await(sm.backoff_interval)
-    reschedule.assert_called_once()
+    assert entry_data.connection_failures == 2
+    assert [c.args[0] for c in sleep.await_args_list if c.args[0]] == list(
+        BACKOFF_INTERVALS[:2]
+    )
+    assert reschedule.call_count == 2
+    # Transport outages must not count towards the reauth threshold.
+    assert sm.consecutive_failures == 1
+
+
+async def test_subscriber_connect_timeouts_do_not_hasten_reauth(hass):
+    """Connect timeouts followed by a single 401 must not start reauth."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(
+        side_effect=[
+            *[aiohttp.ConnectionTimeoutError("Connection timeout")]
+            * (MAX_AUTH_FAILURES - 1),
+            NotAuthenticatedException(),
+        ]
+    )
+    client.auth = MagicMock(is_expired=lambda: False)
+    client.authenticate = AsyncMock(return_value=MagicMock(to_dict=dict))
+    sm._store.async_save = AsyncMock()
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(entry, "async_start_reauth") as mock_reauth,
+    ):
+        for _ in range(MAX_AUTH_FAILURES):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert sm.consecutive_failures == 1
+    mock_reauth.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "outcome", [{"objects": []}, TimeoutError()], ids=["success", "long_poll"]
+)
+async def test_subscriber_connection_resets_connection_failures(hass, outcome):
+    """Reaching the transport host clears the connect-timeout backoff."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data.connection_failures = 3
+    if isinstance(outcome, BaseException):
+        client.subscribe_for_data = AsyncMock(side_effect=outcome)
+    else:
+        client.subscribe_for_data = AsyncMock(return_value=outcome)
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert entry_data.connection_failures == 0
 
 
 async def test_subscriber_uses_current_transport_url(hass):

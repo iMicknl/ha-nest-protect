@@ -22,6 +22,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    BACKOFF_INTERVALS,
     CONF_ACCOUNT_TYPE,
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
@@ -67,6 +68,7 @@ class HomeAssistantNestProtectData:
     subscription_task: asyncio.Task | None = None
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
+    connection_failures: int = 0
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -346,6 +348,7 @@ async def _async_subscribe_for_data(
         )
 
         sm.record_success()
+        entry_data.connection_failures = 0
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
@@ -398,17 +401,23 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
 
     # Subclass of TimeoutError, so it must be caught before the long-poll timeout.
+    # Counted apart from the session manager so an outage can't push a later
+    # 401 over the reauth threshold.
     except ConnectionTimeoutError:
-        sm.record_failure()
+        entry_data.connection_failures += 1
+        idx = min(entry_data.connection_failures, len(BACKOFF_INTERVALS)) - 1
         LOGGER.debug(
-            "Subscriber: connection timed out, retrying in %ds.", sm.backoff_interval
+            "Subscriber: connection timed out, retrying in %ds (attempt %d).",
+            BACKOFF_INTERVALS[idx],
+            entry_data.connection_failures,
         )
-        await asyncio.sleep(sm.backoff_interval)
+        await asyncio.sleep(BACKOFF_INTERVALS[idx])
         _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
         sm.record_success()
+        entry_data.connection_failures = 0
         _register_subscribe_task(hass, entry, data)
 
     except ClientConnectorError:
