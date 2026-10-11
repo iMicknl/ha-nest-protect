@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -33,6 +35,7 @@ class NestSessionManager:
         self._client = client
         self._store = store
         self._consecutive_failures: int = 0
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def refreshed_cookies(self) -> str | None:
@@ -151,20 +154,47 @@ class NestSessionManager:
 
         return await self._client.authenticate(auth.access_token)
 
+    def _has_valid_session(self) -> bool:
+        """Return True if the current Nest session is not (nearly) expired."""
+        return bool(
+            self._client.nest_session
+            and not self._client.nest_session.is_expired(
+                buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
+            )
+        )
+
     async def ensure_session(self) -> None:
         """Ensure a valid Nest session exists, refreshing if needed."""
-        if self._client.nest_session and not self._client.nest_session.is_expired(
-            buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
-        ):
+        if self._has_valid_session():
             return
 
-        await self.async_refresh_session()
+        async with self._refresh_lock:
+            if self._has_valid_session():
+                return
+
+            await self._async_refresh_session()
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
 
         Returns True when a fresh Nest session was obtained and persisted.
         """
+        # Callers force a refresh because Nest rejected the current session, so
+        # expiry can't tell whether it is still stale; only a replaced session
+        # proves another caller already refreshed it while this one waited.
+        rejected_session = self._client.nest_session
+
+        async with self._refresh_lock:
+            if (
+                self._client.nest_session is not None
+                and self._client.nest_session is not rejected_session
+            ):
+                return True
+
+            return await self._async_refresh_session()
+
+    async def _async_refresh_session(self) -> bool:
+        """Refresh the Nest session; the caller must hold the refresh lock."""
         if not self._client.auth or self._client.auth.is_expired():
             LOGGER.debug("Retrieving new Google access token")
             await self._client.get_access_token()
