@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -102,11 +103,21 @@ async def test_subscriber_ignores_non_device_bucket_changes(hass):
     resubscribe.assert_called_once()
 
 
-async def test_subscriber_ignores_malformed_bucket_list(hass):
-    """A bucket list without a key list must not reload."""
+MALFORMED_BUCKET_LIST_VALUES = [
+    pytest.param({}, id="no-key-list"),
+    pytest.param({"buckets": "topaz.A"}, id="key-list-not-a-list"),
+    pytest.param(None, id="value-null"),
+    pytest.param(["topaz.A"], id="value-not-a-mapping"),
+    pytest.param({"buckets": ["topaz.A", None, 1]}, id="non-string-key"),
+]
+
+
+@pytest.mark.parametrize("value", MALFORMED_BUCKET_LIST_VALUES)
+async def test_subscriber_ignores_malformed_bucket_list(hass, value):
+    """A malformed bucket list must not reload or break the subscriber."""
     entry = _make_entry(hass)
     obj = _buckets_object([])
-    obj["value"] = {}
+    obj["value"] = value
     resubscribe, reload = await _run_subscriber(
         hass, entry, [obj], {"topaz.A", "kryptonite.B"}
     )
@@ -115,7 +126,9 @@ async def test_subscriber_ignores_malformed_bucket_list(hass):
     resubscribe.assert_called_once()
 
 
-def _setup_data(include_bucket_list: bool = True) -> FirstDataAPIResponse:
+def _setup_data(
+    include_bucket_list: bool = True, bucket_list_value: object = None
+) -> FirstDataAPIResponse:
     buckets = [
         {
             "object_key": "topaz.A",
@@ -132,7 +145,10 @@ def _setup_data(include_bucket_list: bool = True) -> FirstDataAPIResponse:
         },
     ]
     if include_bucket_list:
-        buckets.append(_buckets_object(["topaz.A", "topaz.SPARSE"], revision=1))
+        bucket_list = _buckets_object(["topaz.A", "topaz.SPARSE"], revision=1)
+        if bucket_list_value is not None:
+            bucket_list["value"] = bucket_list_value
+        buckets.append(bucket_list)
     return FirstDataAPIResponse(
         weather_for_structures={},
         service_urls={"urls": {"transport_url": "https://t.example.com"}},
@@ -219,6 +235,24 @@ async def test_setup_without_bucket_list(hass):
 
     await _setup(hass, entry, _setup_data(include_bucket_list=False))
 
+    assert hass.data[DOMAIN][entry.entry_id].listed_device_keys is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(["topaz.A"], id="value-not-a-mapping"),
+        pytest.param({"buckets": ["topaz.A", None, 1]}, id="non-string-key"),
+    ],
+)
+async def test_setup_with_malformed_bucket_list(hass, value):
+    """A malformed bucket list leaves change detection off without failing setup."""
+    entry = _make_entry(hass)
+
+    await _setup(hass, entry, _setup_data(bucket_list_value=value))
+
+    assert entry.state is ConfigEntryState.LOADED
     assert hass.data[DOMAIN][entry.entry_id].listed_device_keys is None
     assert await hass.config_entries.async_unload(entry.entry_id)
 

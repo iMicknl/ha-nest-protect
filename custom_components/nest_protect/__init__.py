@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass, field
+from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
@@ -173,10 +174,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     return True
 
 
-def _listed_device_keys(value: dict) -> set[str] | None:
+def _listed_device_keys(value: Any) -> set[str] | None:
     """Return the Protect and temperature sensor keys from a bucket list."""
-    keys = value.get("buckets")
-    if not isinstance(keys, list):
+    keys = value.get("buckets") if isinstance(value, dict) else None
+    if not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
         return None
     return {key for key in keys if key.partition(".")[0] in DEVICE_BUCKET_TYPES}
 
