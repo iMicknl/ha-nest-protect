@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from dataclasses import dataclass, field
+from functools import partial
 
 from aiohttp import (
     ClientConnectorError,
@@ -102,7 +103,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
 
-    session_manager = NestSessionManager(client=client, store=store)
+    session_manager = NestSessionManager(
+        client=client,
+        store=store,
+        persist_cookies=partial(_persist_refreshed_cookies, hass, entry, client),
+    )
 
     try:
         data = await session_manager.async_setup()
