@@ -112,6 +112,11 @@ function checkComplete() {
     stopListening();
     browser.action.setBadgeText({ text: "✓" });
     browser.action.setBadgeBackgroundColor({ color: "#4CAF50" });
+    // Firefox (before 149) only allows openPopup() from a user gesture, and
+    // this runs from a webRequest callback, so rely on the badge there.
+    if (!isFirefox) {
+      browser.action.openPopup();
+    }
   }
 }
 
