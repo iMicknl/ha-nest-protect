@@ -8,6 +8,12 @@ from aiohttp.test_utils import TestServer
 
 from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
+from custom_components.nest_protect.pynest.exceptions import (
+    BadGatewayException,
+    GatewayTimeoutException,
+    NestServiceException,
+    PynestException,
+)
 
 
 @pytest.mark.enable_socket
@@ -211,3 +217,152 @@ def test_merge_cookies_empty_new():
     original = "SID=old; HSID=val"
     result = merge_cookies(original, {})
     assert result == original
+
+
+TRANSIENT_STATUSES = [
+    (500, NestServiceException),
+    (502, BadGatewayException),
+    (503, NestServiceException),
+    (504, GatewayTimeoutException),
+    (408, NestServiceException),
+    (429, NestServiceException),
+]
+
+
+def _html_error(status: int) -> web.Response:
+    return web.Response(
+        status=status, text="<html>Server Error</html>", content_type="text/html"
+    )
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(("status", "expected"), TRANSIENT_STATUSES)
+async def test_refresh_token_transient_status(socket_enabled, status, expected):
+    """Transient token endpoint errors must not look like bad credentials."""
+
+    async def token_response(request):
+        return _html_error(status)
+
+    app = web.Application()
+    app.router.add_post("/token", token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        with (
+            patch(
+                "custom_components.nest_protect.pynest.client.TOKEN_URL",
+                str(server.make_url("/token")),
+            ),
+            pytest.raises(expected, match=str(status)),
+        ):
+            await nest_client.get_access_token_from_refresh_token("refresh-token")
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(("status", "expected"), TRANSIENT_STATUSES)
+@pytest.mark.parametrize("json_body", [False, True])
+async def test_issue_token_transient_status(
+    socket_enabled, status, expected, json_body
+):
+    """Transient issueToken errors must not look like bad credentials."""
+
+    async def token_response(request):
+        if json_body:
+            return web.json_response({"error": "internal_failure"}, status=status)
+        return _html_error(status)
+
+    app = web.Application()
+    app.router.add_get("/issue-token", token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(expected, match=str(status)):
+            await nest_client.get_access_token_from_cookies(str(url), "cookies")
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(("status", "expected"), TRANSIENT_STATUSES)
+async def test_issue_jwt_transient_status(socket_enabled, status, expected):
+    """Transient issue_jwt errors must be raised as service errors."""
+
+    async def jwt_response(request):
+        return _html_error(status)
+
+    app = web.Application()
+    app.router.add_post("/issue_jwt", jwt_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        with (
+            patch(
+                "custom_components.nest_protect.pynest.client.NEST_AUTH_URL_JWT",
+                str(server.make_url("/issue_jwt")),
+            ),
+            pytest.raises(expected, match=str(status)),
+        ):
+            await nest_client.authenticate("access-token")
+
+
+def _session_app(session_handler) -> web.Application:
+    async def jwt_response(request):
+        return web.json_response({"jwt": "nest-jwt"})
+
+    app = web.Application()
+    app.router.add_post("/issue_jwt", jwt_response)
+    app.router.add_get("/session", session_handler)
+    return app
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(("status", "expected"), TRANSIENT_STATUSES)
+@pytest.mark.parametrize("json_body", [False, True])
+async def test_session_transient_status(socket_enabled, status, expected, json_body):
+    """Transient /session errors must be raised as service errors."""
+
+    async def session_response(request):
+        if json_body:
+            return web.json_response({"error": "unavailable"}, status=status)
+        return _html_error(status)
+
+    async with (
+        TestServer(_session_app(session_response)) as server,
+        ClientSession() as session,
+    ):
+        nest_client = NestClient(session)
+        base = str(server.make_url("")).rstrip("/")
+        with (
+            patch.object(nest_client.environment, "host", base),
+            patch(
+                "custom_components.nest_protect.pynest.client.NEST_AUTH_URL_JWT",
+                f"{base}/issue_jwt",
+            ),
+            pytest.raises(expected, match=str(status)),
+        ):
+            await nest_client.authenticate("access-token")
+
+
+@pytest.mark.enable_socket
+async def test_session_client_error_is_not_transient(socket_enabled):
+    """Non-transient /session errors keep the generic pynest exception."""
+
+    async def session_response(request):
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    async with (
+        TestServer(_session_app(session_response)) as server,
+        ClientSession() as session,
+    ):
+        nest_client = NestClient(session)
+        base = str(server.make_url("")).rstrip("/")
+        with (
+            patch.object(nest_client.environment, "host", base),
+            patch(
+                "custom_components.nest_protect.pynest.client.NEST_AUTH_URL_JWT",
+                f"{base}/issue_jwt",
+            ),
+            pytest.raises(PynestException) as exc_info,
+        ):
+            await nest_client.authenticate("access-token")
+
+    assert not isinstance(exc_info.value, NestServiceException)

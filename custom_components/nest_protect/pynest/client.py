@@ -8,7 +8,13 @@ from random import randint
 from types import TracebackType
 from typing import Any, cast
 
-from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
+from aiohttp import (
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ContentTypeError,
+    FormData,
+)
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
@@ -38,6 +44,24 @@ from .models import (
 )
 
 _LOGGER = logging.getLogger(__package__)
+
+TRANSIENT_CLIENT_STATUSES = {408, 429}
+
+
+def raise_for_transient_status(response: ClientResponse, action: str) -> None:
+    """Raise a NestServiceException for statuses that are worth retrying.
+
+    Checked before the body is parsed: outages often return HTML or an error
+    body that would otherwise be mistaken for an auth failure.
+    """
+    status = response.status
+
+    if status == 502:
+        raise BadGatewayException(f"{status} error while {action}")
+    if status == 504:
+        raise GatewayTimeoutException(f"{status} error while {action}")
+    if status >= 500 or status in TRANSIENT_CLIENT_STATUSES:
+        raise NestServiceException(f"{status} error while {action}")
 
 
 def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
@@ -145,6 +169,7 @@ class NestClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         ) as response:
+            raise_for_transient_status(response, "refreshing Google access token")
             result = await response.json()
 
             if "error" in result:
@@ -189,6 +214,7 @@ class NestClient:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
                 self.cookies = self.refreshed_cookies
 
+            raise_for_transient_status(response, "requesting Google issue token")
             result = await response.json()
 
             if "error" in result:
@@ -223,6 +249,7 @@ class NestClient:
                 "Referer": self.environment.host,
             },
         ) as response:
+            raise_for_transient_status(response, "requesting Nest JWT")
             result = await response.json()
             nest_auth = NestAuthResponse(**result)
 
@@ -234,6 +261,7 @@ class NestClient:
                 + (nest_auth.jwt or ""),
             },
         ) as response:
+            raise_for_transient_status(response, "authenticating")
             try:
                 nest_response = await response.json()
             except ContentTypeError as exception:
