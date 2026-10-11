@@ -19,6 +19,21 @@ const FIRST_PARTY_AUTH_COOKIES = new Set([
   "SID", "HSID", "SSID", "APISID", "SAPISID",
 ]);
 
+// Used when the Cookie header is unavailable, so only Google sign-in cookies
+// are exported instead of every accounts.google.com cookie.
+const GOOGLE_SESSION_COOKIES = new Set([
+  ...FIRST_PARTY_AUTH_COOKIES,
+  "SIDCC", "NID", "OSID", "__Secure-OSID", "LSID", "__Host-GAPS",
+  "ACCOUNT_CHOOSER", "SMSV",
+]);
+// Matches the __Secure-/__Host- 1P/3P variants (PSID, PSIDTS, PSIDCC, PSIDRTS,
+// PAPISID, PLSID); Google adds to this family over time.
+const GOOGLE_SESSION_COOKIE_PATTERN = /^__(Secure|Host)-\dP(SID|APISID|LSID)/;
+
+function isGoogleSessionCookie(name) {
+  return GOOGLE_SESSION_COOKIES.has(name) || GOOGLE_SESSION_COOKIE_PATTERN.test(name);
+}
+
 function startListening() {
   capturedData = { issueToken: null, cookies: null, listening: true };
 
@@ -85,10 +100,12 @@ function captureRequestCookies(details) {
   browser.cookies.getAll({ url: "https://accounts.google.com" }).then((cookies) => {
     log(`cookies.getAll: ${cookies?.length ?? 0} cookies [${cookies?.map(c => c.name).join(", ")}]`);
     if (cookies) {
+      const fromHeader = cookieMap.size > 0;
       for (const c of cookies) {
-        const relevant = cookieMap.size === 0
-          ? true
-          : FIRST_PARTY_AUTH_COOKIES.has(c.name) && !cookieMap.has(c.name);
+        if (cookieMap.has(c.name)) continue;
+        const relevant = fromHeader
+          ? FIRST_PARTY_AUTH_COOKIES.has(c.name)
+          : isGoogleSessionCookie(c.name);
         if (relevant) cookieMap.set(c.name, c.value);
       }
     }
