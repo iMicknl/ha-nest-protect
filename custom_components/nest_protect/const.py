@@ -31,3 +31,8 @@ STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min
+
+# A healthy subscribe long-poll can stay silent for its full 600 s client
+# timeout. Allowing a second poll's worth means one dropped or failed request
+# doesn't flap entities, while a sustained outage still surfaces in minutes.
+STREAM_STALE_AFTER_SECONDS: Final = 20 * 60
