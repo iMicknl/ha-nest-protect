@@ -60,4 +60,3 @@ async def test_current_entry_is_not_migrated(hass):
 
     migrate.assert_not_called()
     assert entry.state is ConfigEntryState.LOADED
-
