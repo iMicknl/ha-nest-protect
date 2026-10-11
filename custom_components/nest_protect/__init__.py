@@ -104,6 +104,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     session_manager = NestSessionManager(client=client, store=store)
 
+    def _on_credentials_refreshed() -> None:
+        """Persist cookies Google rotated during any credential refresh."""
+        _persist_refreshed_cookies(hass, entry, client, session_manager)
+
+    # Covers refreshes triggered from entity updates too, which reach the
+    # session manager directly and have no persistence step of their own.
+    session_manager.on_credentials_refreshed = _on_credentials_refreshed
+
     try:
         data = await session_manager.async_setup()
     except (TimeoutError, ClientError) as exception:
