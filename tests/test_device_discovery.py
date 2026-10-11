@@ -3,7 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect import (
@@ -178,9 +179,7 @@ async def test_setup_removes_devices_no_longer_on_account(hass):
     """Setup removes Protects that the account no longer reports."""
     entry = _make_entry(hass)
     current = _register_device(hass, entry, "SERIAL_A", "topaz.A-smoke_status")
-    sparse = _register_device(
-        hass, entry, "SERIAL_SPARSE", "topaz.SPARSE-smoke_status"
-    )
+    sparse = _register_device(hass, entry, "SERIAL_SPARSE", "topaz.SPARSE-smoke_status")
     stale = _register_device(hass, entry, "SERIAL_OLD", "topaz.OLD-smoke_status")
     stale_sensor = _register_device(
         hass, entry, "kryptonite.OLD", "kryptonite.OLD-current_temperature"
@@ -199,9 +198,12 @@ async def test_setup_removes_devices_no_longer_on_account(hass):
     assert device_registry.async_get(no_entities.id)
     assert device_registry.async_get(stale.id) is None
     assert device_registry.async_get(stale_sensor.id) is None
-    assert er.async_get(hass).async_get_entity_id(
-        "sensor", DOMAIN, "topaz.OLD-smoke_status"
-    ) is None
+    assert (
+        er.async_get(hass).async_get_entity_id(
+            "sensor", DOMAIN, "topaz.OLD-smoke_status"
+        )
+        is None
+    )
 
     assert hass.data[DOMAIN][entry.entry_id].listed_device_keys == {
         "topaz.A",
