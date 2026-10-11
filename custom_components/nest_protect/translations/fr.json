@@ -1,0 +1,30 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Le compte est déjà configuré"
+    },
+    "error": {
+      "cannot_connect": "Échec de connexion",
+      "invalid_auth": "Authentification invalide",
+      "unknown": "Erreur inattendue"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "account_type": "Type de compte"
+        }
+      }
+    }
+  },
+  "entity": {
+    "select": {
+      "night_light_brightness": {
+        "state": {
+          "low": "Bas",
+          "medium": "Moyen",
+          "high": "Haut"
+        }
+      }
+    }
+  }
+}
