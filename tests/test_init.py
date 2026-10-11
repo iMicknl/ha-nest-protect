@@ -510,6 +510,9 @@ async def test_subscriber_success_resets_failure_counter(hass):
         (NestServiceException("unavailable"), False),
         (NotAuthenticatedException("rejected"), False),
         (BadCredentialsException("revoked"), True),
+        (Exception("unexpected"), False),
+        (KeyError("detail"), False),
+        (TypeError("unexpected keyword argument"), False),
     ],
 )
 async def test_auth_recovery_handles_refresh_errors(
