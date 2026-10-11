@@ -696,7 +696,10 @@ async def test_subscriber_does_not_spin_while_offline(hass):
         )
         hass.data[DOMAIN][entry.entry_id].subscription_task = task
         await asyncio.sleep(0.2)
-        hass.data[DOMAIN][entry.entry_id].subscription_task.cancel()
+        pending = hass.data[DOMAIN][entry.entry_id].subscription_task
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
 
     assert client.subscribe_for_data.await_count == 1
 
