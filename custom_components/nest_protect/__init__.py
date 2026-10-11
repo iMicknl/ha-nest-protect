@@ -82,6 +82,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
             version=2,
         )
 
+    if config_entry.version == 2:  # noqa: PLR2004
+        # v3 introduced cookie authentication; refresh-token entries keep working.
+        hass.config_entries.async_update_entry(config_entry, version=3)
+
     LOGGER.debug("Migration to version %s successful", config_entry.version)
 
     return True
