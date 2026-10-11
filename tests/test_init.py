@@ -617,12 +617,13 @@ def _subscriber_entry(hass):
 async def test_subscriber_backs_off_on_rapid_connection_errors(hass, error):
     """Connection errors that end an attempt early back off before re-subscribing."""
     entry = _subscriber_entry(hass)
-    client, _sm = _make_subscriber_entry_data(hass, entry)
+    client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(side_effect=error)
     entry_data = hass.data[DOMAIN][entry.entry_id]
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as register,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
         patch(
             "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
         ) as sleep,
@@ -641,13 +642,14 @@ async def test_subscriber_backs_off_on_rapid_connection_errors(hass, error):
 async def test_subscriber_resubscribes_immediately_after_long_poll(hass):
     """A long-poll that times out after running its course is not a failure."""
     entry = _subscriber_entry(hass)
-    client, _sm = _make_subscriber_entry_data(hass, entry)
+    client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(side_effect=TimeoutError())
     entry_data = hass.data[DOMAIN][entry.entry_id]
     entry_data.connection_failures = 2
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as register,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
         patch(
             "custom_components.nest_protect.time.monotonic",
             side_effect=[0.0, float(SUBSCRIBE_HEALTHY_SECONDS)],
@@ -666,12 +668,15 @@ async def test_subscriber_resubscribes_immediately_after_long_poll(hass):
 async def test_subscriber_success_resets_connection_failures(hass):
     """Receiving data clears the connection failure count."""
     entry = _subscriber_entry(hass)
-    client, _sm = _make_subscriber_entry_data(hass, entry)
+    client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(return_value={"objects": []})
     entry_data = hass.data[DOMAIN][entry.entry_id]
     entry_data.connection_failures = 4
 
-    with patch("custom_components.nest_protect._register_subscribe_task"):
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+    ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
     assert entry_data.connection_failures == 0
@@ -680,16 +685,17 @@ async def test_subscriber_success_resets_connection_failures(hass):
 async def test_subscriber_does_not_spin_while_offline(hass):
     """Regression: an unreachable host used to be retried with no delay at all."""
     entry = _subscriber_entry(hass)
-    client, _sm = _make_subscriber_entry_data(hass, entry)
+    client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(
         side_effect=aiohttp.ClientConnectorError(MagicMock(), OSError(-3, "offline"))
     )
 
-    task = asyncio.create_task(
-        _async_subscribe_for_data(hass, entry, _make_subscribe_data())
-    )
-    hass.data[DOMAIN][entry.entry_id].subscription_task = task
-    await asyncio.sleep(0.2)
-    hass.data[DOMAIN][entry.entry_id].subscription_task.cancel()
+    with patch.object(sm, "ensure_session", new_callable=AsyncMock):
+        task = asyncio.create_task(
+            _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+        )
+        hass.data[DOMAIN][entry.entry_id].subscription_task = task
+        await asyncio.sleep(0.2)
+        hass.data[DOMAIN][entry.entry_id].subscription_task.cancel()
 
     assert client.subscribe_for_data.await_count == 1
