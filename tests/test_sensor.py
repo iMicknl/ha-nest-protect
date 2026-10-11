@@ -1,8 +1,10 @@
 """Tests for the Nest Protect sensor platform."""
 
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
 import pytest
+from homeassistant.components.sensor import SensorDeviceClass
 
 from custom_components.nest_protect.pynest.models import Bucket
 from custom_components.nest_protect.sensor import (
@@ -65,3 +67,38 @@ def test_smoke_and_co_status_sensor_unknown_when_missing(key: str):
     """Test that a missing or unrecognised status reports unknown rather than ok."""
     assert build_sensor(key, {}).native_value is None
     assert build_sensor(key, {key: 99}).native_value is None
+
+
+@pytest.mark.parametrize(
+    "key", ["last_audio_self_test_end_utc_secs", "latest_manual_test_end_utc_secs"]
+)
+def test_self_test_sensor_is_timezone_aware_timestamp(key: str):
+    """Test that self-test sensors keep the time of day as an aware UTC timestamp."""
+    sensor = build_sensor(key, {key: 1700000000})
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+    assert sensor.native_value == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+
+
+def test_replace_by_sensor_is_utc_calendar_date():
+    """Test that the replace-by sensor reports the UTC calendar date."""
+    key = "replace_by_date_utc_secs"
+    # 23:30 UTC, so a local-time conversion east of UTC would roll to the next day.
+    sensor = build_sensor(key, {key: 1893454200})
+    assert sensor.device_class == SensorDeviceClass.DATE
+    assert type(sensor.native_value) is date
+    assert sensor.native_value == date(2029, 12, 31)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "replace_by_date_utc_secs",
+        "last_audio_self_test_end_utc_secs",
+        "latest_manual_test_end_utc_secs",
+    ],
+)
+@pytest.mark.parametrize("value", [{}, {"raw": None}, {"raw": 0}], ids=str)
+def test_date_sensors_unknown_when_missing_or_zero(key: str, value: dict):
+    """Test that a missing or zero (never run) value reports unknown, not 1970."""
+    sensor = build_sensor(key, {key: value["raw"]} if value else {})
+    assert sensor.native_value is None
