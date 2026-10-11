@@ -311,6 +311,68 @@ async def test_startup_falls_through_on_401_from_persisted_session(
     assert config_entry_with_cookies.state is ConfigEntryState.LOADED
 
 
+async def test_command_refresh_persists_rotated_cookies(
+    hass,
+    component_setup_with_cookies: ComponentSetup,
+    config_entry_with_cookies: MockConfigEntry,
+):
+    """Cookies rotated by a command-triggered session refresh reach the config entry."""
+    with (
+        patch("custom_components.nest_protect.Store.async_load", return_value=None),
+        patch("custom_components.nest_protect.Store.async_save"),
+        patch(
+            "custom_components.nest_protect.NestClient.get_access_token_from_cookies"
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.authenticate",
+            return_value=MagicMock(to_dict=dict),
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.get_first_data",
+            return_value=MagicMock(
+                updated_buckets=[],
+                service_urls={"urls": {"transport_url": "https://t.example.com"}},
+            ),
+        ),
+        patch(
+            "custom_components.nest_protect._async_subscribe_for_data",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.nest_protect._async_observe_locks_loop",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await component_setup_with_cookies()
+
+    entry_data = hass.data[DOMAIN][config_entry_with_cookies.entry_id]
+    client = entry_data.client
+    rotated_cookies = f"{COOKIES}; SIDCC=rotated"
+
+    async def rotate(*args):
+        client.refreshed_cookies = rotated_cookies
+        client.cookies = rotated_cookies
+        client.auth = MagicMock(access_token="google-token", is_expired=lambda: False)
+        return client.auth
+
+    command = AsyncMock(side_effect=[NotAuthenticatedException(), "ok"])
+    client.nest_session = MagicMock(is_expired=lambda buffer_seconds=0: False)
+    client.auth = None
+    with (
+        patch.object(client, "get_access_token", side_effect=rotate),
+        patch.object(client, "authenticate", return_value=MagicMock(to_dict=dict)),
+        patch("custom_components.nest_protect.Store.async_save"),
+    ):
+        assert (
+            await entry_data.session_manager.async_run_command(
+                command, NotAuthenticatedException
+            )
+            == "ok"
+        )
+
+    assert config_entry_with_cookies.data[CONF_COOKIES] == rotated_cookies
+
+
 def _make_subscriber_entry_data(
     hass, entry, consecutive_failures=0, refreshed_cookies=None
 ):
