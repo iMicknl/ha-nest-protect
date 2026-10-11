@@ -58,9 +58,7 @@ async def test_alarm_hushed_not_created_when_absent(hass):
 )
 def test_alarm_hushed_state(value, expected):
     """The entity is on while hushed and unknown when the value is missing."""
-    description = next(
-        d for d in BINARY_SENSOR_DESCRIPTIONS if d.key == "hushed_state"
-    )
+    description = next(d for d in BINARY_SENSOR_DESCRIPTIONS if d.key == "hushed_state")
     entity = NestProtectBinarySensor(
         make_bucket({"hushed_state": value}), description, {}, MagicMock()
     )
