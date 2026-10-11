@@ -113,10 +113,15 @@ class NestClient:
     async def get_access_token(self) -> GoogleAuthResponse:
         """Get a Nest access token."""
 
-        if self.refresh_token:
-            await self.get_access_token_from_refresh_token(self.refresh_token)
-        elif self.issue_token and self.cookies:
+        # Cookies first, matching the order the session manager authenticates
+        # in. A re-authenticated entry keeps any legacy refresh_token
+        # alongside the new cookies, and preferring it here would refresh a
+        # stale credential while the cookies — which do need refreshing to
+        # stay valid — were never exercised.
+        if self.issue_token and self.cookies:
             await self.get_access_token_from_cookies(self.issue_token, self.cookies)
+        elif self.refresh_token:
+            await self.get_access_token_from_refresh_token(self.refresh_token)
 
         return self.auth
 
