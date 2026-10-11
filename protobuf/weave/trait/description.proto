@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+import "google/protobuf/wrappers.proto";
+import "weave/common.proto";
+
+package weave.trait.description;
+
+message SoftwareComponentTrait {
+    repeated SoftwareComponentTypeStruct softwareComponents = 1;
+
+    message SoftwareComponentTypeStruct {
+        string componentName = 1;
+        string componentVersion = 2;
+    }
+}
+
+message DeviceIdentityTrait {
+    uint32 vendorId = 1;
+    weave.common.StringRef vendorIdDescription = 2;
+    uint32 vendorProductId = 3;
+    weave.common.StringRef productIdDescription = 4;
+    uint32 productRevision = 5;
+    string serialNumber = 6;
+    string softwareVersion = 7;
+    google.protobuf.StringValue manufacturingDate = 8;
+    weave.common.ResourceId deviceId = 9;
+    uint64 fabricId = 10;
+}
+
+message LabelSettingsTrait {
+    string label = 1;
+}

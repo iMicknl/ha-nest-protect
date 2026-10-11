@@ -5,6 +5,13 @@ from .models import NestEnvironment
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36"
 
+# User-Agent for the gRPC-web gateway (grpc-web.production.nest.com), which is
+# only exercised by the Nest mobile apps. This deliberately differs from the
+# desktop-browser USER_AGENT above: it mirrors tronikos/nest_legacy, and is the
+# string the lock transport was verified against on a live account. Whether the
+# gateway would also accept USER_AGENT has not been tested.
+PROTOBUF_USER_AGENT = "Nest/5.82.2 (iOScom.nestlabs.jasper.release) os=18.5"
+
 NEST_ENVIRONMENTS: dict[str, NestEnvironment] = {
     Environment.PRODUCTION: NestEnvironment(
         name="Google Account",

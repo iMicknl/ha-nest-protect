@@ -10,6 +10,8 @@ Custom component for Home Assistant to interact with Nest Protect devices via an
 
 This integration will add the most important sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired (to main power). In addition, it will expose several diagnostic and configuration entities. All sensor values will be updated real-time.
 
+Nest x Yale locks on the same account are also supported. Each lock exposes a `lock` entity (with `lock` / `unlock` actions) and a `sensor` for battery percentage.
+
 ## Known limitations
 
 - Only Google Accounts are supported, there is no plan to support legacy Nest accounts

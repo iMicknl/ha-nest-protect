@@ -160,17 +160,23 @@ class NestSessionManager:
 
         await self.async_refresh_session()
 
-    async def async_refresh_session(self) -> None:
-        """Force-refresh the Nest session via Google credentials."""
+    async def async_refresh_session(self) -> bool:
+        """Force-refresh the Nest session via Google credentials.
+
+        Returns True when a fresh Nest session was obtained and persisted.
+        """
         if not self._client.auth or self._client.auth.is_expired():
             LOGGER.debug("Retrieving new Google access token")
             await self._client.get_access_token()
 
-        if self._client.auth:
-            self._client.nest_session = await self._client.authenticate(
-                self._client.auth.access_token
-            )
-            await self._async_persist(self._client.nest_session)
+        if not self._client.auth:
+            return False
+
+        self._client.nest_session = await self._client.authenticate(
+            self._client.auth.access_token
+        )
+        await self._async_persist(self._client.nest_session)
+        return True
 
     async def _async_persist(self, nest_session: NestResponse) -> None:
         """Save Nest session to store for reuse across restarts."""
