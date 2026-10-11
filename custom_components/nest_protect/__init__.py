@@ -66,6 +66,7 @@ class HomeAssistantNestProtectData:
     subscription_task: asyncio.Task | None = None
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
+    widget_tracks: dict[str, Bucket] = field(default_factory=dict)
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -121,11 +122,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     _persist_refreshed_cookies(hass, entry, client, session_manager)
 
     device_buckets: list[Bucket] = []
+    widget_tracks: dict[str, Bucket] = {}
     areas: dict[str, str] = {}
 
     for bucket in data.updated_buckets:
         if bucket.type in {BucketType.TOPAZ, BucketType.KRYPTONITE}:
             device_buckets.append(bucket)
+
+        if bucket.type == BucketType.WIDGET_TRACK:
+            widget_tracks[bucket.object_key] = bucket
 
         if bucket.type == BucketType.WHERE and isinstance(
             bucket.value, WhereBucketValue
@@ -142,6 +147,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         client=client,
         session_manager=session_manager,
         grpc_lock_client=GrpcLockClient(client),
+        widget_tracks=widget_tracks,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
 
@@ -370,6 +376,13 @@ async def _async_subscribe_for_data(
                 entry_data.devices[key] = kryptonite
 
                 async_dispatcher_send(hass, key, kryptonite)
+
+            # Nest Protect connectivity
+            if key.startswith("widget_track."):
+                widget_track = Bucket(**bucket)
+                entry_data.widget_tracks[key] = widget_track
+
+                async_dispatcher_send(hass, key, widget_track)
 
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
