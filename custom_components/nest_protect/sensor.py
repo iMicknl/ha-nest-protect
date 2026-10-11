@@ -31,9 +31,10 @@ SMOKE_CO_STATUS_TO_STATE: dict[int, str] = {
 }
 
 
-def smoke_co_status_to_state(state: int) -> str:
+def smoke_co_status_to_state(state: int) -> str | None:
     """Convert the raw smoke/CO status code to an enum state."""
-    return SMOKE_CO_STATUS_TO_STATE.get(state, "ok")
+    # An unrecognised code must surface as unknown, never as a false "ok".
+    return SMOKE_CO_STATUS_TO_STATE.get(state)
 
 
 def milli_volt_to_percentage(state: int):
@@ -138,7 +139,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         translation_key="smoke_status_sensor",
         value_fn=smoke_co_status_to_state,
         device_class=SensorDeviceClass.ENUM,
-        options=["ok", "testing", "warning", "emergency"],
+        options=list(SMOKE_CO_STATUS_TO_STATE.values()),
         icon="mdi:smoke",
     ),
     NestProtectSensorDescription(
@@ -146,7 +147,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         translation_key="co_status_sensor",
         value_fn=smoke_co_status_to_state,
         device_class=SensorDeviceClass.ENUM,
-        options=["ok", "testing", "warning", "emergency"],
+        options=list(SMOKE_CO_STATUS_TO_STATE.values()),
         icon="mdi:molecule-co",
     ),
     # TODO Add Color Status (gray, green, yellow, red)

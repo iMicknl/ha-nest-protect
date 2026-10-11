@@ -35,10 +35,10 @@ def build_sensor(
 
 @pytest.mark.parametrize(
     ("code", "expected"),
-    [(0, "ok"), (1, "testing"), (2, "warning"), (3, "emergency"), (99, "ok")],
+    [(0, "ok"), (1, "testing"), (2, "warning"), (3, "emergency"), (99, None)],
 )
-def test_smoke_co_status_to_state(code: int, expected: str):
-    """Test that raw status codes map to the documented enum states, with an unknown code falling back to ok."""
+def test_smoke_co_status_to_state(code: int, expected: str | None):
+    """Test that raw status codes map to the enum states and unknown codes to None."""
     assert smoke_co_status_to_state(code) == expected
 
 
@@ -58,3 +58,10 @@ def test_smoke_and_co_status_sensor_native_value(key: str, code: int, expected: 
     """Test that the smoke_status/co_status enum sensors surface the mapped state."""
     sensor = build_sensor(key, {key: code})
     assert sensor.native_value == expected
+
+
+@pytest.mark.parametrize("key", ["smoke_status", "co_status"])
+def test_smoke_and_co_status_sensor_unknown_when_missing(key: str):
+    """Test that a missing or unrecognised status reports unknown rather than ok."""
+    assert build_sensor(key, {}).native_value is None
+    assert build_sensor(key, {key: 99}).native_value is None
