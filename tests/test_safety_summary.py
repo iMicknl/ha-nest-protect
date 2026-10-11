@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.const import STATE_UNKNOWN, EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect import (
@@ -130,9 +131,7 @@ async def test_home_without_protect_is_skipped(hass: HomeAssistant):
         is None
     )
     for description in HOME_SENSOR_DESCRIPTIONS:
-        assert (
-            _entity_id(hass, f"safety_summary.home-2-{description.key}") is None
-        )
+        assert _entity_id(hass, f"safety_summary.home-2-{description.key}") is None
 
 
 async def test_home_sensor_entity_names(hass: HomeAssistant):
