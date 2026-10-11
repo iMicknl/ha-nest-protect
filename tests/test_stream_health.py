@@ -17,6 +17,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.nest_protect import _async_subscribe_for_data
 from custom_components.nest_protect.const import DOMAIN, STREAM_STALE_AFTER_SECONDS
 from custom_components.nest_protect.entity import NestEntity
+from custom_components.nest_protect.pynest.const import SUBSCRIBE_TIMEOUT_SECONDS
 from custom_components.nest_protect.pynest.exceptions import (
     EmptyResponseException,
     NestServiceException,
@@ -45,9 +46,17 @@ async def _advance(hass, freezer, delta: timedelta) -> None:
     await hass.async_block_till_done()
 
 
-def test_threshold_outlasts_a_silent_long_poll():
-    """A healthy long-poll may stay silent for its full 600 s timeout."""
-    assert STREAM_STALE_AFTER_SECONDS > 600
+async def test_single_failed_poll_does_not_flap(hass, freezer, health):
+    """A late failure, the longest retry pause and a quiet poll stay available."""
+    failed_poll = timedelta(seconds=SUBSCRIBE_TIMEOUT_SECONDS)
+    # NestServiceException pauses 2 minutes; a fast-failure reconnect backoff
+    # can reach 5 minutes plus 20% jitter.
+    retry_pause = timedelta(seconds=300 * 1.2)
+    quiet_poll = timedelta(seconds=SUBSCRIBE_TIMEOUT_SECONDS)
+
+    await _advance(hass, freezer, failed_poll + retry_pause + quiet_poll)
+
+    assert health.available
 
 
 async def test_stays_available_within_grace_period(hass, freezer, health):

@@ -7,6 +7,8 @@ from typing import Final
 
 from homeassistant.const import Platform
 
+from .pynest.const import SUBSCRIBE_TIMEOUT_SECONDS
+
 LOGGER: logging.Logger = logging.getLogger(__package__)
 
 DOMAIN: Final = "nest_protect"
@@ -32,7 +34,11 @@ SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min
 
-# A healthy subscribe long-poll can stay silent for its full 600 s client
-# timeout. Allowing a second poll's worth means one dropped or failed request
-# doesn't flap entities, while a sustained outage still surfaces in minutes.
-STREAM_STALE_AFTER_SECONDS: Final = 20 * 60
+# A healthy long-poll can stay silent for its full client timeout. A single
+# failed request may itself run that long and pause before retrying, and then a
+# quiet healthy poll follows, so allow two timeouts plus room for the longest
+# retry pause before treating the stream as stale.
+STREAM_RETRY_BUFFER_SECONDS: Final = 10 * 60
+STREAM_STALE_AFTER_SECONDS: Final = (
+    2 * SUBSCRIBE_TIMEOUT_SECONDS + STREAM_RETRY_BUFFER_SECONDS
+)

@@ -27,6 +27,8 @@ NEST_ENVIRONMENTS: dict[str, NestEnvironment] = {
 
 DEFAULT_NEST_ENVIRONMENT = NEST_ENVIRONMENTS[Environment.PRODUCTION]
 
+SUBSCRIBE_TIMEOUT_SECONDS = 600
+
 # / URL for refresh token generation
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
