@@ -150,9 +150,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    entry_data.subscription_task = asyncio.create_task(
-        _async_subscribe_for_data(hass, entry, data)
-    )
+    _register_subscribe_task(hass, entry, data)
 
     entry_data.lock_observe_task = entry.async_create_background_task(
         hass,
@@ -328,7 +326,11 @@ def _register_subscribe_task(
         return None
 
     entry_data = entry.runtime_data
-    task = asyncio.create_task(_async_subscribe_for_data(hass, entry, data))
+    task = entry.async_create_background_task(
+        hass,
+        _async_subscribe_for_data(hass, entry, data),
+        name=f"{DOMAIN}_subscribe_{entry.entry_id}",
+    )
     entry_data.subscription_task = task
     return task
 
