@@ -343,12 +343,18 @@ async def _async_subscribe_for_data(
         await sm.ensure_session()
         _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
 
-        result = await entry_data.client.subscribe_for_data(
-            entry_data.client.nest_session.access_token,
-            entry_data.client.nest_session.userid,
-            data.service_urls["urls"]["transport_url"],
-            data.updated_buckets,
-        )
+        try:
+            result = await entry_data.client.subscribe_for_data(
+                entry_data.client.nest_session.access_token,
+                entry_data.client.nest_session.userid,
+                data.service_urls["urls"]["transport_url"],
+                data.updated_buckets,
+            )
+        except TimeoutError:
+            # Only a long-poll running out its timeout proves Nest is reachable;
+            # a timed-out session refresh above must not reset the deadline.
+            entry_data.stream_health.async_record_response()
+            raise
 
         sm.record_success()
         entry_data.stream_health.async_record_response()
@@ -406,7 +412,6 @@ async def _async_subscribe_for_data(
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
         sm.record_success()
-        entry_data.stream_health.async_record_response()
         _register_subscribe_task(hass, entry, data)
 
     except ClientConnectorError:

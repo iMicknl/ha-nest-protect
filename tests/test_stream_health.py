@@ -221,3 +221,23 @@ async def test_subscriber_failure_does_not_record_response(hass, error):
 
     health = hass.data[DOMAIN][entry.entry_id].stream_health
     health.async_record_response.assert_not_called()
+
+
+async def test_session_refresh_timeout_does_not_record_response(hass):
+    """A timeout before the subscribe request was sent proves nothing about Nest."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock()
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(
+            sm, "ensure_session", new_callable=AsyncMock, side_effect=TimeoutError()
+        ),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    client.subscribe_for_data.assert_not_called()
+    health = hass.data[DOMAIN][entry.entry_id].stream_health
+    health.async_record_response.assert_not_called()
