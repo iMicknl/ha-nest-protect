@@ -29,6 +29,15 @@ class EmptyResponseException(NestServiceException):
     """Raised when server returns Status 200 (OK), but empty response."""
 
 
+class GoogleThrottledException(NestServiceException):
+    """Raised when Google rate limits or blocks a credential refresh."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        """Initialize with the server's requested pause, if it sent one."""
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class NestLockException(PynestException):
     """Raised when the gRPC-web lock transport fails."""
 

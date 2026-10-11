@@ -11,8 +11,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import HomeAssistantNestProtectData
-from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN, DOMAIN
+from .const import DOMAIN
 from .pynest.const import FULL_NEST_REQUEST
+from .pynest.models import NestResponse
 
 TO_REDACT = [
     "access_token",
@@ -48,36 +49,33 @@ TO_REDACT = [
 ]
 
 
+async def _async_current_session(
+    entry_data: HomeAssistantNestProtectData,
+) -> NestResponse:
+    """Return the integration's own Nest session.
+
+    Going through the session manager rather than signing in again keeps
+    downloading diagnostics from rotating cookies that are then never persisted.
+    """
+    await entry_data.session_manager.ensure_session()
+    return entry_data.client.nest_session
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    issue_token = None
-    cookies = None
-    refresh_token = None
-
-    if CONF_ISSUE_TOKEN in entry.data and CONF_COOKIES in entry.data:
-        issue_token = entry.data[CONF_ISSUE_TOKEN]
-        cookies = entry.data[CONF_COOKIES]
-    if CONF_REFRESH_TOKEN in entry.data:
-        refresh_token = entry.data[CONF_REFRESH_TOKEN]
-
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     client = entry_data.client
-
-    if issue_token and cookies:
-        auth = await client.get_access_token_from_cookies(issue_token, cookies)
-    elif refresh_token:
-        auth = await client.get_access_token_from_refresh_token(refresh_token)
-
-    nest = await client.authenticate(auth.access_token)
+    nest = await _async_current_session(entry_data)
 
     data = {
+        "google_refresh": entry_data.session_manager.google_refresh_diagnostics,
         "app_launch": dataclasses.asdict(
             await client.get_first_data(
                 nest.access_token, nest.userid, request=FULL_NEST_REQUEST
             )
-        )
+        ),
     }
 
     return async_redact_data(data, TO_REDACT)
@@ -87,25 +85,9 @@ async def async_get_device_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry, device: DeviceEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a device entry."""
-    issue_token = None
-    cookies = None
-    refresh_token = None
-
-    if CONF_ISSUE_TOKEN in entry.data and CONF_COOKIES in entry.data:
-        issue_token = entry.data[CONF_ISSUE_TOKEN]
-        cookies = entry.data[CONF_COOKIES]
-    if CONF_REFRESH_TOKEN in entry.data:
-        refresh_token = entry.data[CONF_REFRESH_TOKEN]
-
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     client = entry_data.client
-
-    if issue_token and cookies:
-        auth = await client.get_access_token_from_cookies(issue_token, cookies)
-    elif refresh_token:
-        auth = await client.get_access_token_from_refresh_token(refresh_token)
-
-    nest = await client.authenticate(auth.access_token)
+    nest = await _async_current_session(entry_data)
 
     data = {
         "device": {

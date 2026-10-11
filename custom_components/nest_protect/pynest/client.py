@@ -27,6 +27,7 @@ from .exceptions import (
     BadGatewayException,
     EmptyResponseException,
     GatewayTimeoutException,
+    GoogleThrottledException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
@@ -99,6 +100,18 @@ def split_cookie_header(header: str) -> dict[str, str]:
     return parsed
 
 
+def parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header (seconds or HTTP date) into seconds."""
+    if not value:
+        return None
+    if value.strip().isdigit():
+        return float(value.strip())
+    parsed = parsedate_to_datetime_safe(value)
+    if parsed is None:
+        return None
+    return max((parsed - datetime.now(UTC)).total_seconds(), 0.0)
+
+
 def merge_cookies(
     original: str,
     new_cookies: dict[str, str],
@@ -156,6 +169,11 @@ class NestClient:
         # self.issue_token = issue_token
         # self.cookies = cookies
         self.environment = environment
+
+    def _store_rotated_cookies(self, original: str, merged: str) -> None:
+        if merged != original:
+            self.refreshed_cookies = merged
+            self.cookies = merged
 
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
@@ -245,14 +263,41 @@ class NestClient:
                 "cookie": cookies,
             },
         ) as response:
-            set_cookie_morsels = list(response.cookies.values())
-            result = await response.json()
+            new_cookies: dict[str, str] = {}
+            deleted_cookies: list[str] = []
+            for cookie in response.cookies.values():
+                if is_deletion_cookie(cookie):
+                    deleted_cookies.append(cookie.key)
+                else:
+                    new_cookies[cookie.key] = cookie.value
+
+            # Rotated values are authoritative as soon as Google sends them:
+            # the superseded set stops working even if reading the body fails.
+            # Deletions are only applied on success, so an error response
+            # can't tear down credentials that still work.
+            current = merge_cookies(cookies, new_cookies)
+            self._store_rotated_cookies(cookies, current)
+
+            if response.status == 429:
+                raise GoogleThrottledException(
+                    "Google rate limited the credential refresh",
+                    retry_after=parse_retry_after(response.headers.get("Retry-After")),
+                )
+
+            try:
+                result = await response.json()
+            except ContentTypeError as exception:
+                # Google answers with an HTML page instead of JSON when it is
+                # rate limiting or showing an "unusual traffic" interstitial.
+                raise GoogleThrottledException(
+                    f"Google returned a non-JSON response ({response.status})"
+                ) from exception
 
             if "error" in result:
-                # An error response carries Google's cookie teardown. Keep the
-                # credentials we came in with rather than storing that teardown,
-                # which would be written to the config entry by a later persist
-                # and force the user to paste fresh cookies by hand.
+                # An error response carries Google's cookie teardown. Storing it
+                # would be written to the config entry by a later persist and
+                # force the user to paste fresh cookies by hand, so deletions
+                # are only applied on success.
                 _LOGGER.debug(
                     "Google returned %s; keeping the existing session cookies",
                     result["error"],
@@ -265,26 +310,14 @@ class NestClient:
 
                 raise Exception(result["error"])
 
-            # Capture refreshed cookies from Google's response
-            new_cookies: dict[str, str] = {}
-            deleted_cookies: list[str] = []
-            for cookie in set_cookie_morsels:
-                if is_deletion_cookie(cookie):
-                    deleted_cookies.append(cookie.key)
-                else:
-                    new_cookies[cookie.key] = cookie.value
-
             if deleted_cookies:
                 _LOGGER.debug(
                     "Google asked to drop %s from the session cookies",
                     ", ".join(deleted_cookies),
                 )
-
-            if new_cookies or deleted_cookies:
-                merged = merge_cookies(cookies, new_cookies, deleted_cookies)
-                if merged != cookies:
-                    self.refreshed_cookies = merged
-                    self.cookies = merged
+                self._store_rotated_cookies(
+                    cookies, merge_cookies(current, {}, deleted_cookies)
+                )
 
             self.auth = GoogleAuthResponseForCookies(**result)
 

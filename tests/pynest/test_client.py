@@ -1,5 +1,7 @@
 """Tests for NestClient."""
 
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,9 +11,13 @@ from aiohttp.test_utils import TestServer
 from custom_components.nest_protect.pynest.client import (
     NestClient,
     merge_cookies,
+    parse_retry_after,
 )
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
-from custom_components.nest_protect.pynest.exceptions import BadCredentialsException
+from custom_components.nest_protect.pynest.exceptions import (
+    BadCredentialsException,
+    GoogleThrottledException,
+)
 
 
 @pytest.mark.enable_socket
@@ -257,6 +263,8 @@ async def test_get_access_token_falls_back_to_refresh_token():
 
     mock_cookie_auth.assert_not_called()
     mock_token_auth.assert_called_once()
+
+
 def test_merge_cookies_drops_deleted():
     """Test that merge_cookies removes names listed as deleted."""
     original = "SID=old; __Secure-1PSIDTS=stale; HSID=keep"
@@ -327,3 +335,87 @@ async def test_get_access_token_from_cookies_keeps_cookies_on_error(socket_enabl
 
         assert nest_client.refreshed_cookies is None
         assert nest_client.cookies == original
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_rate_limited(socket_enabled):
+    """A 429 raises a throttling error carrying Retry-After, keeping rotations."""
+
+    async def make_token_response(request):
+        response = web.Response(status=429, text="Too Many Requests")
+        response.headers["Retry-After"] = "120"
+        response.set_cookie("SIDCC", "rotated")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(GoogleThrottledException) as err:
+            await nest_client.get_access_token_from_cookies(str(url), "SID=old")
+
+        assert err.value.retry_after == 120
+        assert nest_client.cookies == "SID=old; SIDCC=rotated"
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_html_response(socket_enabled):
+    """An HTML page instead of JSON is treated as throttling."""
+
+    async def make_token_response(request):
+        return web.Response(
+            status=503, text="<html>unusual traffic</html>", content_type="text/html"
+        )
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(GoogleThrottledException):
+            await nest_client.get_access_token_from_cookies(str(url), "SID=old")
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_error_keeps_rotation_not_deletion(
+    socket_enabled,
+):
+    """On an error response, rotated values apply but deletions don't."""
+
+    async def make_token_response(request):
+        response = web.json_response({"error": "internal_failure"})
+        response.set_cookie("SIDCC", "rotated")
+        response.del_cookie("SID")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(Exception, match="internal_failure"):
+            await nest_client.get_access_token_from_cookies(
+                str(url), "SID=keep; SIDCC=old"
+            )
+
+        assert nest_client.cookies == "SID=keep; SIDCC=rotated"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, None), ("", None), ("90", 90.0), ("not-a-date", None)],
+)
+def test_parse_retry_after(value, expected):
+    """Retry-After is parsed from seconds; garbage is ignored."""
+    assert parse_retry_after(value) == expected
+
+
+def test_parse_retry_after_http_date():
+    """Retry-After also accepts an HTTP date."""
+    future = datetime.now(UTC) + timedelta(minutes=10)
+    seconds = parse_retry_after(format_datetime(future, usegmt=True))
+    assert 590 <= seconds <= 600
