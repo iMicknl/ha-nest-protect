@@ -44,7 +44,7 @@ The values of "issue_token" and "cookies" are specific to your Google Account. Y
 
 The easiest way to get your credentials is with the **Nest Auth Helper** Chrome extension:
 
-1. Download `nest-auth-helper.zip` from the [latest release](https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip) and unzip it.
+1. Download `nest-auth-helper.zip` from the [v0.4.4 release](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip) and unzip it.
 1. In Chrome, go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
 1. Sign in to [home.nest.com](https://home.nest.com) in a regular browser window.
 1. Click the extension icon → **Extract Credentials** → **Copy Code**.
