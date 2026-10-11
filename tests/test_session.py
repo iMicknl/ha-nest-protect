@@ -293,34 +293,34 @@ async def test_ensure_session_none_refreshes():
 
 
 @pytest.mark.asyncio
-async def test_record_failure_increments_counter():
-    """record_failure increments the consecutive failure counter."""
+async def test_record_auth_failure_increments_counter():
+    """record_auth_failure increments the consecutive auth failure counter."""
     client = MagicMock()
     store = MagicMock()
 
     manager = NestSessionManager(client=client, store=store)
 
-    assert manager.consecutive_failures == 0
-    manager.record_failure()
-    assert manager.consecutive_failures == 1
-    manager.record_failure()
-    assert manager.consecutive_failures == 2
+    assert manager.consecutive_auth_failures == 0
+    manager.record_auth_failure()
+    assert manager.consecutive_auth_failures == 1
+    manager.record_auth_failure()
+    assert manager.consecutive_auth_failures == 2
 
 
 @pytest.mark.asyncio
 async def test_record_success_resets_counter():
-    """record_success resets the failure counter."""
+    """record_success resets the auth failure counter."""
     client = MagicMock()
     store = MagicMock()
 
     manager = NestSessionManager(client=client, store=store)
 
-    manager.record_failure()
-    manager.record_failure()
-    assert manager.consecutive_failures == 2
+    manager.record_auth_failure()
+    manager.record_auth_failure()
+    assert manager.consecutive_auth_failures == 2
 
     manager.record_success()
-    assert manager.consecutive_failures == 0
+    assert manager.consecutive_auth_failures == 0
 
 
 @pytest.mark.asyncio
@@ -336,11 +336,11 @@ async def test_should_reauth_after_max_failures():
 
     # Record failures up to threshold
     for _ in range(MAX_AUTH_FAILURES - 1):
-        manager.record_failure()
+        manager.record_auth_failure()
     assert manager.should_trigger_reauth is False
 
     # One more failure should trigger reauth
-    manager.record_failure()
+    manager.record_auth_failure()
     assert manager.should_trigger_reauth is True
 
 
@@ -356,16 +356,78 @@ async def test_backoff_interval_increases():
     assert manager.backoff_interval == BACKOFF_INTERVALS[0]
 
     # Each failure should increase the backoff
-    manager.record_failure()
+    manager.record_auth_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[0]
 
-    manager.record_failure()
+    manager.record_auth_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[1]
 
-    manager.record_failure()
+    manager.record_auth_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[2]
 
     # Should cap at the last interval
     for _ in range(10):
-        manager.record_failure()
+        manager.record_auth_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[-1]
+
+
+@pytest.mark.asyncio
+async def test_record_error_does_not_count_toward_reauth():
+    """Non-auth errors must never push the session toward reauth."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+
+    for _ in range(MAX_AUTH_FAILURES + 1):
+        manager.record_error()
+
+    assert manager.consecutive_errors == MAX_AUTH_FAILURES + 1
+    assert manager.consecutive_auth_failures == 0
+    assert manager.should_trigger_reauth is False
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+
+@pytest.mark.asyncio
+async def test_error_backoff_interval_increases():
+    """error_backoff_interval escalates with consecutive non-auth errors."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[0]
+
+    manager.record_error()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[0]
+
+    manager.record_error()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[1]
+
+    for _ in range(10):
+        manager.record_error()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[-1]
+
+    manager.record_auth_failure()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[-1]
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+
+@pytest.mark.asyncio
+async def test_record_auth_success_keeps_error_counter():
+    """An accepted session clears auth failures but not unrelated errors."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    manager.record_auth_failure()
+    manager.record_error()
+
+    manager.record_auth_success()
+
+    assert manager.consecutive_auth_failures == 0
+    assert manager.consecutive_errors == 1
+
+
+@pytest.mark.asyncio
+async def test_record_success_resets_both_counters():
+    """A fully successful cycle clears auth failures and errors."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    manager.record_auth_failure()
+    manager.record_error()
+
+    manager.record_success()
+
+    assert manager.consecutive_auth_failures == 0
+    assert manager.consecutive_errors == 0
