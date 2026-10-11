@@ -486,3 +486,88 @@ async def test_waiter_refreshes_when_inflight_refresh_fails():
     assert results[1] is None
     assert client.authenticate.call_count == 2
     assert client.nest_session is new_session
+
+
+def _make_persisting_client(
+    nest_session: NestResponse, *new_sessions: NestResponse
+) -> MagicMock:
+    """Create a client whose authenticate() replaces nest_session, like NestClient."""
+    client = MagicMock()
+    client.nest_session = nest_session
+    client.auth = MagicMock(access_token="google-token")
+    client.auth.is_expired = MagicMock(return_value=False)
+    client.transport_url = "https://transport.example.com"
+    sessions = iter(new_sessions)
+
+    async def authenticate(access_token):
+        # Yield like the real request, so a concurrent caller sees the old session.
+        await asyncio.sleep(0)
+        client.nest_session = next(sessions)
+        return client.nest_session
+
+    client.authenticate = AsyncMock(side_effect=authenticate)
+    return client
+
+
+def _make_blocking_store(
+    *outcomes: Exception | None,
+) -> tuple[MagicMock, asyncio.Event, asyncio.Event]:
+    """Create a store whose first async_save blocks until released."""
+    store = MagicMock()
+    saving = asyncio.Event()
+    release = asyncio.Event()
+    results = iter(outcomes)
+
+    async def async_save(data):
+        if not saving.is_set():
+            saving.set()
+            await release.wait()
+        if (error := next(results)) is not None:
+            raise error
+
+    store.async_save = AsyncMock(side_effect=async_save)
+    return store, saving, release
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_during_persist_shares_refresh():
+    """A forced refresh that starts while the session is persisted reuses it."""
+    new_session = _make_nest_response(expired=False)
+    client = _make_persisting_client(
+        _make_nest_response(expired=False), new_session, _make_nest_response()
+    )
+    store, saving, release = _make_blocking_store(None, None)
+    manager = NestSessionManager(client=client, store=store)
+
+    first = asyncio.create_task(manager.async_refresh_session())
+    await saving.wait()
+    second = asyncio.create_task(manager.async_refresh_session())
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await asyncio.gather(first, second) == [True, True]
+    client.authenticate.assert_called_once()
+    assert client.nest_session is new_session
+
+
+@pytest.mark.asyncio
+async def test_waiter_refreshes_when_inflight_persist_fails():
+    """A waiter must not report success when the refresh it waited for failed."""
+    second_session = _make_nest_response(expired=False)
+    client = _make_persisting_client(
+        _make_nest_response(expired=False), _make_nest_response(), second_session
+    )
+    store, saving, release = _make_blocking_store(OSError("disk full"), None)
+    manager = NestSessionManager(client=client, store=store)
+
+    first = asyncio.create_task(manager.async_refresh_session())
+    second = asyncio.create_task(manager.async_refresh_session())
+    await saving.wait()
+    release.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert isinstance(results[0], OSError)
+    assert results[1] is True
+    assert client.authenticate.call_count == 2
+    assert store.async_save.call_count == 2
+    assert client.nest_session is second_session

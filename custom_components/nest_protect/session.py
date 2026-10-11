@@ -36,6 +36,7 @@ class NestSessionManager:
         self._store = store
         self._consecutive_failures: int = 0
         self._refresh_lock = asyncio.Lock()
+        self._refresh_generation: int = 0
 
     @property
     def refreshed_cookies(self) -> str | None:
@@ -180,15 +181,13 @@ class NestSessionManager:
         Returns True when a fresh Nest session was obtained and persisted.
         """
         # Callers force a refresh because Nest rejected the current session, so
-        # expiry can't tell whether it is still stale; only a replaced session
-        # proves another caller already refreshed it while this one waited.
-        rejected_session = self._client.nest_session
+        # expiry can't tell whether it is still stale. Session identity can't
+        # either: it is swapped before persisting, which may still fail. Only a
+        # refresh that fully completed while this one waited counts.
+        generation = self._refresh_generation
 
         async with self._refresh_lock:
-            if (
-                self._client.nest_session is not None
-                and self._client.nest_session is not rejected_session
-            ):
+            if self._refresh_generation != generation:
                 return True
 
             return await self._async_refresh_session()
@@ -206,6 +205,7 @@ class NestSessionManager:
             self._client.auth.access_token
         )
         await self._async_persist(self._client.nest_session)
+        self._refresh_generation += 1
         return True
 
     async def _async_persist(self, nest_session: NestResponse) -> None:
