@@ -212,11 +212,15 @@ class NestClient:
                 else:
                     new_cookies[cookie.key] = cookie.value
 
+            signed_out = False
             if new_cookies or expired_cookies:
-                self.refreshed_cookies = merge_cookies(
-                    cookies, new_cookies, expired_cookies
-                )
-                self.cookies = self.refreshed_cookies
+                merged = merge_cookies(cookies, new_cookies, expired_cookies)
+                # Keep the stored cookies rather than replacing them with an
+                # empty header that later refreshes would silently skip.
+                signed_out = not merged
+                if not signed_out:
+                    self.refreshed_cookies = merged
+                    self.cookies = merged
 
             result = await response.json()
 
@@ -228,6 +232,9 @@ class NestClient:
                     )
 
                 raise Exception(result["error"])
+
+            if signed_out:
+                raise BadCredentialsException("Google expired all session cookies")
 
             self.auth = GoogleAuthResponseForCookies(**result)
 

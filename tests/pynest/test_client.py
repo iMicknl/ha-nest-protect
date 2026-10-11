@@ -8,6 +8,7 @@ from aiohttp.test_utils import TestServer
 
 from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
+from custom_components.nest_protect.pynest.exceptions import BadCredentialsException
 
 
 @pytest.mark.enable_socket
@@ -254,3 +255,38 @@ async def test_get_access_token_from_cookies_drops_expired_cookies(socket_enable
         assert nest_client.refreshed_cookies == (
             "SID=new-sid; APISID=keep-me; HSID=new-hsid"
         )
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_all_expired(socket_enabled):
+    """Test that Google expiring every cookie is a sign-out, not an empty rotation."""
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+        response.set_cookie("SID", "", max_age=0)
+        response.set_cookie("HSID", "", expires="Thu, 01-Jan-1970 00:00:01 GMT")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(BadCredentialsException):
+            await nest_client.get_access_token_from_cookies(
+                str(url), "SID=old-sid; HSID=old-hsid"
+            )
+        assert nest_client.refreshed_cookies is None
+        assert nest_client.cookies == "SID=old-sid; HSID=old-hsid"
+        assert nest_client.auth is None
