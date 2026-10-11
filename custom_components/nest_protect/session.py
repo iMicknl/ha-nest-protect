@@ -6,7 +6,7 @@ import asyncio
 import datetime
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from homeassistant.helpers.storage import Store
@@ -207,8 +207,10 @@ class NestSessionManager:
         """
         if self._client.issue_token and self._client.cookies:
             try:
-                auth = await self._client.get_access_token_from_cookies(
-                    self._client.issue_token, self._client.cookies
+                auth = await self._async_track_google_request(
+                    self._client.get_access_token_from_cookies(
+                        self._client.issue_token, self._client.cookies
+                    )
                 )
             finally:
                 # Notify here rather than after async_setup() returns: Google
@@ -217,8 +219,10 @@ class NestSessionManager:
                 # set.
                 self._notify_credentials_refreshed()
         elif self._client.refresh_token:
-            auth = await self._client.get_access_token_from_refresh_token(
-                self._client.refresh_token
+            auth = await self._async_track_google_request(
+                self._client.get_access_token_from_refresh_token(
+                    self._client.refresh_token
+                )
             )
         else:
             return None
@@ -262,20 +266,20 @@ class NestSessionManager:
         if self._keep_warm_disabled:
             return False
         now = time.time()
+        if now < self._google_refreshed_at:
+            # The clock went backwards. Re-anchor and refresh now, so the
+            # schedule (including retry backoff) applies again from here.
+            self._google_refreshed_at = now
+            self._google_next_refresh_at = now
         if now < self._google_throttled_until:
             return False
-        # A clock that went backwards must not suppress a due refresh.
-        return now >= self._google_next_refresh_at or now < self._google_refreshed_at
+        return now >= self._google_next_refresh_at
 
-    async def _async_call_google(self) -> bool:
-        """Refresh the Google access token. Caller must hold the lock.
-
-        Returns True when a usable token came back.
-        """
-        LOGGER.debug("Retrieving new Google access token")
+    async def _async_track_google_request[T](self, request: Awaitable[T]) -> T:
+        """Await a Google token request, accounting for it and any throttling."""
         self._google_stats["attempts"] += 1
         try:
-            await self._client.get_access_token()
+            return await request
         except GoogleThrottledException as err:
             pause = min(
                 max(err.retry_after or 0, GOOGLE_THROTTLE_SECONDS),
@@ -294,9 +298,19 @@ class NestSessionManager:
             self._google_stats["last_error"] = type(err).__name__
             raise
 
+    async def _async_call_google(self) -> bool:
+        """Refresh the Google access token. Caller must hold the lock.
+
+        Returns True when a usable token came back.
+        """
+        LOGGER.debug("Retrieving new Google access token")
+        await self._async_track_google_request(self._client.get_access_token())
+
         if not self._client.auth or self._client.auth.is_expired():
             # No usable token came back — don't record a refresh that the
             # cookies never actually went through.
+            self._google_stats["failures"] += 1
+            self._google_stats["last_error"] = "no usable token"
             return False
 
         self._record_google_success()
@@ -328,7 +342,8 @@ class NestSessionManager:
         Caller must hold the lock. Returns True when the refresh succeeded.
         """
         try:
-            return await self._async_call_google()
+            if await self._async_call_google():
+                return True
         except BadCredentialsException:
             # Retrying dead credentials every hour only adds load; the next
             # Nest re-authentication surfaces this as a reauth request.
@@ -339,19 +354,26 @@ class NestSessionManager:
                 "integration before then to avoid an interruption",
                 self._client.nest_session.expires_in,
             )
+            return False
         except Exception as err:  # noqa: BLE001 - any failure is retried later
-            self._google_retry_failures += 1
-            idx = min(self._google_retry_failures, len(GOOGLE_REFRESH_RETRY_INTERVALS))
-            delay = GOOGLE_REFRESH_RETRY_INTERVALS[idx - 1] * random.uniform(  # noqa: S311
-                0.8, 1.2
-            )
-            self._google_next_refresh_at = time.time() + delay
-            LOGGER.debug(
-                "Refreshing Google credentials failed (%r); retrying in %d minutes",
-                err,
-                delay // 60,
-            )
+            self._schedule_keep_warm_retry(repr(err))
+            return False
+
+        self._schedule_keep_warm_retry("no usable token")
         return False
+
+    def _schedule_keep_warm_retry(self, reason: str) -> None:
+        self._google_retry_failures += 1
+        idx = min(self._google_retry_failures, len(GOOGLE_REFRESH_RETRY_INTERVALS))
+        delay = GOOGLE_REFRESH_RETRY_INTERVALS[idx - 1] * random.uniform(  # noqa: S311
+            0.8, 1.2
+        )
+        self._google_next_refresh_at = time.time() + delay
+        LOGGER.debug(
+            "Refreshing Google credentials failed (%s); retrying in %d minutes",
+            reason,
+            delay // 60,
+        )
 
     def _notify_credentials_refreshed(self) -> None:
         """Let the caller persist cookies Google rotated during a refresh.

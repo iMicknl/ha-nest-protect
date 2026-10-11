@@ -1083,3 +1083,68 @@ async def test_throttling_pauses_all_google_refreshes(retry_after, expected_paus
 
     client.get_access_token.assert_awaited_once()
     assert manager.google_refresh_diagnostics["throttled"] == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_google_request_is_counted():
+    """Startup authentication shows up in the refresh statistics."""
+    client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refreshed_cookies = None
+    client.get_access_token_from_cookies = AsyncMock(
+        return_value=MagicMock(access_token="token")
+    )
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+
+    manager = NestSessionManager(client=client, store=MagicMock())
+    await manager._async_authenticate_with_credentials()
+
+    stats = manager.google_refresh_diagnostics
+    assert (stats["attempts"], stats["successes"], stats["failures"]) == (1, 1, 0)
+
+
+@pytest.mark.asyncio
+async def test_startup_google_failure_is_counted():
+    """A failed startup request is counted as an attempt and a failure."""
+    client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test"
+    client.refreshed_cookies = None
+    client.get_access_token_from_cookies = AsyncMock(
+        side_effect=BadCredentialsException("USER_LOGGED_OUT")
+    )
+
+    manager = NestSessionManager(client=client, store=MagicMock())
+    with pytest.raises(BadCredentialsException):
+        await manager._async_authenticate_with_credentials()
+
+    stats = manager.google_refresh_diagnostics
+    assert (stats["attempts"], stats["successes"], stats["failures"]) == (1, 0, 1)
+
+
+@pytest.mark.asyncio
+async def test_keep_warm_without_usable_token_backs_off():
+    """A request that returns no usable token enters the retry backoff."""
+    manager, client, _store = _keep_warm_manager(AsyncMock(return_value=None))
+
+    await manager.ensure_session()
+    await manager.ensure_session()
+
+    client.get_access_token.assert_awaited_once()
+    assert manager._google_next_refresh_at > time.time()
+    assert manager.google_refresh_diagnostics["failures"] == 1
+
+
+@pytest.mark.asyncio
+async def test_keep_warm_backoff_survives_clock_rollback():
+    """After the clock jumps back, a failed refresh still waits its backoff."""
+    manager, client, _store = _keep_warm_manager(
+        AsyncMock(side_effect=aiohttp.ClientError("offline"))
+    )
+    manager._google_refreshed_at = time.time() + 10_000
+
+    await manager.ensure_session()
+    await manager.ensure_session()
+
+    client.get_access_token.assert_awaited_once()
