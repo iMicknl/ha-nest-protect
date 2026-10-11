@@ -36,6 +36,7 @@ NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt
 
 NEST_REQUEST = {
     "known_bucket_types": [
+        BucketType.BUCKETS,
         BucketType.KRYPTONITE,
         BucketType.STRUCTURE,
         BucketType.TOPAZ,
