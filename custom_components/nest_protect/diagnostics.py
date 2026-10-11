@@ -71,10 +71,11 @@ async def async_get_config_entry_diagnostics(
     if entry_data is None:
         return async_redact_data(data, TO_REDACT)
 
-    data["session"] = _session_info(entry_data)
     app_launch, error = await _async_fetch_app_launch(hass, entry, entry_data)
 
     data |= {
+        # Captured after the fetch, which may have replaced the session.
+        "session": _session_info(entry_data),
         "devices": {
             key: dataclasses.asdict(bucket)
             for key, bucket in entry_data.devices.items()

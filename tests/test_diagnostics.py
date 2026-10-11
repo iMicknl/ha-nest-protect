@@ -389,6 +389,8 @@ async def test_diagnostics_refresh_goes_through_session_manager(hass):
     assert client.nest_session is fresh_session
     assert entry.data[CONF_COOKIES] == "SID=rotated"
     assert result["app_launch_error"] is None
+    assert result["session"]["expired"] is False
+    assert result["session"]["expires_in"] == fresh_session.expires_in
 
 
 async def test_diagnostics_for_unloaded_entry(hass):
