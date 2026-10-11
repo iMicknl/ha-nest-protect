@@ -2,9 +2,9 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.helpers.entity import EntityCategory
-import pytest
 
 from custom_components.nest_protect.binary_sensor import (
     BINARY_SENSOR_DESCRIPTIONS,
