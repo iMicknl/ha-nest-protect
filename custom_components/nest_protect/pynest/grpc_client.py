@@ -55,6 +55,12 @@ _NO_LOCK_SETTLE_SECONDS = 30.0
 # gateway had a transient problem. Retrying these forever never recovers.
 _AUTH_ERROR_STATUSES = frozenset({401, 403})
 
+# google.rpc.Code values. PERMISSION_DENIED usually means a genuine
+# authorization refusal that a new session won't fix, so only its
+# "authentication failed" variant is treated as a rejected session.
+_GRPC_PERMISSION_DENIED = 7
+_GRPC_UNAUTHENTICATED = 16
+
 # Protobuf wire-type for length-delimited fields. Every StreamBody field the
 # gateway sends is length-delimited (tag wire-type == 2); any other wire-type
 # means the buffer is out of sync and must be reset.
@@ -103,6 +109,15 @@ def _decode_varint(buffer: bytes | bytearray) -> tuple[int | None, int]:
         if not (i & 0x80):
             return result, bytes_read
     return None, 0
+
+
+def _is_auth_status(code: int, message: str) -> bool:
+    """Return True if a gRPC status means the session credentials were rejected."""
+    if code == _GRPC_UNAUTHENTICATED:
+        return True
+    return (
+        code == _GRPC_PERMISSION_DENIED and "authentication failed" in message.lower()
+    )
 
 
 _ACTUATOR_STATE_MAP: dict[int, LockBoltState] = {
@@ -355,7 +370,8 @@ class GrpcLockClient:
         The gateway streams its response as a sequence of length-delimited
         StreamBody fields. A `message` entry (field 1) holds one serialized
         `ObserveResponse.ObserveResponse`; a `status` entry (field 2) carries a
-        gateway-side error for the stream as a whole.
+        gateway-side error for the stream as a whole, and raises
+        `NestLockAuthException` when it rejects the session.
 
         Returns one set of touched resource_ids per entry that changed
         something, so the caller can snapshot just those resources.
@@ -393,6 +409,13 @@ class GrpcLockClient:
                 _LOGGER.exception("Failed to parse observe StreamBody frame")
                 continue
 
+            if body.HasField("status") and _is_auth_status(
+                body.status.code, body.status.message
+            ):
+                raise NestLockAuthException(
+                    f"Observe stream rejected: code={body.status.code} "
+                    f"message={body.status.message!r}"
+                )
             if body.HasField("status") and body.status.code != 0:
                 _LOGGER.warning(
                     "Observe stream reported status code=%s message=%r",
@@ -581,6 +604,10 @@ class GrpcLockClient:
             resp.status.code,
             resp.status.message,
         )
+        if _is_auth_status(resp.status.code, resp.status.message):
+            raise NestLockAuthException(
+                f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
+            )
         if resp.status.code != 0:
             raise NestLockCommandException(
                 f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
