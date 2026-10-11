@@ -6,7 +6,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "nest-auth-helper@iMicknl",
-      "strict_min_version": "109.0"
+      "strict_min_version": "121.0"
     }
   },
   "permissions": [
