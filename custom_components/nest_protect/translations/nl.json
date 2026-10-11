@@ -37,8 +37,8 @@
         }
       },
       "account_link": {
-        "title": "Verbind je Nest-account",
-        "description": "Volg deze stappen om je inloggegevens te verkrijgen:\n\n1. Open een **Incognito/Privé** browservenster\n2. Schakel **cookies van derden** in bij de browserinstellingen\n3. Ga naar [home.nest.com]({nest_url}) en log in met Google\n4. Open **DevTools** (F12) → tabblad **Network** → Vink **Preserve log** aan\n5. Typ `issueToken` in het filtervak en kopieer de volledige **Request URL**\n6. Typ `oauth2/iframe` in het filtervak, klik op het laatste verzoek en kopieer de volledige **Cookie**-headerwaarde\n\n⚠️ Log niet uit bij home.nest.com na het kopiëren van de inloggegevens",
+        "title": "Verbind je Nest-account (handmatig)",
+        "description": "Volg deze stappen om je inloggegevens te verkrijgen:\n\n1. Open een **normaal** Chrome/Edge-browservenster (niet Incognito — cookies van derden moeten ingeschakeld zijn)\n2. Open **DevTools** (F12) → tabblad **Network** → Vink **Preserve log** aan\n3. Typ `issueToken` in het filtervak\n4. Ga naar [home.nest.com]({nest_url}) en log in met Google\n5. Klik op het `iframerpc`-verzoek en kopieer de volledige **Request URL**\n6. Typ `oauth2/iframe` in het filtervak, klik op het laatste verzoek en kopieer de volledige **Cookie**-headerwaarde\n\n⚠️ Log niet uit bij home.nest.com na het kopiëren van de inloggegevens.",
         "data": {
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
