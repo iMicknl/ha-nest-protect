@@ -10,6 +10,7 @@ import pytest
 from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
 from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
+    PynestException,
 )
 from custom_components.nest_protect.pynest.models import NestResponse
 from custom_components.nest_protect.session import NestSessionManager
@@ -369,3 +370,77 @@ async def test_backoff_interval_increases():
     for _ in range(10):
         manager.record_failure()
     assert manager.backoff_interval == BACKOFF_INTERVALS[-1]
+
+
+def _make_command_manager() -> NestSessionManager:
+    """Create a manager whose session is valid and whose refresh succeeds."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    manager.ensure_session = AsyncMock()
+    manager.async_refresh_session = AsyncMock(return_value=True)
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_command_runs_once_with_a_valid_session():
+    """A successful command is neither refreshed nor retried."""
+    manager = _make_command_manager()
+    command = AsyncMock(return_value="ok")
+
+    result = await manager.async_run_command(command, NotAuthenticatedException)
+
+    assert result == "ok"
+    manager.ensure_session.assert_awaited_once()
+    manager.async_refresh_session.assert_not_called()
+    command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_command_refreshes_and_retries_once_on_auth_error():
+    """An auth rejection force-refreshes the session and retries the command."""
+    manager = _make_command_manager()
+    command = AsyncMock(side_effect=[NotAuthenticatedException("401"), "ok"])
+
+    result = await manager.async_run_command(command, NotAuthenticatedException)
+
+    assert result == "ok"
+    manager.async_refresh_session.assert_awaited_once()
+    assert command.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_command_retries_only_once():
+    """A command still rejected after a refresh fails instead of looping."""
+    manager = _make_command_manager()
+    command = AsyncMock(side_effect=NotAuthenticatedException("401"))
+
+    with pytest.raises(NotAuthenticatedException):
+        await manager.async_run_command(command, NotAuthenticatedException)
+
+    manager.async_refresh_session.assert_awaited_once()
+    assert command.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_command_is_not_retried_on_other_errors():
+    """Only auth errors justify a session refresh."""
+    manager = _make_command_manager()
+    command = AsyncMock(side_effect=PynestException("500"))
+
+    with pytest.raises(PynestException):
+        await manager.async_run_command(command, NotAuthenticatedException)
+
+    manager.async_refresh_session.assert_not_called()
+    command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_command_is_not_retried_without_a_new_session():
+    """Retrying with the session that was just rejected cannot succeed."""
+    manager = _make_command_manager()
+    manager.async_refresh_session.return_value = False
+    command = AsyncMock(side_effect=NotAuthenticatedException("401"))
+
+    with pytest.raises(NotAuthenticatedException):
+        await manager.async_run_command(command, NotAuthenticatedException)
+
+    command.assert_awaited_once()

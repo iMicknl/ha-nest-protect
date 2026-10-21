@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -28,10 +30,12 @@ class NestSessionManager:
         self,
         client: NestClient,
         store: Store,
+        persist_cookies: Callable[[NestSessionManager], None] | None = None,
     ) -> None:
         """Initialize the session manager."""
         self._client = client
         self._store = store
+        self._persist_cookies = persist_cookies
         self._consecutive_failures: int = 0
 
     @property
@@ -159,6 +163,33 @@ class NestSessionManager:
             return
 
         await self.async_refresh_session()
+
+    async def async_run_command[T](
+        self,
+        command: Callable[[], Awaitable[T]],
+        auth_errors: type[Exception] | tuple[type[Exception], ...],
+    ) -> T:
+        """Run a command, refreshing the session and retrying once on auth errors.
+
+        A session can be revoked before its advertised expiry, so a valid-looking
+        session is no guarantee the command will be accepted.
+        """
+        try:
+            await self.ensure_session()
+            try:
+                return await command()
+            except auth_errors:
+                LOGGER.debug(
+                    "Command rejected by Nest, refreshing session and retrying"
+                )
+                if not await self.async_refresh_session():
+                    raise
+            return await command()
+        finally:
+            # Unlike the background loops, commands have no caller that persists
+            # cookies Google rotated during a refresh.
+            if self._persist_cookies:
+                self._persist_cookies(self)
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
