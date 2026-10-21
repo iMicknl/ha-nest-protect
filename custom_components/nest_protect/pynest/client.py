@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import secrets
 import time
 from collections.abc import Collection
 from http.cookiejar import http2time
@@ -22,6 +24,9 @@ from aiohttp import (
 from .const import (
     APP_LAUNCH_URL_FORMAT,
     DEFAULT_NEST_ENVIRONMENT,
+    GOOGLE_HOME_APP,
+    GOOGLE_OAUTH_CLIENT_SIG,
+    NEST_ACCOUNT_OAUTH_SERVICE,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
     REQUEST_TIMEOUT_SECONDS,
@@ -125,6 +130,10 @@ class NestClient:
     transport_url: str | None = None
     environment: NestEnvironment
 
+    # Master token Auth (durable, app-style)
+    master_token: str | None = None
+    google_email: str | None = None
+    android_id: str | None = None
     # Legacy Auth
     refresh_token: str | None = None
     # Cookie Auth
@@ -166,9 +175,11 @@ class NestClient:
     async def get_access_token(self) -> GoogleAuthResponse:
         """Get a Nest access token."""
 
+        if self.master_token:
+            await self.get_access_token_from_master_token()
         # Same order as setup: entries re-authenticated with cookies may still
         # hold a revoked legacy refresh token.
-        if self.issue_token and self.cookies:
+        elif self.issue_token and self.cookies:
             await self.get_access_token_from_cookies(self.issue_token, self.cookies)
         elif self.refresh_token:
             await self.get_access_token_from_refresh_token(self.refresh_token)
@@ -213,6 +224,105 @@ class NestClient:
             self.auth = GoogleAuthResponse(**result)
 
             return self.auth
+
+    @staticmethod
+    def generate_android_id() -> str:
+        """Generate a random 16-hex-character Android ID for the master-token flow."""
+        return secrets.token_hex(8)
+
+    @staticmethod
+    def _exchange_token_sync(oauth_token: str, email: str, android_id: str) -> dict:
+        """Blocking gpsoauth call: one-time oauth_token -> durable master token."""
+        import gpsoauth  # lazy import: optional runtime dependency
+
+        return gpsoauth.exchange_token(email, oauth_token, android_id)
+
+    @staticmethod
+    def _perform_oauth_sync(email: str, master_token: str, android_id: str) -> dict:
+        """Blocking gpsoauth call: master token -> short-lived nest-account token."""
+        import gpsoauth  # lazy import: optional runtime dependency
+
+        return gpsoauth.perform_oauth(
+            email,
+            master_token,
+            android_id,
+            app=GOOGLE_HOME_APP,
+            service=NEST_ACCOUNT_OAUTH_SERVICE,
+            client_sig=GOOGLE_OAUTH_CLIENT_SIG,
+        )
+
+    async def exchange_master_token(
+        self, oauth_token: str, email: str, android_id: str
+    ) -> str:
+        """Exchange a one-time ``oauth_token`` for a durable Google master token.
+
+        The ``oauth_token`` (starts with ``oauth2_4/``) is captured once from
+        ``accounts.google.com/EmbeddedSetup``. The resulting master token
+        (``aas_et/...``) never expires unless the password is changed or access is
+        revoked, mirroring how the mobile apps stay signed in.
+        """
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, self._exchange_token_sync, oauth_token, email, android_id
+        )
+
+        master_token = result.get("Token")
+        if not master_token:
+            error = result.get("Error", result)
+            raise BadCredentialsException(f"Could not obtain master token: {error}")
+
+        self.master_token = master_token
+        self.google_email = email
+        self.android_id = android_id
+
+        return master_token
+
+    async def get_access_token_from_master_token(
+        self,
+        master_token: str | None = None,
+        email: str | None = None,
+        android_id: str | None = None,
+    ) -> GoogleAuthResponse:
+        """Mint a short-lived nest-account access token from a master token."""
+        if master_token:
+            self.master_token = master_token
+        if email:
+            self.google_email = email
+        if android_id:
+            self.android_id = android_id
+
+        if not (self.master_token and self.google_email and self.android_id):
+            raise PynestException("Master token credentials are incomplete")
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            self._perform_oauth_sync,
+            self.google_email,
+            self.master_token,
+            self.android_id,
+        )
+
+        access_token = result.get("Auth")
+        if not access_token:
+            error = result.get("Error", result)
+            # BadAuthentication means the master token is no longer valid.
+            raise BadCredentialsException(
+                f"Could not mint access token from master token: {error}"
+            )
+
+        expiry = int(result.get("Expiry", 0))
+        expires_in = max(0, expiry - int(time.time())) if expiry else 3600
+
+        self.auth = GoogleAuthResponse(
+            access_token=access_token,
+            scope=NEST_ACCOUNT_OAUTH_SERVICE,
+            token_type="Bearer",  # noqa: S106
+            expires_in=expires_in,
+            id_token=None,
+        )
+
+        return self.auth
 
     async def get_access_token_from_cookies(
         self, issue_token: str, cookies: str

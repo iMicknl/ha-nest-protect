@@ -265,7 +265,8 @@ class GoogleAuthResponse:
     scope: str
     token_type: str
     expires_in: int
-    id_token: str
+    # Google omits id_token on some refresh-token grants, so keep it optional.
+    id_token: str | None = None
     expiry_date: datetime.datetime = field(init=False)
 
     def __post_init__(self):
@@ -283,7 +284,7 @@ class GoogleAuthResponse:
 class GoogleAuthResponseForCookies(GoogleAuthResponse):
     """Class that reflects a Google Auth response for cookies."""
 
-    login_hint: str
+    login_hint: str = ""
     session_state: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
