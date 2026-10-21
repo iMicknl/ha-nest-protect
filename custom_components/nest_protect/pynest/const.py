@@ -41,6 +41,7 @@ NEST_REQUEST = {
         BucketType.TOPAZ,
         BucketType.WHERE,
         BucketType.USER,
+        BucketType.WIDGET_TRACK,
     ],
     "known_bucket_versions": [],
 }
