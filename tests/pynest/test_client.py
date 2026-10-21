@@ -1,13 +1,16 @@
 """Tests for NestClient."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
 from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
-from custom_components.nest_protect.pynest.const import NEST_REQUEST
+from custom_components.nest_protect.pynest.const import (
+    NEST_REQUEST,
+    SUBSCRIBE_CONNECT_TIMEOUT,
+)
 
 
 @pytest.mark.enable_socket
@@ -185,6 +188,67 @@ async def test_get_access_token_no_set_cookie_headers(socket_enabled):
         url = server.make_url("/issue-token")
         await nest_client.get_access_token_from_cookies(str(url), "SID=old-sid")
         assert nest_client.refreshed_cookies is None
+
+
+@pytest.mark.enable_socket
+async def test_authenticate_updates_transport_url(socket_enabled):
+    """A new Nest session's transport URL replaces the one from setup."""
+
+    async def issue_jwt(request):
+        return web.json_response({"jwt": "nest-jwt"})
+
+    async def session_response(request):
+        return web.json_response(
+            {
+                "access_token": "nest-token",
+                "email": "user@example.com",
+                "expires_in": "Fri, 01-Jan-2100 00:00:00 GMT",
+                "userid": "example-user",
+                "is_superuser": False,
+                "language": "en_US",
+                "weave": {},
+                "user": "user.example-user",
+                "is_staff": False,
+                "urls": {"transport_url": "https://new.transport.home.nest.com"},
+            }
+        )
+
+    app = web.Application()
+    app.router.add_post("/issue_jwt", issue_jwt)
+    app.router.add_get("/session", session_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        nest_client.transport_url = "https://old.transport.home.nest.com"
+        base = str(server.make_url("")).rstrip("/")
+        with (
+            patch.object(nest_client.environment, "host", base),
+            patch(
+                "custom_components.nest_protect.pynest.client.NEST_AUTH_URL_JWT",
+                f"{base}/issue_jwt",
+            ),
+        ):
+            await nest_client.authenticate("google-token")
+
+    assert nest_client.transport_url == "https://new.transport.home.nest.com"
+
+
+async def test_subscribe_for_data_sets_connect_timeout():
+    """The long poll may idle for minutes, but connecting must fail fast."""
+    response = MagicMock(status=200, content_type="application/json")
+    response.json = AsyncMock(return_value={"objects": []})
+    session = MagicMock()
+    session.post.return_value.__aenter__.return_value = response
+
+    nest_client = NestClient(session)
+    await nest_client.subscribe_for_data(
+        "nest-token", "example-user", "https://transport.example.com", []
+    )
+
+    timeout = session.post.call_args.kwargs["timeout"]
+    assert timeout.total == 600
+    assert timeout.connect == SUBSCRIBE_CONNECT_TIMEOUT
+    assert timeout.total > SUBSCRIBE_CONNECT_TIMEOUT
 
 
 def test_merge_cookies_overrides_existing():
