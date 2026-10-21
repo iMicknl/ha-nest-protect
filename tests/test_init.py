@@ -15,7 +15,11 @@ from custom_components.nest_protect import (
     _async_observe_locks_loop,
     _async_subscribe_for_data,
 )
-from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
+from custom_components.nest_protect.const import (
+    BACKOFF_INTERVALS,
+    CONF_COOKIES,
+    MAX_AUTH_FAILURES,
+)
 from custom_components.nest_protect.pynest.exceptions import (
     BadCredentialsException,
     NestLockAuthException,
@@ -312,7 +316,7 @@ async def test_startup_falls_through_on_401_from_persisted_session(
 
 
 def _make_subscriber_entry_data(
-    hass, entry, consecutive_failures=0, refreshed_cookies=None
+    hass, entry, consecutive_auth_failures=0, refreshed_cookies=None
 ):
     """Build minimal HomeAssistantNestProtectData for subscriber tests."""
     client = MagicMock()
@@ -322,7 +326,7 @@ def _make_subscriber_entry_data(
     store = MagicMock()
     store.async_load = AsyncMock(return_value=None)
     sm = NestSessionManager(client, store)
-    sm._consecutive_failures = consecutive_failures
+    sm._consecutive_auth_failures = consecutive_auth_failures
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices={},
@@ -352,7 +356,7 @@ async def test_subscriber_timeout_resets_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=2)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
     client.subscribe_for_data = AsyncMock(side_effect=TimeoutError())
 
     with (
@@ -361,7 +365,7 @@ async def test_subscriber_timeout_resets_failure_counter(hass):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 0
+    assert sm.consecutive_auth_failures == 0
 
 
 async def test_subscriber_401_accumulates_failure_counter(hass):
@@ -375,7 +379,7 @@ async def test_subscriber_401_accumulates_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0)
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     with (
@@ -386,7 +390,7 @@ async def test_subscriber_401_accumulates_failure_counter(hass):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 1
+    assert sm.consecutive_auth_failures == 1
 
 
 async def test_subscriber_401_persists_refreshed_cookies(hass):
@@ -454,7 +458,7 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0)
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     # Google still accepts the cookies, so the refresh itself succeeds while Nest
@@ -473,7 +477,7 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
         for _ in range(MAX_AUTH_FAILURES):
             await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == MAX_AUTH_FAILURES
+    assert sm.consecutive_auth_failures == MAX_AUTH_FAILURES
     mock_reauth.assert_called_once_with(hass)
 
 
@@ -488,7 +492,8 @@ async def test_subscriber_success_resets_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=2)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
+    sm._consecutive_errors = 2
     client.subscribe_for_data = AsyncMock(return_value={"objects": []})
 
     with (
@@ -497,7 +502,78 @@ async def test_subscriber_success_resets_failure_counter(hass):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 0
+    assert sm.consecutive_auth_failures == 0
+    assert sm.consecutive_errors == 0
+
+
+async def test_subscriber_unrelated_errors_do_not_trigger_reauth(hass):
+    """Two non-auth errors followed by one 401 must refresh, not reauth."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(
+        side_effect=[
+            {},  # response without "objects"
+            TypeError("unexpected bucket field"),
+            NotAuthenticatedException(),
+        ]
+    )
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(sm, "async_refresh_session", new_callable=AsyncMock) as refresh,
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        for _ in range(3):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    reauth.assert_not_called()
+    refresh.assert_awaited_once()
+    assert sm.consecutive_auth_failures == 1
+    assert sm.consecutive_errors == 2
+
+
+async def test_subscriber_repeated_parse_errors_escalate_backoff(hass):
+    """A response that keeps failing to parse backs off further each time."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(return_value={})
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        for _ in range(MAX_AUTH_FAILURES):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert [call.args[0] for call in sleep.call_args_list if call.args[0]] == list(
+        BACKOFF_INTERVALS[:MAX_AUTH_FAILURES]
+    )
+    reauth.assert_not_called()
+
+
+async def test_lock_batch_clears_auth_failures_only(hass):
+    """A lock batch proves the session works but says nothing about REST errors."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    _, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
+    sm._consecutive_errors = 2
+
+    async def observe_locks():
+        yield {}
+
+    hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    await _async_observe_locks_loop(hass, entry)
+
+    assert sm.consecutive_auth_failures == 0
+    assert sm.consecutive_errors == 2
 
 
 @pytest.mark.parametrize("transport", ["subscriber", "lock"])
