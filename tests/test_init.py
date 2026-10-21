@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -18,6 +19,7 @@ from custom_components.nest_protect import (
 from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
 from custom_components.nest_protect.pynest.exceptions import (
     BadCredentialsException,
+    BadGatewayException,
     NestLockAuthException,
     NestServiceException,
     NotAuthenticatedException,
@@ -150,6 +152,38 @@ async def test_authenticate_failure_with_cookies(
         await component_setup_with_cookies()
 
     assert config_entry_with_cookies.state is ConfigEntryState.SETUP_RETRY
+
+
+@pytest.mark.parametrize(
+    "error",
+    [NestServiceException("503 error"), BadGatewayException("502 error")],
+)
+async def test_authenticate_transient_service_error_with_cookies(
+    hass,
+    component_setup_with_cookies: ComponentSetup,
+    config_entry_with_cookies: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+):
+    """Test a temporary Nest outage retries setup without logging a traceback."""
+    with (
+        patch("custom_components.nest_protect.Store.async_load", return_value=None),
+        patch(
+            "custom_components.nest_protect.NestClient.get_access_token_from_cookies"
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.authenticate",
+            side_effect=error,
+        ),
+    ):
+        await component_setup_with_cookies()
+
+    assert config_entry_with_cookies.state is ConfigEntryState.SETUP_RETRY
+    assert "Nest service temporarily unavailable" in caplog.text
+    # HA attaches the traceback itself, but only at debug level.
+    assert not any(
+        record.exc_info and record.levelno > logging.DEBUG for record in caplog.records
+    )
 
 
 async def test_startup_reuses_persisted_session(
