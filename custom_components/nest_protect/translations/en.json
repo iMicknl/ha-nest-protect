@@ -134,6 +134,12 @@
           "warning": "Warning",
           "emergency": "Emergency"
         }
+      },
+      "total_critical_failures": {
+        "name": "Safety critical failures"
+      },
+      "total_warnings": {
+        "name": "Safety warnings"
       }
     },
     "select": {
