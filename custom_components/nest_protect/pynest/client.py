@@ -15,6 +15,7 @@ from .const import (
     DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    SUBSCRIBE_TIMEOUT_SECONDS,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -315,8 +316,6 @@ class NestClient:
         updated_buckets: dict,
     ) -> Any:
         """Subscribe for data."""
-        timeout = 600
-
         objects = []
         for bucket in updated_buckets:
             bucket = cast(Bucket, bucket)
@@ -331,10 +330,10 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
-            timeout=ClientTimeout(total=timeout),
+            timeout=ClientTimeout(total=SUBSCRIBE_TIMEOUT_SECONDS),
             json={
                 "objects": objects,
-                # "timeout": timeout,
+                # "timeout": SUBSCRIBE_TIMEOUT_SECONDS,
                 # "sessionID": f"ios-${user_id}.{random}.{epoch}",
             },
             headers={

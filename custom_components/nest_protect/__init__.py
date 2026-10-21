@@ -52,6 +52,7 @@ from .pynest.models import (
     WhereBucketValue,
 )
 from .session import NestSessionManager
+from .stream_health import StreamHealth
 
 
 @dataclass
@@ -63,6 +64,7 @@ class HomeAssistantNestProtectData:
     client: NestClient
     session_manager: NestSessionManager
     grpc_lock_client: GrpcLockClient
+    stream_health: StreamHealth
     subscription_task: asyncio.Task | None = None
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
@@ -142,8 +144,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         client=client,
         session_manager=session_manager,
         grpc_lock_client=GrpcLockClient(client),
+        stream_health=StreamHealth(hass, entry.entry_id),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+    # The first data fetch above counts as a response and starts the deadline.
+    entry_data.stream_health.async_record_response()
+    entry.async_on_unload(entry_data.stream_health.async_stop)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -337,14 +343,21 @@ async def _async_subscribe_for_data(
         await sm.ensure_session()
         _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
 
-        result = await entry_data.client.subscribe_for_data(
-            entry_data.client.nest_session.access_token,
-            entry_data.client.nest_session.userid,
-            data.service_urls["urls"]["transport_url"],
-            data.updated_buckets,
-        )
+        try:
+            result = await entry_data.client.subscribe_for_data(
+                entry_data.client.nest_session.access_token,
+                entry_data.client.nest_session.userid,
+                data.service_urls["urls"]["transport_url"],
+                data.updated_buckets,
+            )
+        except TimeoutError:
+            # Only a long-poll running out its timeout proves Nest is reachable;
+            # a timed-out session refresh above must not reset the deadline.
+            entry_data.stream_health.async_record_response()
+            raise
 
         sm.record_success()
+        entry_data.stream_health.async_record_response()
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
@@ -411,6 +424,8 @@ async def _async_subscribe_for_data(
 
     except EmptyResponseException:
         LOGGER.debug("Subscriber: Nest Service sent empty response.")
+        # A 200 without a body still proves the long-poll round trip works.
+        entry_data.stream_health.async_record_response()
         _register_subscribe_task(hass, entry, data)
 
     except NotAuthenticatedException:

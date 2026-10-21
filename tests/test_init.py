@@ -330,6 +330,7 @@ def _make_subscriber_entry_data(
         client=client,
         session_manager=sm,
         grpc_lock_client=MagicMock(),
+        stream_health=MagicMock(),
     )
     return client, sm
 
