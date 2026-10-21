@@ -4,6 +4,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import requests
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -12,6 +13,7 @@ from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
     BadCredentialsException,
+    NestServiceException,
     PynestException,
 )
 from custom_components.nest_protect.session import NestSessionManager
@@ -83,6 +85,37 @@ async def test_access_token_from_master_token_revoked() -> None:
     with (
         patch(PERFORM, return_value={"Error": "BadAuthentication"}),
         pytest.raises(BadCredentialsException),
+    ):
+        await client.get_access_token_from_master_token()
+
+
+async def test_access_token_from_master_token_transient_error() -> None:
+    """A Google error that doesn't mean revocation is retried, not reauthed."""
+    client = NestClient(session=MagicMock())
+    client.master_token = "aas_et/master"
+    client.google_email = "user@example.com"
+    client.android_id = "abcdef0123456789"
+
+    with (
+        patch(PERFORM, return_value={"Error": "ServiceUnavailable"}),
+        pytest.raises(NestServiceException, match="ServiceUnavailable"),
+    ):
+        await client.get_access_token_from_master_token()
+
+
+async def test_access_token_from_master_token_network_error() -> None:
+    """A network failure inside gpsoauth surfaces as a service error."""
+    client = NestClient(session=MagicMock())
+    client.master_token = "aas_et/master"
+    client.google_email = "user@example.com"
+    client.android_id = "abcdef0123456789"
+
+    with (
+        patch(
+            "gpsoauth.perform_oauth",
+            side_effect=requests.ConnectionError("connection reset"),
+        ),
+        pytest.raises(NestServiceException, match="connection reset"),
     ):
         await client.get_access_token_from_master_token()
 

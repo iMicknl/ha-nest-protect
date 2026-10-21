@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_NEST_ENVIRONMENT,
     GOOGLE_HOME_APP,
     GOOGLE_OAUTH_CLIENT_SIG,
+    MASTER_TOKEN_CREDENTIAL_ERRORS,
     NEST_ACCOUNT_OAUTH_SERVICE,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
@@ -234,22 +235,34 @@ class NestClient:
     def _exchange_token_sync(oauth_token: str, email: str, android_id: str) -> dict:
         """Blocking gpsoauth call: one-time oauth_token -> durable master token."""
         import gpsoauth  # lazy import: optional runtime dependency
+        import requests
 
-        return gpsoauth.exchange_token(email, oauth_token, android_id)
+        try:
+            return gpsoauth.exchange_token(email, oauth_token, android_id)
+        except requests.RequestException as exception:
+            raise NestServiceException(
+                f"Could not reach Google to exchange the oauth_token: {exception}"
+            ) from exception
 
     @staticmethod
     def _perform_oauth_sync(email: str, master_token: str, android_id: str) -> dict:
         """Blocking gpsoauth call: master token -> short-lived nest-account token."""
         import gpsoauth  # lazy import: optional runtime dependency
+        import requests
 
-        return gpsoauth.perform_oauth(
-            email,
-            master_token,
-            android_id,
-            app=GOOGLE_HOME_APP,
-            service=NEST_ACCOUNT_OAUTH_SERVICE,
-            client_sig=GOOGLE_OAUTH_CLIENT_SIG,
-        )
+        try:
+            return gpsoauth.perform_oauth(
+                email,
+                master_token,
+                android_id,
+                app=GOOGLE_HOME_APP,
+                service=NEST_ACCOUNT_OAUTH_SERVICE,
+                client_sig=GOOGLE_OAUTH_CLIENT_SIG,
+            )
+        except requests.RequestException as exception:
+            raise NestServiceException(
+                f"Could not reach Google to mint a Nest access token: {exception}"
+            ) from exception
 
     async def exchange_master_token(
         self, oauth_token: str, email: str, android_id: str
@@ -305,10 +318,15 @@ class NestClient:
 
         access_token = result.get("Auth")
         if not access_token:
-            error = result.get("Error", result)
-            # BadAuthentication means the master token is no longer valid.
-            raise BadCredentialsException(
-                f"Could not mint access token from master token: {error}"
+            error = result.get("Error")
+            # Only errors that mean the master token itself is unusable warrant
+            # re-authentication; anything else is retried as a service error.
+            if error in MASTER_TOKEN_CREDENTIAL_ERRORS:
+                raise BadCredentialsException(
+                    f"Could not mint access token from master token: {error}"
+                )
+            raise NestServiceException(
+                f"Google could not mint a Nest access token: {error or result}"
             )
 
         expiry = int(result.get("Expiry", 0))

@@ -39,6 +39,21 @@ EMBEDDED_SETUP_URL = "https://accounts.google.com/EmbeddedSetup"
 GOOGLE_HOME_APP = "com.google.android.apps.chromecast.app"
 GOOGLE_OAUTH_CLIENT_SIG = "24bb24c05e47e0aefa68a58a766179d9b613a600"
 NEST_ACCOUNT_OAUTH_SERVICE = "oauth2:https://www.googleapis.com/auth/nest-account"
+# Google auth error codes meaning the master token can no longer be used (password
+# changed, access revoked, account problems). Others, such as ServiceUnavailable,
+# are transient and retried without asking the user to re-authenticate.
+MASTER_TOKEN_CREDENTIAL_ERRORS = frozenset(
+    {
+        "BadAuthentication",
+        "NeedsBrowser",
+        "NotVerified",
+        "TermsNotAgreed",
+        "CaptchaRequired",
+        "AccountDeleted",
+        "AccountDisabled",
+        "ServiceDisabled",
+    }
+)
 
 # App launch API endpoint
 APP_LAUNCH_URL_FORMAT = "{host}/api/0.1/user/{user_id}/app_launch"
