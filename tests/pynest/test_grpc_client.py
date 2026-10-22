@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
-from aiohttp import ClientError, ClientResponseError
+from aiohttp import ClientError, ClientResponseError, SocketTimeoutError
 
 from custom_components.nest_protect.lock import _compose_lock_device_name
 from custom_components.nest_protect.pynest.const import PROTOBUF_USER_AGENT
@@ -14,6 +15,7 @@ from custom_components.nest_protect.pynest.exceptions import (
     NestLockCommandException,
 )
 from custom_components.nest_protect.pynest.grpc_client import (
+    _SOCK_READ_TIMEOUT,
     GrpcLockClient,
     _decode_varint,
     _extract_lock_state,
@@ -851,7 +853,7 @@ async def test_observe_once_uses_a_read_timeout_not_a_total_timeout():
     timeout = client._nest_client.session.calls[0]["timeout"]
     # A total timeout would tear down a healthy idle stream on a fixed cycle.
     assert timeout.total is None
-    assert timeout.sock_read == 300
+    assert timeout.sock_read == _SOCK_READ_TIMEOUT
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -983,6 +985,25 @@ async def test_observe_locks_backs_off_on_errors(monkeypatch, recorded_sleeps):
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
+
+
+async def test_observe_locks_reconnects_an_idle_stream_without_backoff(
+    monkeypatch, recorded_sleeps, caplog
+):
+    # Quiet locks mean a silent stream; its read timeout is not an error.
+    async def _idle(_self):
+        raise SocketTimeoutError("Timeout on reading data from socket")
+
+    _observe_once_stub(monkeypatch, _idle)
+
+    client = _make_client()
+    client._locks_present = True
+    with pytest.raises(_StopLoop):
+        async for _ in client.observe_locks():
+            pass
+
+    assert recorded_sleeps == [1.0, 1.0, 1.0, 1.0]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 async def test_observe_locks_caps_the_backoff(monkeypatch):

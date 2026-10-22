@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientTimeout
+from aiohttp import ClientTimeout, SocketTimeoutError
 
 from .const import PROTOBUF_USER_AGENT
 from .exceptions import NestLockAuthException, NestLockCommandException
@@ -38,7 +38,10 @@ SEND_COMMAND_ENDPOINT = "/nestlabs.gateway.v1.ResourceApi/SendCommand"
 
 _NESTLABS_TYPE_URL_PREFIX = "type.nestlabs.com/"
 
-_SOCK_READ_TIMEOUT = 300  # seconds without data before treating the stream as dead
+# Seconds without data before the stream is treated as dead. The gateway sends
+# nothing while the locks are quiet, so this also sets how often an idle stream
+# is re-opened.
+_SOCK_READ_TIMEOUT = 900
 _CONNECT_TIMEOUT = 60
 _SEND_COMMAND_TIMEOUT = 30
 _RECONNECT_INITIAL_DELAY = 1.0
@@ -499,6 +502,15 @@ class GrpcLockClient:
                 raise
             except NestLockAuthException:
                 raise
+            except SocketTimeoutError:
+                # The connection was up but stayed silent for _SOCK_READ_TIMEOUT:
+                # the locks were simply quiet. Re-open without growing the backoff;
+                # the timeout itself already spaces these out.
+                _LOGGER.debug(
+                    "Lock observe stream idle for %ss; reconnecting", _SOCK_READ_TIMEOUT
+                )
+                delay = _RECONNECT_INITIAL_DELAY
+                await asyncio.sleep(delay)
             except Exception as err:  # noqa: BLE001
                 # Until a lock is known to exist, stream trouble isn't
                 # actionable for the user — most accounts have no lock, and
