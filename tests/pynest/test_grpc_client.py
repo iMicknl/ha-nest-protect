@@ -694,6 +694,21 @@ def test_parse_observe_buffer_ignores_a_zero_status_frame(caplog):
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
+def test_parse_observe_buffer_logs_the_hourly_deadline_at_debug(caplog):
+    # The gateway ends each observe stream after about an hour this way.
+    body = streambody_pb2.StreamBody()
+    body.status.code = 4
+    body.status.message = "context timed out"
+    buffer = bytearray(body.SerializeToString())
+
+    client = _make_client()
+    with caplog.at_level(logging.DEBUG):
+        assert client._parse_observe_buffer(buffer) == []
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert "code=4" in caplog.text
+
+
 def test_parse_observe_buffer_resets_on_unexpected_wire_type():
     client = _make_client()
     buffer = bytearray(b"\x08\x01")  # field 1, wire type 0 (varint)

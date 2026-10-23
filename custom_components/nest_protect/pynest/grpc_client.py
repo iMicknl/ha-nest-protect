@@ -44,6 +44,8 @@ _NESTLABS_TYPE_URL_PREFIX = "type.nestlabs.com/"
 _SOCK_READ_TIMEOUT = 900
 _CONNECT_TIMEOUT = 60
 _SEND_COMMAND_TIMEOUT = 30
+# gRPC status code the gateway uses to end an observe stream at its deadline.
+_GRPC_DEADLINE_EXCEEDED = 4
 _RECONNECT_INITIAL_DELAY = 1.0
 _RECONNECT_MAX_DELAY = 60.0
 
@@ -420,7 +422,15 @@ class GrpcLockClient:
                     f"message={body.status.message!r}"
                 )
             if body.HasField("status") and body.status.code != 0:
-                _LOGGER.warning(
+                # The gateway ends every observe stream after about an hour with
+                # DEADLINE_EXCEEDED. That's the normal end of a long-lived stream,
+                # and the caller reconnects straight away.
+                log = (
+                    _LOGGER.debug
+                    if body.status.code == _GRPC_DEADLINE_EXCEEDED
+                    else _LOGGER.warning
+                )
+                log(
                     "Observe stream reported status code=%s message=%r",
                     body.status.code,
                     body.status.message,
