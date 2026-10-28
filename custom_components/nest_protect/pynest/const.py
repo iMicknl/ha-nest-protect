@@ -42,10 +42,12 @@ SUBSCRIBE_CONNECT_TIMEOUT = 30
 NEST_REQUEST = {
     "known_bucket_types": [
         BucketType.KRYPTONITE,
+        BucketType.SAFETY_SUMMARY,
         BucketType.STRUCTURE,
         BucketType.TOPAZ,
         BucketType.WHERE,
         BucketType.USER,
+        BucketType.WIDGET_TRACK,
     ],
     "known_bucket_versions": [],
 }
