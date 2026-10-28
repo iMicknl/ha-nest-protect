@@ -14,6 +14,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
     PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfTemperature,
@@ -23,7 +24,7 @@ from homeassistant.helpers.typing import StateType
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
-from .entity import NestDescriptiveEntity
+from .entity import NestDescriptiveEntity, NestHomeEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
@@ -165,7 +166,34 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         options=list(SMOKE_CO_STATUS_TO_STATE.values()),
         icon="mdi:molecule-co",
     ),
+    # A latched peak rather than a live reading, so no state_class.
+    NestProtectSensorDescription(
+        key="co_previous_peak",
+        translation_key="co_previous_peak",
+        device_class=SensorDeviceClass.CO,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     # TODO Add Color Status (gray, green, yellow, red)
+]
+
+# MEASUREMENT rather than TOTAL: these count currently open issues and drop
+# back when they are resolved, they never accumulate.
+HOME_SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
+    SensorEntityDescription(
+        key="total_critical_failures",
+        translation_key="total_critical_failures",
+        icon="mdi:alert-octagon",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="total_warnings",
+        translation_key="total_warnings",
+        icon="mdi:alert",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
 ]
 
 
@@ -173,7 +201,7 @@ async def async_setup_entry(hass, entry, async_add_devices):
     """Set up the Nest Protect sensors from a config entry."""
 
     data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
-    entities: list[NestProtectSensor] = []
+    entities: list[NestProtectSensor | NestHomeSensor] = []
 
     for device in data.devices.values():
         for description in SENSOR_DESCRIPTIONS:
@@ -183,6 +211,15 @@ async def async_setup_entry(hass, entry, async_add_devices):
                 entities.append(
                     NestProtectSensor(device, description, data.areas, data.client)
                 )
+
+    for safety_summary in data.safety_summaries.values():
+        home_name = data.structure_names.get(
+            safety_summary.object_key.removeprefix("safety_summary.")
+        )
+        entities.extend(
+            NestHomeSensor(safety_summary, description, home_name, data.client)
+            for description in HOME_SENSOR_DESCRIPTIONS
+        )
 
     async_add_devices(entities)
 
@@ -206,3 +243,12 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
             return self.entity_description.value_fn(state)
 
         return state
+
+
+class NestHomeSensor(NestHomeEntity, SensorEntity):
+    """Representation of a Nest home sensor."""
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self.bucket.value.get(self.entity_description.key)

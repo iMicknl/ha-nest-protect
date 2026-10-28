@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.const import EntityCategory, UnitOfElectricPotential
+from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
+    EntityCategory,
+    UnitOfElectricPotential,
+)
 
 from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.pynest.models import Bucket
@@ -72,6 +76,61 @@ def test_smoke_and_co_status_sensor_unknown_when_missing(key: str):
     assert build_sensor(key, {key: 99}).native_value is None
 
 
+def test_co_previous_peak_description():
+    """Test that the CO previous peak is a diagnostic CO sensor without a state class."""
+    description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "co_previous_peak")
+    assert description.translation_key == "co_previous_peak"
+    assert description.device_class == SensorDeviceClass.CO
+    assert description.native_unit_of_measurement == CONCENTRATION_PARTS_PER_MILLION
+    assert description.entity_category == EntityCategory.DIAGNOSTIC
+    assert description.state_class is None
+
+
+def test_co_previous_peak_native_value():
+    """Test that the CO previous peak reports the raw ppm value."""
+    assert build_sensor("co_previous_peak", {"co_previous_peak": 42}).native_value == 42
+    assert build_sensor("co_previous_peak", {"co_previous_peak": 0}).native_value == 0
+
+
+def test_co_previous_peak_unknown_when_none():
+    """Test that a None CO previous peak reports unknown."""
+    sensor = build_sensor("co_previous_peak", {"co_previous_peak": None})
+    assert sensor.native_value is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_keys"),
+    [
+        ({"co_status": 0, "co_previous_peak": 7}, ["co_status", "co_previous_peak"]),
+        ({"co_status": 0}, ["co_status"]),
+    ],
+)
+async def test_co_previous_peak_only_created_when_reported(
+    hass, value: dict, expected_keys: list[str]
+):
+    """Test that the CO previous peak sensor is only created when the device reports it."""
+    device = Bucket(
+        object_key="topaz.1234", object_revision=1, object_timestamp=1, value=value
+    )
+    entry = MagicMock(entry_id="test")
+    hass.data[DOMAIN] = {
+        entry.entry_id: SimpleNamespace(
+            devices={device.object_key: device},
+            areas=AREAS,
+            client=MagicMock(),
+            lock_state_cache={},
+            safety_summaries={},
+            structure_names={},
+        )
+    }
+    add_entities = MagicMock()
+
+    await async_setup_entry(hass, entry, add_entities)
+
+    entities = add_entities.call_args.args[0]
+    assert [entity.entity_description.key for entity in entities] == expected_keys
+
+
 @pytest.mark.parametrize(("millivolts", "volts"), [(5400, 5.4), (2987, 2.987)])
 def test_battery_voltage_sensor_native_value(millivolts: int, volts: float):
     """Test that the battery voltage sensor converts millivolts to volts."""
@@ -120,7 +179,11 @@ async def test_battery_voltage_sensor_only_created_for_protect(
     entry = SimpleNamespace(entry_id="test")
     hass.data[DOMAIN] = {
         entry.entry_id: SimpleNamespace(
-            devices={device.object_key: device}, areas={}, client=MagicMock()
+            devices={device.object_key: device},
+            areas={},
+            client=MagicMock(),
+            safety_summaries={},
+            structure_names={},
         )
     }
     add_entities = MagicMock()
