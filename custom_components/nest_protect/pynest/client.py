@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    REQUEST_TIMEOUT_SECONDS,
     SUBSCRIBE_CONNECT_TIMEOUT,
     SUBSCRIBE_TIMEOUT_SECONDS,
     TOKEN_URL,
@@ -52,6 +53,8 @@ from .models import (
 _LOGGER = logging.getLogger(__package__)
 
 TRANSIENT_CLIENT_STATUSES = {408, 429}
+
+REQUEST_TIMEOUT = ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
 
 
 def raise_for_transient_status(response: ClientResponse, action: str) -> None:
@@ -185,6 +188,7 @@ class NestClient:
 
         async with self.session.post(
             TOKEN_URL,
+            timeout=REQUEST_TIMEOUT,
             data=FormData(
                 {
                     "refresh_token": self.refresh_token,
@@ -225,6 +229,7 @@ class NestClient:
 
         async with self.session.get(
             issue_token,
+            timeout=REQUEST_TIMEOUT,
             headers={
                 "Sec-Fetch-Mode": "cors",
                 "User-Agent": USER_AGENT,
@@ -291,6 +296,7 @@ class NestClient:
 
         async with self.session.post(
             NEST_AUTH_URL_JWT,
+            timeout=REQUEST_TIMEOUT,
             data=FormData(
                 {
                     "embed_google_oauth_access_token": True,
@@ -316,6 +322,7 @@ class NestClient:
 
         async with self.session.get(
             self.environment.host + "/session",
+            timeout=REQUEST_TIMEOUT,
             headers={
                 "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="
@@ -376,6 +383,7 @@ class NestClient:
         """Get first data."""
         async with self.session.post(
             APP_LAUNCH_URL_FORMAT.format(host=self.environment.host, user_id=user_id),
+            timeout=REQUEST_TIMEOUT,
             json=request,
             headers={
                 "Authorization": f"Basic {nest_access_token}",
@@ -480,6 +488,7 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/put",
+            timeout=REQUEST_TIMEOUT,
             json={
                 "session": f"ios-${user_id}.{random}.{epoch}",
                 "objects": objects_to_update,

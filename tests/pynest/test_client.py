@@ -1,12 +1,19 @@
 """Tests for NestClient."""
 
+import asyncio
+import contextlib
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, ClientTimeout, web
 from aiohttp.test_utils import TestServer
 
-from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
+from custom_components.nest_protect.pynest.client import (
+    REQUEST_TIMEOUT,
+    NestClient,
+    merge_cookies,
+)
 from custom_components.nest_protect.pynest.const import (
     NEST_REQUEST,
     SUBSCRIBE_CONNECT_TIMEOUT,
@@ -568,3 +575,55 @@ async def test_session_client_error_is_not_transient(socket_enabled):
             await nest_client.authenticate("access-token")
 
     assert not isinstance(exc_info.value, NestServiceException)
+
+
+@pytest.mark.enable_socket
+async def test_issue_token_request_times_out(socket_enabled):
+    """A Google endpoint that never answers must not hang the refresh forever."""
+
+    async def hang(request):
+        await asyncio.sleep(10)
+        return web.json_response({})
+
+    app = web.Application()
+    app.router.add_get("/issue-token", hang)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with (
+            patch(
+                "custom_components.nest_protect.pynest.client.REQUEST_TIMEOUT",
+                ClientTimeout(total=0.1),
+            ),
+            pytest.raises(TimeoutError),
+        ):
+            await nest_client.get_access_token_from_cookies(str(url), "cookies")
+
+
+async def test_short_requests_use_request_timeout():
+    """Every request except the subscribe long poll is bounded by REQUEST_TIMEOUT."""
+    response = MagicMock(status=200, content_type="application/json")
+    response.json = AsyncMock(return_value={})
+    session = MagicMock()
+    session.get.return_value.__aenter__.return_value = response
+    session.post.return_value.__aenter__.return_value = response
+
+    nest_client = NestClient(session)
+    nest_client.refresh_token = "refresh-token"
+    calls = [
+        nest_client.get_access_token_from_refresh_token,
+        partial(nest_client.get_access_token_from_cookies, "https://issue", "c=1"),
+        partial(nest_client.authenticate, "access-token"),
+        partial(nest_client.get_first_data, "nest-token", "user"),
+        partial(nest_client.update_objects, "nest-token", "user", "https://t", []),
+    ]
+    for call in calls:
+        # Only the outgoing request matters; the empty responses fail parsing.
+        with contextlib.suppress(Exception):
+            await call()
+
+    requests = session.get.call_args_list + session.post.call_args_list
+    # authenticate() sends two requests: the JWT exchange and /session.
+    assert len(requests) == len(calls) + 1
+    assert all(r.kwargs.get("timeout") is REQUEST_TIMEOUT for r in requests)

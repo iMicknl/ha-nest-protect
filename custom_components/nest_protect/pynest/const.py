@@ -39,6 +39,10 @@ NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt
 SUBSCRIBE_TIMEOUT_SECONDS = 600
 SUBSCRIBE_CONNECT_TIMEOUT = 30
 
+# HA client sessions only carry aiohttp's 5 minute default, so without this a
+# stalled Google or Nest call holds up setup, session recovery or a command.
+REQUEST_TIMEOUT_SECONDS = 30
+
 NEST_REQUEST = {
     "known_bucket_types": [
         BucketType.BUCKETS,
