@@ -8,7 +8,11 @@ from aiohttp.test_utils import TestServer
 
 from custom_components.nest_protect.pynest.client import NestClient, merge_cookies
 from custom_components.nest_protect.pynest.const import NEST_REQUEST
-from custom_components.nest_protect.pynest.exceptions import BadCredentialsException
+from custom_components.nest_protect.pynest.exceptions import (
+    BadCredentialsException,
+    NestServiceException,
+    PynestException,
+)
 
 
 @pytest.mark.enable_socket
@@ -53,8 +57,67 @@ async def test_get_access_token_from_cookies_error(socket_enabled):
     async with TestServer(app) as server, ClientSession() as session:
         nest_client = NestClient(session)
         url = server.make_url("/issue-token")
-        with pytest.raises(Exception, match="invalid_grant"):
+        with pytest.raises(BadCredentialsException, match="invalid_grant"):
             await nest_client.get_access_token_from_cookies(str(url), "cookies")
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(
+    ("status", "body", "expected"),
+    [
+        (400, {"error": "USER_LOGGED_OUT"}, BadCredentialsException),
+        (400, {"error": "consent_required", "detail": "x"}, BadCredentialsException),
+        (403, {"error": "access_denied"}, BadCredentialsException),
+        (500, {"error": "internal_failure"}, NestServiceException),
+        (503, "Service Unavailable", NestServiceException),
+        (429, {"error": "rate_limited"}, NestServiceException),
+        (200, "<html>not json</html>", PynestException),
+        (200, ["unexpected"], PynestException),
+        (200, {"access_token": "token"}, PynestException),
+    ],
+)
+async def test_get_access_token_from_cookies_classifies_failures(
+    socket_enabled, status, body, expected
+):
+    """Google failures map to pynest exceptions so callers can tell them apart."""
+
+    async def make_token_response(request):
+        if isinstance(body, str):
+            return web.Response(status=status, text=body, content_type="text/html")
+        return web.json_response(body, status=status)
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(expected) as exc_info:
+            await nest_client.get_access_token_from_cookies(str(url), "cookies")
+
+    assert type(exc_info.value) is expected
+
+
+@pytest.mark.enable_socket
+async def test_authenticate_unexpected_jwt_response(socket_enabled):
+    """An unexpected JWT response shape raises a pynest exception."""
+
+    async def make_jwt_response(request):
+        return web.json_response({"jwt": "token", "unexpected": True})
+
+    app = web.Application()
+    app.router.add_post("/jwt", make_jwt_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        with (
+            patch(
+                "custom_components.nest_protect.pynest.client.NEST_AUTH_URL_JWT",
+                str(server.make_url("/jwt")),
+            ),
+            pytest.raises(PynestException),
+        ):
+            await nest_client.authenticate("access-token")
 
 
 @pytest.mark.enable_socket

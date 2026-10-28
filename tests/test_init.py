@@ -17,10 +17,17 @@ from custom_components.nest_protect import (
     _async_subscribe_for_data,
     _persist_refreshed_cookies,
 )
-from custom_components.nest_protect.const import CONF_COOKIES, MAX_AUTH_FAILURES
+from custom_components.nest_protect.const import (
+    BACKOFF_INTERVALS,
+    CONF_COOKIES,
+    MAX_AUTH_FAILURES,
+    RECONNECT_INTERVALS,
+    SUBSCRIBE_HEALTHY_SECONDS,
+)
 from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
     BadCredentialsException,
+    EmptyResponseException,
     NestLockAuthException,
     NestServiceException,
     NotAuthenticatedException,
@@ -346,7 +353,7 @@ async def test_startup_falls_through_on_401_from_persisted_session(
     assert config_entry_with_cookies.state is ConfigEntryState.LOADED
 
 
-def _make_subscriber_entry_data(hass, entry, consecutive_failures=0):
+def _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0):
     """Build minimal HomeAssistantNestProtectData for subscriber tests."""
     client = MagicMock()
     client.nest_session = MagicMock(is_expired=lambda buffer_seconds=0: False)
@@ -359,7 +366,7 @@ def _make_subscriber_entry_data(hass, entry, consecutive_failures=0):
         store,
         on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
     )
-    sm._consecutive_failures = consecutive_failures
+    sm._consecutive_auth_failures = consecutive_auth_failures
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
         devices={},
@@ -400,16 +407,17 @@ async def test_subscriber_timeout_resets_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=2)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
     client.subscribe_for_data = AsyncMock(side_effect=TimeoutError())
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task"),
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 0
+    assert sm.consecutive_auth_failures == 0
 
 
 async def test_subscriber_401_accumulates_failure_counter(hass):
@@ -423,7 +431,7 @@ async def test_subscriber_401_accumulates_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0)
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     with (
@@ -434,7 +442,7 @@ async def test_subscriber_401_accumulates_failure_counter(hass):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 1
+    assert sm.consecutive_auth_failures == 1
 
 
 async def test_subscriber_401_persists_refreshed_cookies(hass):
@@ -529,7 +537,7 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=0)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0)
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     # Google still accepts the cookies, so the refresh itself succeeds while Nest
@@ -548,7 +556,7 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
         for _ in range(MAX_AUTH_FAILURES):
             await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == MAX_AUTH_FAILURES
+    assert sm.consecutive_auth_failures == MAX_AUTH_FAILURES
     mock_reauth.assert_called_once_with(hass)
 
 
@@ -563,7 +571,8 @@ async def test_subscriber_success_resets_failure_counter(hass):
         },
     )
     entry.add_to_hass(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_failures=2)
+    client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
+    sm._consecutive_errors = 2
     client.subscribe_for_data = AsyncMock(return_value={"objects": []})
 
     with (
@@ -572,7 +581,78 @@ async def test_subscriber_success_resets_failure_counter(hass):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    assert sm.consecutive_failures == 0
+    assert sm.consecutive_auth_failures == 0
+    assert sm.consecutive_errors == 0
+
+
+async def test_subscriber_unrelated_errors_do_not_trigger_reauth(hass):
+    """Two non-auth errors followed by one 401 must refresh, not reauth."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(
+        side_effect=[
+            {},  # response without "objects"
+            TypeError("unexpected bucket field"),
+            NotAuthenticatedException(),
+        ]
+    )
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch.object(sm, "async_refresh_session", new_callable=AsyncMock) as refresh,
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        for _ in range(3):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    reauth.assert_not_called()
+    refresh.assert_awaited_once()
+    assert sm.consecutive_auth_failures == 1
+    assert sm.consecutive_errors == 2
+
+
+async def test_subscriber_repeated_parse_errors_escalate_backoff(hass):
+    """A response that keeps failing to parse backs off further each time."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(return_value={})
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        for _ in range(MAX_AUTH_FAILURES):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert [call.args[0] for call in sleep.call_args_list if call.args[0]] == list(
+        BACKOFF_INTERVALS[:MAX_AUTH_FAILURES]
+    )
+    reauth.assert_not_called()
+
+
+async def test_lock_batch_clears_auth_failures_only(hass):
+    """A lock batch proves the session works but says nothing about REST errors."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    _, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
+    sm._consecutive_errors = 2
+
+    async def observe_locks():
+        yield {}
+
+    hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    await _async_observe_locks_loop(hass, entry)
+
+    assert sm.consecutive_auth_failures == 0
+    assert sm.consecutive_errors == 2
 
 
 @pytest.mark.parametrize("transport", ["subscriber", "lock"])
@@ -585,6 +665,9 @@ async def test_subscriber_success_resets_failure_counter(hass):
         (NestServiceException("unavailable"), False),
         (NotAuthenticatedException("rejected"), False),
         (BadCredentialsException("revoked"), True),
+        (Exception("unexpected"), False),
+        (KeyError("detail"), False),
+        (TypeError("unexpected keyword argument"), False),
     ],
 )
 async def test_auth_recovery_handles_refresh_errors(
@@ -656,3 +739,117 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
 
     reschedule.assert_not_called()
     reauth.assert_not_called()
+
+
+def _connection_errors():
+    return [
+        aiohttp.ServerDisconnectedError(),
+        TimeoutError(),
+        aiohttp.ClientConnectorError(MagicMock(), OSError(-3, "name resolution")),
+        aiohttp.ClientOSError(104, "Connection reset by peer"),
+        EmptyResponseException(),
+    ]
+
+
+def _subscriber_entry(hass):
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+@pytest.mark.parametrize("error", _connection_errors(), ids=lambda e: type(e).__name__)
+async def test_subscriber_backs_off_on_rapid_connection_errors(hass, error):
+    """Connection errors that end an attempt early back off before re-subscribing."""
+    entry = _subscriber_entry(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(side_effect=error)
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as register,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        for _ in range(3):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    delays = [call.args[0] for call in sleep.call_args_list if call.args[0] > 0]
+    assert len(delays) == 3
+    for delay, base in zip(delays, RECONNECT_INTERVALS, strict=False):
+        assert base * 0.8 <= delay <= base * 1.2
+    assert entry_data.connection_failures == 3
+    assert register.call_count == 3
+
+
+async def test_subscriber_resubscribes_immediately_after_long_poll(hass):
+    """A long-poll that times out after running its course is not a failure."""
+    entry = _subscriber_entry(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(side_effect=TimeoutError())
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data.connection_failures = 2
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as register,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch(
+            "custom_components.nest_protect.time.monotonic",
+            side_effect=[0.0, float(SUBSCRIBE_HEALTHY_SECONDS)],
+        ),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert all(call.args[0] == 0 for call in sleep.call_args_list)
+    assert entry_data.connection_failures == 0
+    register.assert_called_once()
+
+
+async def test_subscriber_success_resets_connection_failures(hass):
+    """Receiving data clears the connection failure count."""
+    entry = _subscriber_entry(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
+    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data.connection_failures = 4
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert entry_data.connection_failures == 0
+
+
+async def test_subscriber_does_not_spin_while_offline(hass):
+    """Regression: an unreachable host used to be retried with no delay at all."""
+    entry = _subscriber_entry(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(
+        side_effect=aiohttp.ClientConnectorError(MagicMock(), OSError(-3, "offline"))
+    )
+
+    with patch.object(sm, "ensure_session", new_callable=AsyncMock):
+        task = asyncio.create_task(
+            _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+        )
+        hass.data[DOMAIN][entry.entry_id].subscription_task = task
+        await asyncio.sleep(0.2)
+        pending = hass.data[DOMAIN][entry.entry_id].subscription_task
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+
+    assert client.subscribe_for_data.await_count == 1

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
@@ -16,6 +17,13 @@ from .const import (
 from .pynest.client import NestClient
 from .pynest.exceptions import NotAuthenticatedException, PynestException
 from .pynest.models import FirstDataAPIResponse, NestResponse
+
+
+def _backoff_for(consecutive: int) -> int:
+    """Return the backoff interval in seconds for a consecutive failure count."""
+    if consecutive == 0:
+        return BACKOFF_INTERVALS[0]
+    return BACKOFF_INTERVALS[min(consecutive - 1, len(BACKOFF_INTERVALS) - 1)]
 
 
 class NestSessionManager:
@@ -37,33 +45,59 @@ class NestSessionManager:
         self._client = client
         self._store = store
         self._on_cookies_refreshed = on_cookies_refreshed
-        self._consecutive_failures: int = 0
+        self._consecutive_auth_failures: int = 0
+        # Kept apart from auth failures so unrelated errors only slow polling
+        # down and never push the user toward re-authentication.
+        self._consecutive_errors: int = 0
+        self._refresh_lock = asyncio.Lock()
+        self._refresh_generation: int = 0
 
     @property
-    def consecutive_failures(self) -> int:
-        """Return the number of consecutive failures."""
-        return self._consecutive_failures
+    def refreshed_cookies(self) -> str | None:
+        """Proxy to client's refreshed_cookies property."""
+        return self._client.refreshed_cookies
+
+    @property
+    def consecutive_auth_failures(self) -> int:
+        """Return the number of consecutive authentication failures."""
+        return self._consecutive_auth_failures
+
+    @property
+    def consecutive_errors(self) -> int:
+        """Return the number of consecutive non-authentication errors."""
+        return self._consecutive_errors
 
     @property
     def should_trigger_reauth(self) -> bool:
-        """Return True if failures exceed the threshold."""
-        return self._consecutive_failures >= MAX_AUTH_FAILURES
+        """Return True if authentication failures exceed the threshold."""
+        return self._consecutive_auth_failures >= MAX_AUTH_FAILURES
 
     @property
     def backoff_interval(self) -> int:
-        """Return the current backoff interval in seconds."""
-        if self._consecutive_failures == 0:
-            return BACKOFF_INTERVALS[0]
-        idx = min(self._consecutive_failures - 1, len(BACKOFF_INTERVALS) - 1)
-        return BACKOFF_INTERVALS[idx]
+        """Return the backoff interval in seconds after an auth failure."""
+        return _backoff_for(self._consecutive_auth_failures)
 
-    def record_failure(self) -> None:
-        """Record a consecutive failure."""
-        self._consecutive_failures += 1
+    @property
+    def error_backoff_interval(self) -> int:
+        """Return the backoff interval in seconds after a non-auth error."""
+        return _backoff_for(self._consecutive_errors)
+
+    def record_auth_failure(self) -> None:
+        """Record a consecutive authentication failure."""
+        self._consecutive_auth_failures += 1
+
+    def record_error(self) -> None:
+        """Record a consecutive non-authentication error."""
+        self._consecutive_errors += 1
+
+    def record_auth_success(self) -> None:
+        """Reset the auth failure counter once Nest accepts the session."""
+        self._consecutive_auth_failures = 0
 
     def record_success(self) -> None:
-        """Reset failure counter on success."""
-        self._consecutive_failures = 0
+        """Reset both counters after a fully successful update."""
+        self._consecutive_auth_failures = 0
+        self._consecutive_errors = 0
 
     async def async_setup(self) -> FirstDataAPIResponse | None:
         """Set up authentication using three-tier fallback.
@@ -152,20 +186,45 @@ class NestSessionManager:
 
         return await self._client.authenticate(auth.access_token)
 
+    def _has_valid_session(self) -> bool:
+        """Return True if the current Nest session is not (nearly) expired."""
+        return bool(
+            self._client.nest_session
+            and not self._client.nest_session.is_expired(
+                buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
+            )
+        )
+
     async def ensure_session(self) -> None:
         """Ensure a valid Nest session exists, refreshing if needed."""
-        if self._client.nest_session and not self._client.nest_session.is_expired(
-            buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
-        ):
+        if self._has_valid_session():
             return
 
-        await self.async_refresh_session()
+        async with self._refresh_lock:
+            if self._has_valid_session():
+                return
+
+            await self._async_refresh_session()
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
 
         Returns True when a fresh Nest session was obtained and persisted.
         """
+        # Callers force a refresh because Nest rejected the current session, so
+        # expiry can't tell whether it is still stale. Session identity can't
+        # either: it is swapped before persisting, which may still fail. Only a
+        # refresh that fully completed while this one waited counts.
+        generation = self._refresh_generation
+
+        async with self._refresh_lock:
+            if self._refresh_generation != generation:
+                return True
+
+            return await self._async_refresh_session()
+
+    async def _async_refresh_session(self) -> bool:
+        """Refresh the Nest session; the caller must hold the refresh lock."""
         if not self._client.auth or self._client.auth.is_expired():
             LOGGER.debug("Retrieving new Google access token")
             with self._report_rotated_cookies():
@@ -178,6 +237,7 @@ class NestSessionManager:
             self._client.auth.access_token
         )
         await self._async_persist(self._client.nest_session)
+        self._refresh_generation += 1
         return True
 
     @contextmanager
