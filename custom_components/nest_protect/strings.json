@@ -155,6 +155,12 @@
       },
       "total_warnings": {
         "name": "Safety warnings"
+      },
+      "backplate_temperature": {
+        "name": "Backplate temperature"
+      },
+      "active_temperature_sensor": {
+        "name": "Active temperature sensor"
       }
     },
     "select": {

@@ -86,6 +86,10 @@ async def async_get_config_entry_diagnostics(
         "locks": [
             dataclasses.asdict(lock) for lock in entry_data.lock_state_cache.values()
         ],
+        "thermostats": [
+            dataclasses.asdict(thermostat)
+            for thermostat in entry_data.thermostat_state_cache.values()
+        ],
         "app_launch": dataclasses.asdict(app_launch) if app_launch else None,
         "app_launch_error": error,
     }
@@ -114,6 +118,11 @@ async def async_get_device_diagnostics(
     for lock in entry_data.lock_state_cache.values():
         if (DOMAIN, lock.serial_number) in device.identifiers:
             data["lock"] = dataclasses.asdict(lock)
+            return _redact(data, entry_data)
+
+    for thermostat in entry_data.thermostat_state_cache.values():
+        if (DOMAIN, thermostat.serial_number) in device.identifiers:
+            data["thermostat"] = dataclasses.asdict(thermostat)
             return _redact(data, entry_data)
 
     bucket = next(

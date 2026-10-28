@@ -133,6 +133,12 @@
           "warning": "Waarschuwing",
           "emergency": "Noodgeval"
         }
+      },
+      "backplate_temperature": {
+        "name": "Temperatuur thermostaat"
+      },
+      "active_temperature_sensor": {
+        "name": "Actieve temperatuursensor"
       }
     },
     "select": {

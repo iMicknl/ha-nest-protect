@@ -1,0 +1,297 @@
+syntax = "proto3";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+
+package nest.trait.sensor;
+
+message PassiveInfraredTrait {
+    PassiveInfraredSample passiveInfraredSignalValue = 1;
+    PassiveInfraredSample passiveInfraredBaselineValue = 2;
+    PassiveInfraredFaultInformation faultInformation = 3;
+
+    enum PassiveInfraredFaultType {
+        PASSIVE_INFRARED_FAULT_TYPE_UNSPECIFIED = 0;
+        PASSIVE_INFRARED_FAULT_TYPE_NONE = 1;
+        PASSIVE_INFRARED_FAULT_TYPE_UNRESPONSIVE = 2;
+        PASSIVE_INFRARED_FAULT_TYPE_STUCK = 3;
+    }
+
+    message PassiveInfraredSample {
+        google.protobuf.FloatValue value = 1;
+    }
+
+    message PassiveInfraredFaultInformation {
+        bool asserted = 1;
+        PassiveInfraredFaultType type = 2;
+        PassiveInfraredSample signalLastValue = 3;
+        PassiveInfraredSample baselineLastValue = 4;
+    }
+
+    message PassiveInfraredSignalPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated PassiveInfraredSample signalSamples = 2;
+    }
+
+    message PassiveInfraredBaselinePeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated PassiveInfraredSample baselineSamples = 2;
+    }
+
+    message PassiveInfraredDifferentialPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated PassiveInfraredSample deltaSamples = 2;
+    }
+
+    message PassiveInfraredFaultEvent {
+        bool asserted = 1;
+        PassiveInfraredFaultType type = 32;
+        PassiveInfraredSample signalLastValue = 33;
+        PassiveInfraredSample baselineLastValue = 34;
+        google.protobuf.Duration durationSinceLastSample = 35;
+        google.protobuf.Duration lastSamplePeriod = 36;
+    }
+
+    message PassiveInfraredSignalStatisticsEvent {
+        repeated uint32 histogramBoundaries = 1;
+        repeated uint32 histogramCounts = 2;
+        bool vacancyExpected = 3;
+    }
+}
+
+message SmokeTrait {
+    SmokeSample infraredLedValue = 3;
+    SmokeSample blueLedValue = 4;
+    SmokeFaultInformation infraredLedFault = 5;
+    SmokeFaultInformation blueLedFault = 6;
+
+    enum SmokeFaultType {
+        SMOKE_FAULT_TYPE_UNSPECIFIED = 0;
+        SMOKE_FAULT_TYPE_NONE = 1;
+        SMOKE_FAULT_TYPE_UNRESPONSIVE = 2;
+    }
+
+    message SmokeSample {
+        google.protobuf.FloatValue sample = 3;
+    }
+
+    message SmokeFaultInformation {
+        bool asserted = 1;
+        SmokeFaultType type = 2;
+        SmokeSample lastValue = 3;
+    }
+
+    message InfraredLedFaultEvent {
+        bool asserted = 1;
+        SmokeFaultType type = 32;
+        SmokeSample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+        google.protobuf.Duration lastSamplePeriod = 35;
+    }
+
+    message BlueLedFaultEvent {
+        bool asserted = 1;
+        SmokeFaultType type = 32;
+        SmokeSample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+        google.protobuf.Duration lastSamplePeriod = 35;
+    }
+
+    message InfraredLedPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated SmokeSample samples = 2;
+    }
+
+    message BlueLedPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated SmokeSample samples = 2;
+    }
+
+    message ClearAirOffsetSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated SmokeSample irLedSamples = 2;
+        repeated SmokeSample blueLedSamples = 3;
+    }
+}
+
+message TemperatureTrait {
+    TemperatureSample temperatureValue = 1;
+    TemperatureFaultInformation faultInformation = 2;
+
+    enum TemperatureFaultType {
+        TEMPERATURE_FAULT_TYPE_UNSPECIFIED = 0;
+        TEMPERATURE_FAULT_TYPE_NONE = 1;
+        TEMPERATURE_FAULT_TYPE_UNRESPONSIVE = 2;
+        TEMPERATURE_FAULT_TYPE_OUT_OF_NORMAL_RANGE = 3;
+    }
+
+    message TemperatureSample {
+        google.protobuf.FloatValue temperature = 1;
+    }
+
+    message TemperatureFaultInformation {
+        bool asserted = 1;
+        TemperatureFaultType type = 2;
+        TemperatureSample lastValue = 3;
+    }
+
+    message TemperatureSensorFaultEvent {
+        bool asserted = 1;
+        TemperatureFaultType type = 32;
+        TemperatureSample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+        google.protobuf.Duration lastSamplePeriod = 36;
+    }
+
+    message TemperaturePeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated TemperatureSample samples = 2;
+    }
+}
+
+message CarbonMonoxideTrait {
+    CoSample value = 1;
+    CoFaultInformation faultInformation = 2;
+
+    enum CoFaultType {
+        CO_FAULT_TYPE_UNSPECIFIED = 0;
+        CO_FAULT_TYPE_NONE = 1;
+        CO_FAULT_TYPE_UNRESPONSIVE = 2;
+        CO_FAULT_TYPE_END_OF_LIFE = 3;
+    }
+
+    message CoSample {
+        uint32 ppm = 1;
+    }
+
+    message CoFaultInformation {
+        bool asserted = 1;
+        CoFaultType type = 2;
+        CoSample lastValue = 3;
+    }
+
+    message CoFaultEvent {
+        bool asserted = 1;
+        CoFaultType type = 32;
+        CoSample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+        google.protobuf.Duration lastSamplePeriod = 35;
+    }
+
+    message CoPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated CoSample samples = 2;
+    }
+}
+
+message BatteryVoltageTrait {
+    BatteryVoltageSample batteryValue = 1;
+    BatteryVoltageFaultInformation faultInformation = 2;
+
+    enum BatteryVoltageFaultType {
+        BATTERY_VOLTAGE_FAULT_TYPE_UNSPECIFIED = 0;
+        BATTERY_VOLTAGE_FAULT_TYPE_NONE = 1;
+        BATTERY_VOLTAGE_FAULT_TYPE_OUT_OF_OPERATING_RANGE = 2;
+        BATTERY_VOLTAGE_FAULT_TYPE_UNRESPONSIVE = 3;
+        BATTERY_VOLTAGE_FAULT_TYPE_DISCONNECTED = 4;
+        BATTERY_VOLTAGE_FAULT_TYPE_END_OF_LIFE = 5;
+    }
+
+    message BatteryVoltageSample {
+        google.protobuf.FloatValue batteryVoltage = 1;
+    }
+
+    message BatteryVoltageFaultInformation {
+        bool asserted = 1;
+        BatteryVoltageFaultType type = 2;
+        BatteryVoltageSample lastValue = 3;
+    }
+
+    message BatteryVoltageFaultEvent {
+        bool asserted = 1;
+        BatteryVoltageFaultType type = 32;
+        BatteryVoltageSample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+    }
+
+    message BatteryVoltagePeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated BatteryVoltageSample samples = 2;
+    }
+
+    message BatteryVoltageStatisticsEvent {
+        BatteryVoltageSample meanVoltage = 1;
+        BatteryVoltageSample minimumVoltage = 2;
+        BatteryVoltageSample maximumVoltage = 3;
+        uint32 numSamples = 4;
+        google.protobuf.Duration statsSampleInterval = 5;
+    }
+}
+
+message AmbientLightTrait {
+    AmbientLightSample ambientLightValue = 1;
+    AmbientLightFaultInformation faultInformation = 2;
+
+    enum AmbientLightFaultType {
+        AMBIENT_LIGHT_FAULT_TYPE_UNSPECIFIED = 0;
+        AMBIENT_LIGHT_FAULT_TYPE_NONE = 1;
+        AMBIENT_LIGHT_FAULT_TYPE_UNRESPONSIVE = 2;
+    }
+
+    message AmbientLightSample {
+        google.protobuf.FloatValue ambientLight = 1;
+    }
+
+    message AmbientLightFaultInformation {
+        bool asserted = 1;
+        AmbientLightFaultType type = 2;
+        AmbientLightSample lastValue = 3;
+    }
+
+    message AmbientLightFaultEvent {
+        bool asserted = 1;
+        AmbientLightFaultType type = 32;
+        AmbientLightSample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+        google.protobuf.Duration lastSamplePeriod = 35;
+    }
+
+    message AmbientLightPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated AmbientLightSample samples = 2;
+    }
+}
+
+message HumidityTrait {
+    HumiditySample humidityValue = 1;
+    HumidityFaultInformation faultInformation = 2;
+
+    enum HumidityFaultType {
+        HUMIDITY_FAULT_TYPE_UNSPECIFIED = 0;
+        HUMIDITY_FAULT_TYPE_NONE = 1;
+        HUMIDITY_FAULT_TYPE_UNRESPONSIVE = 2;
+    }
+
+    message HumiditySample {
+        google.protobuf.FloatValue humidity = 1;
+    }
+
+    message HumidityFaultInformation {
+        bool asserted = 1;
+        HumidityFaultType type = 2;
+        HumiditySample lastValue = 3;
+    }
+
+    message HumidityFaultEvent {
+        bool asserted = 1;
+        HumidityFaultType type = 32;
+        HumiditySample lastValue = 33;
+        google.protobuf.Duration durationSinceLastSample = 34;
+        google.protobuf.Duration lastSamplePeriod = 35;
+    }
+
+    message HumidityPeriodicSamplesEvent {
+        google.protobuf.Duration sampleInterval = 1;
+        repeated HumiditySample samples = 2;
+    }
+}

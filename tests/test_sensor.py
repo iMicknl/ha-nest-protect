@@ -118,6 +118,7 @@ async def test_co_previous_peak_only_created_when_reported(
         areas=AREAS,
         client=MagicMock(),
         lock_state_cache={},
+        thermostat_state_cache={},
         safety_summaries={},
         structure_names={},
     )
@@ -184,7 +185,12 @@ async def test_battery_voltage_sensor_only_created_for_protect(
     )
     add_entities = MagicMock()
 
-    with patch("custom_components.nest_protect.sensor.subscribe_to_lock_discovery"):
+    with (
+        patch("custom_components.nest_protect.sensor.subscribe_to_lock_discovery"),
+        patch(
+            "custom_components.nest_protect.sensor.subscribe_to_thermostat_discovery"
+        ),
+    ):
         await async_setup_entry(hass, entry, add_entities)
 
     entities = add_entities.call_args.args[0]

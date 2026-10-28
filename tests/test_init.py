@@ -38,6 +38,7 @@ from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
+from custom_components.nest_protect.pynest.grpc_client import ObserveBatch
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN, ComponentSetup
@@ -1004,7 +1005,7 @@ async def test_lock_batch_clears_auth_failures_only(hass):
     sm._consecutive_errors = 2
 
     async def observe():
-        yield {}
+        yield ObserveBatch()
 
     entry.runtime_data.grpc_client.observe = observe
     await _async_observe_loop(hass, entry)
@@ -1043,7 +1044,7 @@ async def test_auth_recovery_handles_refresh_errors(
         attempts.append(True)
         if len(attempts) == 1:
             raise NestLockAuthException("rejected")
-        yield {}
+        yield ObserveBatch()
 
     entry.runtime_data.grpc_client.observe = observe
     with (
@@ -1075,7 +1076,7 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
     async def observe():
-        yield {}
+        yield ObserveBatch()
         raise NestLockAuthException("rejected")
 
     entry.runtime_data.grpc_client.observe = observe

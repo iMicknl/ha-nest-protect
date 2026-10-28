@@ -20,7 +20,7 @@ from homeassistant.helpers.entity import Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
-from .entity import async_run_entity_command
+from .entity import async_run_entity_command, subscribe_to_discovery
 from .pynest.exceptions import NestLockAuthException
 from .pynest.grpc_client import GrpcClient
 from .pynest.lock_models import LockBoltState, LockState
@@ -68,32 +68,16 @@ def subscribe_to_lock_discovery(
 ) -> None:
     """Wire one `async_add_entities` callback into per-resource lock discovery.
 
-    `factory(lock_state)` builds one entity per newly-seen resource_id. Locks
-    already cached on the config entry (from observe events that arrived before
-    this platform set up) are replayed immediately.
+    `factory(lock_state)` builds one entity per newly-seen resource_id.
     """
-    entry_data = entry.runtime_data
-    known: set[str] = set()
-
-    @callback
-    def _on_locks_discovered(locks: dict[str, LockState]) -> None:
-        new_entities: list[Entity] = []
-        for resource_id, lock_state in locks.items():
-            if resource_id in known:
-                continue
-            known.add(resource_id)
-            new_entities.append(factory(lock_state))
-        if new_entities:
-            async_add_entities(new_entities)
-
-    entry.async_on_unload(
-        async_dispatcher_connect(
-            hass, discovery_signal(entry.entry_id), _on_locks_discovered
-        )
+    subscribe_to_discovery(
+        hass,
+        entry,
+        signal=discovery_signal(entry.entry_id),
+        cache=entry.runtime_data.lock_state_cache,
+        async_add_entities=async_add_entities,
+        factory=lambda lock_state: [factory(lock_state)],
     )
-
-    if entry_data.lock_state_cache:
-        _on_locks_discovered(entry_data.lock_state_cache)
 
 
 async def async_setup_entry(

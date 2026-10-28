@@ -23,6 +23,7 @@ from custom_components.nest_protect.pynest.exceptions import (
     NestServiceException,
     PynestException,
 )
+from custom_components.nest_protect.pynest.grpc_client import ObserveBatch
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN
@@ -97,7 +98,7 @@ async def test_lock_stream_rejected_after_a_batch_escalates_to_reauth(hass):
     _, sm = _entry_data(hass, entry)
 
     async def observe():
-        yield {}
+        yield ObserveBatch()
         raise NestLockAuthException("UNAUTHENTICATED in stream status")
 
     entry.runtime_data.grpc_client.observe = observe
@@ -130,7 +131,7 @@ async def test_lock_stream_failures_far_apart_do_not_add_up(hass):
         streams += 1
         if streams > MAX_AUTH_FAILURES + 1:
             raise asyncio.CancelledError
-        yield {}
+        yield ObserveBatch()
         raise NestLockAuthException("UNAUTHENTICATED in stream status")
 
     entry.runtime_data.grpc_client.observe = observe

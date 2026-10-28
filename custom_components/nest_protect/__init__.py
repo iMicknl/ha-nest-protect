@@ -67,8 +67,10 @@ from .pynest.models import (
     TopazBucket,
     WhereBucketValue,
 )
+from .pynest.thermostat_models import ThermostatState
 from .session import NestSessionManager
 from .stream_health import StreamHealth
+from .thermostat import thermostat_discovery_signal, thermostat_signal
 
 DEVICE_BUCKET_TYPES = {BucketType.TOPAZ, BucketType.KRYPTONITE}
 
@@ -86,6 +88,7 @@ class HomeAssistantNestProtectData:
     subscription_task: asyncio.Task | None = None
     observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
+    thermostat_state_cache: dict[str, ThermostatState] = field(default_factory=dict)
     connection_failures: int = 0
     # Consecutive subscribes Nest answered with data almost immediately.
     fast_data_responses: int = 0
@@ -263,6 +266,10 @@ def _is_reported_device(
 ) -> bool:
     """Return whether the account still reports this device."""
     reported = {lock.serial_number for lock in entry_data.lock_state_cache.values()}
+    reported.update(
+        thermostat.serial_number
+        for thermostat in entry_data.thermostat_state_cache.values()
+    )
     # Home devices are identified by their structure bucket key.
     reported.update(entry_data.structures)
     for key, bucket in entry_data.devices.items():
@@ -294,7 +301,8 @@ def _async_remove_stale_devices(
             continue
 
         # Only Protect and temperature sensor devices are known at this point;
-        # locks are discovered later over gRPC, so anything else is kept.
+        # locks and thermostats are discovered later over gRPC, so anything
+        # else is kept.
         bucket_keys = _device_bucket_keys(hass, device.id)
         if not bucket_keys or any(
             key.partition(".")[0] not in DEVICE_BUCKET_TYPES for key in bucket_keys
@@ -308,11 +316,11 @@ def _async_remove_stale_devices(
 async def _async_observe_loop(
     hass: HomeAssistant, entry: NestProtectConfigEntry
 ) -> None:
-    """Consume the gRPC observe stream and dispatch lock updates.
+    """Consume the gRPC observe stream and dispatch lock and thermostat updates.
 
     Returns — ending the background task — when the observer reports that this
-    account has no locks, so accounts without a Nest x Yale lock stop talking to
-    the gateway after the first stream. Auth failures are retried with a session
+    account has no lock or thermostat, so those accounts stop talking to the
+    gateway after the first stream. Auth failures are retried with a session
     refresh, and escalate to re-auth after MAX_AUTH_FAILURES.
 
     Auth health is tracked on the shared NestSessionManager rather than locally,
@@ -320,7 +328,6 @@ async def _async_observe_loop(
     while the session is thoroughly broken.
     """
     entry_data = entry.runtime_data
-    cache = entry_data.lock_state_cache
     sm = entry_data.session_manager
 
     # Every new stream starts by sending the current lock state, so a batch alone
@@ -339,20 +346,20 @@ async def _async_observe_loop(
                     auth_failures = 0
                     # REST parse errors are the subscriber's own concern.
                     sm.record_auth_success()
-                new_locks: dict[str, LockState] = {}
-                for resource_id, lock_state in batch.items():
-                    previous = cache.get(resource_id)
-                    cache[resource_id] = lock_state
-                    if previous is None:
-                        new_locks[resource_id] = lock_state
-                    else:
-                        async_dispatcher_send(
-                            hass, lock_signal(resource_id), lock_state
-                        )
-                if new_locks:
-                    async_dispatcher_send(
-                        hass, discovery_signal(entry.entry_id), new_locks
-                    )
+                _dispatch_states(
+                    hass,
+                    entry_data.lock_state_cache,
+                    batch.locks,
+                    lock_signal,
+                    discovery_signal(entry.entry_id),
+                )
+                _dispatch_states(
+                    hass,
+                    entry_data.thermostat_state_cache,
+                    batch.thermostats,
+                    thermostat_signal,
+                    thermostat_discovery_signal(entry.entry_id),
+                )
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
@@ -361,7 +368,7 @@ async def _async_observe_loop(
             sm.record_auth_failure()
             if auth_failures >= MAX_AUTH_FAILURES or sm.should_trigger_reauth:
                 LOGGER.warning(
-                    "Lock observer: %d consecutive auth failures, triggering "
+                    "Observer: %d consecutive auth failures, triggering "
                     "re-authentication",
                     max(auth_failures, sm.consecutive_auth_failures),
                 )
@@ -370,7 +377,7 @@ async def _async_observe_loop(
 
             delay = BACKOFF_INTERVALS[min(auth_failures, len(BACKOFF_INTERVALS)) - 1]
             LOGGER.debug(
-                "Lock observer: credentials rejected (%r), refreshing session in %ds",
+                "Observer: credentials rejected (%r), refreshing session in %ds",
                 err,
                 delay,
             )
@@ -378,13 +385,34 @@ async def _async_observe_loop(
             if not await _async_recover_session(hass, entry, entry_data):
                 return
         except Exception:
-            LOGGER.exception("Lock observe loop failed unexpectedly")
+            LOGGER.exception("Observe loop failed unexpectedly")
             return
         else:
             # observe() only ends the iteration when it has concluded
             # there is nothing to watch on this account.
-            LOGGER.debug("Lock observer: no locks on this account, stopping")
+            LOGGER.debug("Observer: no lock or thermostat on this account, stopping")
             return
+
+
+@callback
+def _dispatch_states[T](
+    hass: HomeAssistant,
+    cache: dict[str, T],
+    states: dict[str, T],
+    signal: Callable[[str], str],
+    discovery: str,
+) -> None:
+    """Cache device states, announcing new devices and updating known ones."""
+    new_states: dict[str, T] = {}
+    for resource_id, state in states.items():
+        known = resource_id in cache
+        cache[resource_id] = state
+        if known:
+            async_dispatcher_send(hass, signal(resource_id), state)
+        else:
+            new_states[resource_id] = state
+    if new_states:
+        async_dispatcher_send(hass, discovery, new_states)
 
 
 async def async_unload_entry(
