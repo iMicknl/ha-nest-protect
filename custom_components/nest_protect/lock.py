@@ -182,6 +182,11 @@ class NestLockEntity(LockEntity):
         )
 
     @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
+
+    @callback
     def _handle_update(self, lock_state: LockState) -> None:
         """Receive a new LockState from the observe loop."""
         previous = self._lock_state
@@ -258,6 +263,11 @@ class NestLockBatterySensor(SensorEntity):
                 self._handle_update,
             )
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def _handle_update(self, lock_state: LockState) -> None:

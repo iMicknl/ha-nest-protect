@@ -168,6 +168,16 @@ class NestEntity(Entity):
             )
 
     @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes.
+
+        Signals are keyed on Nest buckets, not on the entity_id, so nothing
+        needs to be subscribed again. Without this hook HA removes and re-adds
+        the entity instead.
+        """
+        super().async_entity_id_changed(old_entity_id)
+
+    @callback
     def update_callback(self, bucket: Bucket):
         """Update the entities state."""
 
