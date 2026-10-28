@@ -6,7 +6,6 @@ import datetime
 import json
 import time
 from contextlib import ExitStack, contextmanager
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers import device_registry as dr
@@ -14,7 +13,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect import (
     HomeAssistantNestProtectData,
-    _persist_refreshed_cookies,
+    _cookie_persister,
 )
 from custom_components.nest_protect.const import CONF_COOKIES, DOMAIN
 from custom_components.nest_protect.diagnostics import (
@@ -178,7 +177,7 @@ def _load(
     session_manager = NestSessionManager(
         client,
         store,
-        on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
+        on_cookies_refreshed=_cookie_persister(hass, entry),
     )
     # As after setup: the credentials were exercised moments ago, so no
     # keep-warm refresh is due.
