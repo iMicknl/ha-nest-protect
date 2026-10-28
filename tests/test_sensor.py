@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import (
-    CONCENTRATION_PARTS_PER_MILLION,
     EntityCategory,
     UnitOfElectricPotential,
+    UnitOfRatio,
 )
 
 from custom_components.nest_protect.pynest.models import Bucket
@@ -81,7 +81,7 @@ def test_co_previous_peak_description():
     description = next(d for d in SENSOR_DESCRIPTIONS if d.key == "co_previous_peak")
     assert description.translation_key == "co_previous_peak"
     assert description.device_class == SensorDeviceClass.CO
-    assert description.native_unit_of_measurement == CONCENTRATION_PARTS_PER_MILLION
+    assert description.native_unit_of_measurement == UnitOfRatio.PARTS_PER_MILLION
     assert description.entity_category == EntityCategory.DIAGNOSTIC
     assert description.state_class is None
 
