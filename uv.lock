@@ -1057,7 +1057,7 @@ test = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "homeassistant", specifier = ">=2026.10.1" },
+    { name = "homeassistant", specifier = ">=2026.10.2" },
     { name = "prek", specifier = ">=0.5.4" },
     { name = "ruff", specifier = ">=0.17.1" },
 ]
