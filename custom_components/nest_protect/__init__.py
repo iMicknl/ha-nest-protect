@@ -121,6 +121,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         data = await session_manager.async_setup()
     except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
+    except NestServiceException as exception:
+        raise ConfigEntryNotReady(
+            f"Nest service temporarily unavailable: {exception}"
+        ) from exception
     except BadCredentialsException as exception:
         raise ConfigEntryAuthFailed from exception
     except Exception as exception:  # pylint: disable=broad-except

@@ -11,7 +11,13 @@ from random import randint
 from types import TracebackType
 from typing import Any, cast
 
-from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
+from aiohttp import (
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ContentTypeError,
+    FormData,
+)
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
@@ -41,6 +47,24 @@ from .models import (
 )
 
 _LOGGER = logging.getLogger(__package__)
+
+TRANSIENT_CLIENT_STATUSES = {408, 429}
+
+
+def raise_for_transient_status(response: ClientResponse, action: str) -> None:
+    """Raise a NestServiceException for statuses that are worth retrying.
+
+    Checked before the body is parsed: outages often return HTML or an error
+    body that would otherwise be mistaken for an auth failure.
+    """
+    status = response.status
+
+    if status == 502:
+        raise BadGatewayException(f"{status} error while {action}")
+    if status == 504:
+        raise GatewayTimeoutException(f"{status} error while {action}")
+    if status >= 500 or status in TRANSIENT_CLIENT_STATUSES:
+        raise NestServiceException(f"{status} error while {action}")
 
 
 def is_cookie_expired(morsel: Morsel[str]) -> bool:
@@ -168,6 +192,7 @@ class NestClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         ) as response:
+            raise_for_transient_status(response, "refreshing Google access token")
             result = await response.json()
 
             if "error" in result:
@@ -180,7 +205,7 @@ class NestClient:
 
             return self.auth
 
-    async def get_access_token_from_cookies(  # noqa: PLR0912
+    async def get_access_token_from_cookies(
         self, issue_token: str, cookies: str
     ) -> GoogleAuthResponse:
         """Get a Nest refresh token from an issue token and cookies."""
@@ -222,12 +247,7 @@ class NestClient:
                     self.refreshed_cookies = merged
                     self.cookies = merged
 
-            # Server-side and throttling errors are transient; the cookies may
-            # still be valid, so they must not trigger re-authentication.
-            if response.status >= 500 or response.status in (408, 429):
-                raise NestServiceException(
-                    f"{response.status} error while retrieving Google access token"
-                )
+            raise_for_transient_status(response, "retrieving Google access token")
 
             try:
                 result = await response.json()
@@ -280,6 +300,7 @@ class NestClient:
                 "Referer": self.environment.host,
             },
         ) as response:
+            raise_for_transient_status(response, "requesting Nest JWT")
             result = await response.json()
             try:
                 nest_auth = NestAuthResponse(**result)
@@ -296,6 +317,7 @@ class NestClient:
                 + (nest_auth.jwt or ""),
             },
         ) as response:
+            raise_for_transient_status(response, "authenticating")
             try:
                 nest_response = await response.json()
             except ContentTypeError as exception:
