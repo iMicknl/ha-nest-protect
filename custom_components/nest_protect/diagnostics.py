@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
-from . import HomeAssistantNestProtectData, _persist_refreshed_cookies
+from . import HomeAssistantNestProtectData
 from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN, DOMAIN, LOGGER
 from .pynest.client import NestClient
 from .pynest.const import FULL_NEST_REQUEST
@@ -71,7 +71,7 @@ async def async_get_config_entry_diagnostics(
     if entry_data is None:
         return async_redact_data(data, TO_REDACT)
 
-    app_launch, error = await _async_fetch_app_launch(hass, entry, entry_data)
+    app_launch, error = await _async_fetch_app_launch(entry_data)
 
     data |= {
         # Captured after the fetch, which may have replaced the session.
@@ -133,7 +133,7 @@ async def async_get_device_diagnostics(
 
     # Buckets describing the same device (e.g. widget_track) share its object id.
     object_id = bucket.object_key.partition(".")[2]
-    app_launch, error = await _async_fetch_app_launch(hass, entry, entry_data)
+    app_launch, error = await _async_fetch_app_launch(entry_data)
     data["related_buckets"] = [
         dataclasses.asdict(related)
         for related in (app_launch.updated_buckets if app_launch else [])
@@ -150,13 +150,14 @@ def _session_info(entry_data: HomeAssistantNestProtectData) -> dict[str, Any]:
     return {
         "expires_in": session.expires_in if session else None,
         "expired": session.is_expired() if session else None,
-        "consecutive_failures": entry_data.session_manager.consecutive_failures,
+        "consecutive_auth_failures": entry_data.session_manager.consecutive_auth_failures,
+        "consecutive_errors": entry_data.session_manager.consecutive_errors,
         "transport_url": entry_data.client.transport_url,
     }
 
 
 async def _async_fetch_app_launch(
-    hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
+    entry_data: HomeAssistantNestProtectData,
 ) -> tuple[FirstDataAPIResponse | None, str | None]:
     """Fetch every bucket type with the live session, without altering the live client.
 
@@ -184,9 +185,6 @@ async def _async_fetch_app_launch(
     except Exception as err:  # noqa: BLE001
         LOGGER.debug("Diagnostics could not fetch Nest data: %s", type(err).__name__)
         return None, type(err).__name__
-    finally:
-        # A refresh may have rotated Google cookies that must survive a restart.
-        _persist_refreshed_cookies(hass, entry, client, entry_data.session_manager)
 
 
 def _redact(data: dict[str, Any], entry_data: HomeAssistantNestProtectData) -> dict:

@@ -34,13 +34,21 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 APP_LAUNCH_URL_FORMAT = "{host}/api/0.1/user/{user_id}/app_launch"
 NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt"
 
+# The subscribe long poll idles for up to SUBSCRIBE_TIMEOUT_SECONDS, so only the
+# connect phase can be bounded tightly enough to detect an unreachable host.
+SUBSCRIBE_TIMEOUT_SECONDS = 600
+SUBSCRIBE_CONNECT_TIMEOUT = 30
+
 NEST_REQUEST = {
     "known_bucket_types": [
+        BucketType.BUCKETS,
         BucketType.KRYPTONITE,
+        BucketType.SAFETY_SUMMARY,
         BucketType.STRUCTURE,
         BucketType.TOPAZ,
         BucketType.WHERE,
         BucketType.USER,
+        BucketType.WIDGET_TRACK,
     ],
     "known_bucket_versions": [],
 }

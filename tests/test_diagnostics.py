@@ -5,12 +5,16 @@ from __future__ import annotations
 import datetime
 import json
 from contextlib import ExitStack, contextmanager
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.nest_protect import HomeAssistantNestProtectData
+from custom_components.nest_protect import (
+    HomeAssistantNestProtectData,
+    _persist_refreshed_cookies,
+)
 from custom_components.nest_protect.const import CONF_COOKIES, DOMAIN
 from custom_components.nest_protect.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -177,8 +181,13 @@ def _load(
         devices=devices,
         areas={"where-1": "Kitchen"},
         client=client,
-        session_manager=NestSessionManager(client, store),
+        session_manager=NestSessionManager(
+            client,
+            store,
+            on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
+        ),
         grpc_lock_client=MagicMock(),
+        stream_health=MagicMock(),
         lock_state_cache=locks or {},
     )
     return client
