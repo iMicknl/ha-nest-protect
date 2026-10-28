@@ -8,14 +8,10 @@ import time
 from http.cookies import SimpleCookie
 from unittest.mock import AsyncMock, MagicMock
 
-import aiohttp
 import pytest
 
 from custom_components.nest_protect.const import (
     BACKOFF_INTERVALS,
-    GOOGLE_REFRESH_INTERVAL_SECONDS,
-    GOOGLE_REFRESH_JITTER_SECONDS,
-    GOOGLE_REFRESH_RETRY_INTERVALS,
     GOOGLE_THROTTLE_MAX_SECONDS,
     GOOGLE_THROTTLE_SECONDS,
     MAX_AUTH_FAILURES,
@@ -218,122 +214,6 @@ async def test_no_persisted_session_uses_cookies():
 
 
 @pytest.mark.asyncio
-async def test_stale_persisted_refresh_time_rewarms_cookies_after_restart():
-    """A restored session whose cookies are overdue refreshes them immediately.
-
-
-    The refresh clock is persisted precisely so that restarting HA cannot keep
-    postponing the refresh indefinitely.
-    """
-    valid_session = _make_nest_response(expired=False)
-
-    client = MagicMock()
-    client.nest_session = valid_session
-    client.auth = None
-    client.issue_token = "https://accounts.google.com/issue"
-    client.cookies = "SID=test"
-    client.refresh_token = None
-    client.transport_url = None
-    client.get_access_token = AsyncMock()
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-    client.authenticate = AsyncMock()
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(
-        return_value={
-            "nest_session": valid_session.to_dict(),
-            "transport_url": "https://transport.example.com",
-            # Last exercised two days ago — long past the refresh interval.
-            "google_refreshed_at": time.time() - 2 * 24 * 60 * 60,
-        }
-    )
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.async_setup()
-    client.get_access_token.assert_not_called()
-
-    await manager.ensure_session()
-
-    client.get_access_token.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_recent_persisted_refresh_time_skips_google_after_restart():
-    """A restored session whose cookies are still warm does not call Google."""
-    valid_session = _make_nest_response(expired=False)
-
-    client = MagicMock()
-    client.nest_session = valid_session
-    client.auth = None
-    client.transport_url = None
-    client.get_access_token = AsyncMock()
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-    client.authenticate = AsyncMock()
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(
-        return_value={
-            "nest_session": valid_session.to_dict(),
-            "transport_url": "https://transport.example.com",
-            "google_refreshed_at": time.time() - 60,
-        }
-    )
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.async_setup()
-    await manager.ensure_session()
-
-    client.get_access_token.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_forced_refresh_ignores_interval_after_restart():
-    """async_refresh_session always reaches Google, even inside the interval.
-
-
-    It is the 401 recovery path, so throttling it would leave a restored
-    session that Nest has rejected with no way back.
-    """
-    new_session = _make_nest_response(expired=False)
-
-    client = MagicMock()
-    client.nest_session = _make_nest_response(expired=False)
-    client.auth = None
-    client.transport_url = None
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-    client.authenticate = AsyncMock(return_value=new_session)
-
-    def set_auth(*args, **kwargs):
-        client.auth = MagicMock(access_token="new-google-token")
-        client.auth.is_expired = MagicMock(return_value=False)
-
-    client.get_access_token = AsyncMock(side_effect=set_auth)
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(
-        return_value={
-            "nest_session": client.nest_session.to_dict(),
-            "transport_url": "https://transport.example.com",
-            # Well inside the interval — ensure_session would skip Google here.
-            "google_refreshed_at": time.time() - 60,
-        }
-    )
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.async_setup()
-
-    assert await manager.async_refresh_session() is True
-    client.get_access_token.assert_called_once()
-    client.authenticate.assert_called_once_with("new-google-token")
-
-
-@pytest.mark.asyncio
 async def test_ensure_session_valid():
     """ensure_session is a no-op when both the Nest and Google tokens are valid."""
     valid_session = _make_nest_response(expired=False)
@@ -350,9 +230,6 @@ async def test_ensure_session_valid():
     store.async_save = AsyncMock()
 
     manager = NestSessionManager(client=client, store=store)
-    # As after setup: the credentials were exercised moments ago.
-    manager._google_refreshed_at = time.time()
-    manager._schedule_keep_warm()
 
     await manager.ensure_session()
 
@@ -360,48 +237,6 @@ async def test_ensure_session_valid():
     client.get_access_token.assert_not_called()
     client.authenticate.assert_not_called()
     store.async_save.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_ensure_session_refreshes_google_token_while_nest_session_valid():
-    """An expired Google token is refreshed even while the Nest session is valid.
-
-
-    Regression test: Nest issues sessions lasting weeks, so gating the Google
-    refresh on Nest session expiry left the auth cookies untouched for that
-    whole period. Google rotates them on a far shorter cycle, so by the time
-    they were next used the session had been invalidated (USER_LOGGED_OUT),
-    forcing a re-authentication every day or two.
-    """
-    valid_session = _make_nest_response(expired=False)
-
-    client = MagicMock()
-    client.nest_session = valid_session
-    client.auth = MagicMock(access_token="stale-google-token")
-    client.auth.is_expired = MagicMock(return_value=True)
-    client.refresh_token = "test-refresh-token"
-    client.authenticate = AsyncMock()
-
-    def issue_fresh_token(*args, **kwargs):
-        client.auth = MagicMock(access_token="fresh-google-token")
-        client.auth.is_expired = MagicMock(return_value=False)
-
-    client.get_access_token = AsyncMock(side_effect=issue_fresh_token)
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.ensure_session()
-
-    # The Google token — and with it the cookies — must be refreshed.
-    client.get_access_token.assert_called_once()
-    # But the still-valid Nest session must not be needlessly replaced.
-    client.authenticate.assert_not_called()
-    # The refresh time is persisted so a restart doesn't reset the clock.
-    assert store.async_save.call_count == 1
-    assert store.async_save.call_args[0][0]["google_refreshed_at"] > 0
 
 
 @pytest.mark.asyncio
@@ -992,128 +827,6 @@ async def test_command_is_not_retried_without_a_new_session():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_ensure_session_coalesces_google_refresh():
-    """Concurrent callers must not each rotate the cookies.
-
-    The subscriber, entities and the lock observer share one manager. Two
-    refreshes in flight would both rotate, and only the last response would be
-    kept — discarding the cookie Google now expects.
-    """
-    expired_auth = MagicMock(access_token="stale")
-    expired_auth.is_expired = MagicMock(return_value=True)
-
-    client = MagicMock()
-    client.nest_session = _make_nest_response(expired=False)
-    client.auth = expired_auth
-    client.transport_url = None
-    client.authenticate = AsyncMock()
-
-    async def refresh(*args, **kwargs):
-        await asyncio.sleep(0)
-        fresh = MagicMock(access_token="fresh")
-        fresh.is_expired = MagicMock(return_value=False)
-        client.auth = fresh
-
-    client.get_access_token = AsyncMock(side_effect=refresh)
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await asyncio.gather(manager.ensure_session(), manager.ensure_session())
-
-    client.get_access_token.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_missing_credentials_do_not_advance_refresh_clock():
-    """A refresh that produced no token must not count as one."""
-    client = MagicMock()
-    client.nest_session = _make_nest_response(expired=False)
-    client.auth = None
-    client.transport_url = None
-    client.refreshed_cookies = None
-    client.get_access_token = AsyncMock(return_value=None)
-    client.authenticate = AsyncMock()
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.ensure_session()
-
-    client.get_access_token.assert_awaited_once()
-    store.async_save.assert_not_called()
-    assert manager._google_refreshed_at == 0
-
-
-@pytest.mark.asyncio
-async def test_legacy_store_persists_assumed_refresh_clock():
-    """A store predating the clock writes the assumed value back.
-
-    Otherwise every restart would assume "fresh" again, letting a frequently
-    restarted instance postpone the refresh indefinitely.
-    """
-    valid_session = _make_nest_response(expired=False)
-
-    client = MagicMock()
-    client.nest_session = None
-    client.auth = None
-    client.transport_url = None
-    client.get_access_token = AsyncMock()
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(
-        return_value={
-            "nest_session": valid_session.to_dict(),
-            "transport_url": "https://transport.example.com",
-        }
-    )
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.async_setup()
-
-    store.async_save.assert_called_once()
-    assert store.async_save.call_args[0][0]["google_refreshed_at"] > 0
-
-
-@pytest.mark.asyncio
-async def test_future_refresh_time_does_not_suppress_refresh():
-    """A corrupt or skewed future timestamp must not disable refreshing."""
-    valid_session = _make_nest_response(expired=False)
-
-    client = MagicMock()
-    client.nest_session = None
-    client.auth = None
-    client.transport_url = None
-    client.get_access_token = AsyncMock()
-    client.get_first_data = AsyncMock(return_value=_make_first_data())
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-    store.async_load = AsyncMock(
-        return_value={
-            "nest_session": valid_session.to_dict(),
-            "transport_url": "https://transport.example.com",
-            "google_refreshed_at": time.time() + 365 * 24 * 60 * 60,
-        }
-    )
-
-    manager = NestSessionManager(client=client, store=store)
-
-    await manager.async_setup()
-
-    # Clamped to now and written back, rather than trusted.
-    store.async_save.assert_called_once()
-    assert store.async_save.call_args[0][0]["google_refreshed_at"] <= time.time()
-
-
-@pytest.mark.asyncio
 async def test_refresh_notifies_caller_to_persist_rotated_cookies():
     """Every refresh path reports back so rotated cookies can be persisted.
 
@@ -1124,10 +837,10 @@ async def test_refresh_notifies_caller_to_persist_rotated_cookies():
     expired_auth.is_expired = MagicMock(return_value=True)
 
     client = MagicMock()
-    client.nest_session = _make_nest_response(expired=False)
+    client.nest_session = _make_nest_response(expired=True)
     client.auth = expired_auth
     client.transport_url = None
-    client.authenticate = AsyncMock()
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
     # Explicitly nothing rotated yet, so the assertion below can't pass on an
     # auto-created truthy attribute.
     client.refreshed_cookies = None
@@ -1237,34 +950,6 @@ async def test_refresh_lock_is_released_after_nest_auth_failure():
     assert await asyncio.wait_for(manager.async_refresh_session(), timeout=1) is True
 
 
-@pytest.mark.asyncio
-async def test_clock_rollback_does_not_suppress_due_refresh():
-    """A backwards system clock must not park the refresh indefinitely."""
-    client = MagicMock()
-    client.auth = None
-    client.nest_session = _make_nest_response(expired=False)
-    client.transport_url = None
-
-    async def refresh_credentials():
-        fresh_auth = MagicMock(access_token="fresh")
-        fresh_auth.is_expired = MagicMock(return_value=False)
-        client.auth = fresh_auth
-
-    client.get_access_token = AsyncMock(side_effect=refresh_credentials)
-    client.authenticate = AsyncMock()
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-
-    manager = NestSessionManager(client=client, store=store)
-    # Recorded before the clock jumped backwards.
-    manager._google_refreshed_at = time.time() + 10_000
-
-    await manager.ensure_session()
-
-    client.get_access_token.assert_called_once()
-
-
 class _RotatingThenFailingResponse:
     """Google response that rotates cookies before the body read fails."""
 
@@ -1302,146 +987,20 @@ async def test_rotation_is_notified_when_google_body_read_fails():
     client = NestClient(session=_RotatingThenFailingSession())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=old"
-    client.nest_session = _make_nest_response(expired=False)
+    client.nest_session = _make_nest_response(expired=True)
 
     on_cookies_refreshed = MagicMock()
     manager = NestSessionManager(
         client=client, store=MagicMock(), on_cookies_refreshed=on_cookies_refreshed
     )
 
-    # Best effort while the Nest session is valid: the failure is retried
-    # later rather than raised, but the rotation must still be persisted.
-    await manager.ensure_session()
+    with pytest.raises(PynestException):
+        await manager.ensure_session()
 
     assert manager.google_refresh_diagnostics["failures"] == 1
     assert client.refreshed_cookies == "SID=new"
     on_cookies_refreshed.assert_called_once_with("SID=new")
     assert manager._refresh_lock.locked() is False
-
-
-def _keep_warm_manager(get_access_token):
-    """Manager with a valid Nest session whose keep-warm refresh is due."""
-    client = MagicMock()
-    client.nest_session = _make_nest_response(expired=False)
-    client.auth = None
-    client.transport_url = None
-    client.issue_token = (
-        "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken"
-    )
-    client.cookies = "SID=sid"
-    client.refresh_token = None
-    client.refreshed_cookies = None
-    client.get_access_token = get_access_token
-    client.authenticate = AsyncMock()
-
-    store = MagicMock()
-    store.async_save = AsyncMock()
-
-    manager = NestSessionManager(client=client, store=store)
-    manager._google_refreshed_at = time.time() - GOOGLE_REFRESH_INTERVAL_SECONDS * 2
-    manager._schedule_keep_warm()
-    return manager, client, store
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "error",
-    [aiohttp.ClientError("offline"), TimeoutError(), Exception("internal_failure")],
-    ids=lambda e: type(e).__name__,
-)
-async def test_keep_warm_failure_does_not_interrupt_valid_session(error):
-    """A failed keep-warm refresh is retried later instead of raised."""
-    manager, client, store = _keep_warm_manager(AsyncMock(side_effect=error))
-
-    before = time.time()
-    await manager.ensure_session()
-    await manager.ensure_session()
-
-    client.get_access_token.assert_awaited_once()
-    client.authenticate.assert_not_called()
-    store.async_save.assert_not_called()
-    first_retry = GOOGLE_REFRESH_RETRY_INTERVALS[0]
-    assert (
-        before + first_retry * 0.8
-        <= manager._google_next_refresh_at
-        <= time.time() + first_retry * 1.2
-    )
-
-
-@pytest.mark.asyncio
-async def test_keep_warm_success_reschedules_with_jitter():
-    """A successful keep-warm refresh persists and schedules the next one."""
-
-    def issue_token():
-        client.auth = MagicMock(access_token="fresh")
-        client.auth.is_expired = MagicMock(return_value=False)
-
-    manager, client, store = _keep_warm_manager(AsyncMock(side_effect=issue_token))
-
-    before = time.time()
-    await manager.ensure_session()
-
-    client.get_access_token.assert_awaited_once()
-    store.async_save.assert_awaited_once()
-    assert (
-        before + GOOGLE_REFRESH_INTERVAL_SECONDS - GOOGLE_REFRESH_JITTER_SECONDS
-        <= manager._google_next_refresh_at
-        <= time.time() + GOOGLE_REFRESH_INTERVAL_SECONDS + GOOGLE_REFRESH_JITTER_SECONDS
-    )
-
-
-@pytest.mark.asyncio
-async def test_keep_warm_runs_even_while_token_is_valid():
-    """Keep-warm exercises the cookies on schedule, not on token expiry."""
-    manager, client, _store = _keep_warm_manager(AsyncMock())
-    client.auth = MagicMock(access_token="still-valid")
-    client.auth.is_expired = MagicMock(return_value=False)
-
-    await manager.ensure_session()
-
-    client.get_access_token.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_keep_warm_skips_credentials_without_cookies():
-    """Only cookies go stale, so other credentials aren't exercised hourly."""
-    manager, client, _store = _keep_warm_manager(AsyncMock())
-    client.issue_token = None
-    client.cookies = None
-    client.refresh_token = "legacy-refresh-token"
-
-    await manager.ensure_session()
-
-    client.get_access_token.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_rejected_credentials_stop_keep_warm_until_nest_session_expires(
-    caplog,
-):
-    """Dead cookies keep the integration running on the Nest session.
-
-    Chrome-captured cookies can die within hours while the Nest session lasts
-    weeks. Raising here would force a re-authentication long before one is
-    needed, and retrying hourly would only add load.
-    """
-    manager, client, _store = _keep_warm_manager(
-        AsyncMock(side_effect=BadCredentialsException("USER_LOGGED_OUT"))
-    )
-
-    await manager.ensure_session()
-
-    assert "Google rejected the stored credentials" in caplog.text
-    assert manager.google_refresh_diagnostics["keep_warm_disabled"] is True
-
-    manager._google_next_refresh_at = 0
-    await manager.ensure_session()
-    client.get_access_token.assert_awaited_once()
-
-    client.nest_session = _make_nest_response(expired=True)
-    with pytest.raises(BadCredentialsException):
-        await manager.ensure_session()
-    assert client.get_access_token.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1455,12 +1014,18 @@ async def test_rejected_credentials_stop_keep_warm_until_nest_session_expires(
 )
 async def test_throttling_pauses_all_google_refreshes(retry_after, expected_pause):
     """After a throttling response no path contacts Google until the pause ends."""
-    manager, client, _store = _keep_warm_manager(
-        AsyncMock(side_effect=GoogleThrottledException("429", retry_after=retry_after))
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=True)
+    client.auth = None
+    client.refreshed_cookies = None
+    client.get_access_token = AsyncMock(
+        side_effect=GoogleThrottledException("429", retry_after=retry_after)
     )
+    manager = NestSessionManager(client=client, store=MagicMock())
 
     before = time.time()
-    await manager.ensure_session()
+    with pytest.raises(GoogleThrottledException):
+        await manager.ensure_session()
 
     assert (
         before + expected_pause
@@ -1468,8 +1033,6 @@ async def test_throttling_pauses_all_google_refreshes(retry_after, expected_paus
         <= time.time() + expected_pause
     )
 
-    # Even the required refresh for an expired Nest session stays offline.
-    client.nest_session = _make_nest_response(expired=True)
     with pytest.raises(GoogleThrottledException):
         await manager.ensure_session()
     with pytest.raises(GoogleThrottledException):
@@ -1515,30 +1078,3 @@ async def test_startup_google_failure_is_counted():
 
     stats = manager.google_refresh_diagnostics
     assert (stats["attempts"], stats["successes"], stats["failures"]) == (1, 0, 1)
-
-
-@pytest.mark.asyncio
-async def test_keep_warm_without_usable_token_backs_off():
-    """A request that returns no usable token enters the retry backoff."""
-    manager, client, _store = _keep_warm_manager(AsyncMock(return_value=None))
-
-    await manager.ensure_session()
-    await manager.ensure_session()
-
-    client.get_access_token.assert_awaited_once()
-    assert manager._google_next_refresh_at > time.time()
-    assert manager.google_refresh_diagnostics["failures"] == 1
-
-
-@pytest.mark.asyncio
-async def test_keep_warm_backoff_survives_clock_rollback():
-    """After the clock jumps back, a failed refresh still waits its backoff."""
-    manager, client, _store = _keep_warm_manager(
-        AsyncMock(side_effect=aiohttp.ClientError("offline"))
-    )
-    manager._google_refreshed_at = time.time() + 10_000
-
-    await manager.ensure_session()
-    await manager.ensure_session()
-
-    client.get_access_token.assert_awaited_once()

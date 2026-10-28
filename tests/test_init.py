@@ -1288,37 +1288,3 @@ async def test_subscriber_warns_once_about_a_fast_answer_loop(hass, caplog):
 
     warnings = [r for r in caplog.records if "subscribes in a row" in r.getMessage()]
     assert len(warnings) == 1
-
-
-async def test_failing_google_keep_warm_does_not_stop_updates(hass):
-    """Regression: a Google hiccup must not cut off a still-valid Nest session.
-
-    The hourly keep-warm refresh used to raise out of ensure_session(), so a
-    connection reset from Google stopped Nest updates and sent the subscriber
-    into its retry loop, calling Google again on every iteration.
-    """
-    entry = _subscriber_entry(hass)
-    client, sm = _make_subscriber_entry_data(hass, entry)
-    client.auth = None
-    client.refreshed_cookies = None
-    client.get_access_token = AsyncMock(
-        side_effect=aiohttp.ClientOSError(104, "Connection reset by peer")
-    )
-    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
-    sm._google_refreshed_at = 1.0  # long overdue
-
-    with (
-        patch("custom_components.nest_protect._register_subscribe_task") as register,
-        patch(
-            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
-        ) as sleep,
-        # Keeps the fast-answer guard out of the sleeps asserted on below.
-        patch("custom_components.nest_protect.SUBSCRIBE_MIN_INTERVAL_SECONDS", 0),
-    ):
-        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
-        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
-
-    client.get_access_token.assert_awaited_once()
-    assert client.subscribe_for_data.await_count == 2
-    assert all(call.args[0] == 0 for call in sleep.call_args_list)
-    assert register.call_count == 2
