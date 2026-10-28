@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 from contextlib import ExitStack, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -178,6 +179,10 @@ def _load(
         store,
         on_cookies_refreshed=_cookie_persister(hass, entry),
     )
+    # As after setup: the credentials were exercised moments ago, so no
+    # keep-warm refresh is due.
+    session_manager._google_refreshed_at = time.time()
+    session_manager._schedule_keep_warm()
 
     devices = {
         b.object_key: b for b in (_topaz("AAA", SERIAL_A), _topaz("BBB", SERIAL_B))
@@ -263,7 +268,8 @@ async def test_diagnostics_report_google_refresh_stats(hass):
         result = await async_get_config_entry_diagnostics(hass, entry)
 
     assert result["google_refresh"]["attempts"] == 3
-    assert result["google_refresh"]["throttled_until"] is None
+    assert result["google_refresh"]["keep_warm_disabled"] is False
+    assert result["google_refresh"]["next_refresh_at"] is not None
 
 
 async def test_diagnostics_redact_secrets_and_identifiers(hass):

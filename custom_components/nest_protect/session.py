@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import random
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -13,6 +14,9 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     BACKOFF_INTERVALS,
+    GOOGLE_REFRESH_INTERVAL_SECONDS,
+    GOOGLE_REFRESH_JITTER_SECONDS,
+    GOOGLE_REFRESH_RETRY_INTERVALS,
     GOOGLE_THROTTLE_MAX_SECONDS,
     GOOGLE_THROTTLE_SECONDS,
     LOGGER,
@@ -21,6 +25,7 @@ from .const import (
 )
 from .pynest.client import NestClient
 from .pynest.exceptions import (
+    BadCredentialsException,
     GoogleThrottledException,
     NotAuthenticatedException,
     PynestException,
@@ -48,6 +53,9 @@ class NestSessionManager:
     1. Reuse persisted Nest session if still valid (skip Google entirely)
     2. Re-authenticate with Google using stored cookies/refresh_token
     3. Return None (caller should raise ConfigEntryAuthFailed)
+
+    While the Nest session is valid, the Google credentials are still exercised
+    roughly hourly ("kept warm"), best effort, so the cookies don't go stale.
     """
 
     def __init__(
@@ -66,9 +74,12 @@ class NestSessionManager:
         self._consecutive_errors: int = 0
         self._refresh_lock = asyncio.Lock()
         self._refresh_generation: int = 0
-        # Wall-clock times; 0 means "never" / "not throttled".
         self._google_refreshed_at: float = 0.0
+        # Wall-clock times; 0 means "not scheduled" / "not throttled".
+        self._google_next_refresh_at: float = 0.0
         self._google_throttled_until: float = 0.0
+        self._google_retry_failures: int = 0
+        self._keep_warm_disabled: bool = False
         self._google_stats: dict[str, Any] = {
             "attempts": 0,
             "successes": 0,
@@ -113,7 +124,9 @@ class NestSessionManager:
         return {
             **self._google_stats,
             "last_refreshed_at": _isoformat(self._google_refreshed_at),
+            "next_refresh_at": _isoformat(self._google_next_refresh_at),
             "throttled_until": _isoformat(self._google_throttled_until),
+            "keep_warm_disabled": self._keep_warm_disabled,
         }
 
     def record_auth_failure(self) -> None:
@@ -155,6 +168,10 @@ class NestSessionManager:
         if not persisted or not persisted.get("nest_session"):
             return None
 
+        stored_refreshed_at = persisted.get("google_refreshed_at")
+        self._google_refreshed_at = self._coerce_refresh_time(stored_refreshed_at)
+        self._schedule_keep_warm()
+
         restored_session = NestResponse.from_dict(persisted["nest_session"])
 
         if restored_session is None:
@@ -173,7 +190,7 @@ class NestSessionManager:
 
         # Validate the session is actually accepted by Nest
         try:
-            return await self._client.get_first_data(
+            first_data = await self._client.get_first_data(
                 restored_session.access_token, restored_session.userid
             )
         except (NotAuthenticatedException, PynestException):  # fmt: skip
@@ -182,6 +199,14 @@ class NestSessionManager:
             )
             self._client.nest_session = None
             return None
+
+        if stored_refreshed_at != self._google_refreshed_at:
+            # Write the assumed clock straight back, otherwise every restart
+            # would assume "fresh" again and could postpone the refresh
+            # indefinitely on a frequently restarted instance.
+            await self._async_persist(restored_session)
+
+        return first_data
 
     async def _async_authenticate_and_fetch(self) -> FirstDataAPIResponse | None:
         """Authenticate with credentials and fetch first data.
@@ -225,9 +250,54 @@ class NestSessionManager:
         self._record_google_success()
         return await self._client.authenticate(auth.access_token)
 
+    @staticmethod
+    def _coerce_refresh_time(value: object) -> float:
+        """Normalise a persisted refresh timestamp into a usable value."""
+        now = time.time()
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            # Missing (store predates this key) or corrupt. Assume the cookies
+            # are fresh so the "skip Google entirely" startup path survives;
+            # the caller writes this assumption back to make it durable.
+            return now
+        if value > now:
+            # A future timestamp — clock skew or a corrupt store — must not
+            # suppress the refresh until the wall clock catches up.
+            return now
+        return float(value)
+
+    def _schedule_keep_warm(self) -> None:
+        """Schedule the next keep-warm refresh from the last successful one."""
+        # Jitter spreads installs out so they don't converge on the same
+        # minute, e.g. after a Home Assistant release has everyone restart.
+        jitter = random.uniform(  # noqa: S311
+            -GOOGLE_REFRESH_JITTER_SECONDS, GOOGLE_REFRESH_JITTER_SECONDS
+        )
+        self._google_next_refresh_at = (
+            self._google_refreshed_at + GOOGLE_REFRESH_INTERVAL_SECONDS + jitter
+        )
+
     def _record_google_success(self) -> None:
         self._google_refreshed_at = time.time()
+        self._google_retry_failures = 0
         self._google_stats["successes"] += 1
+        self._schedule_keep_warm()
+
+    def _keep_warm_due(self) -> bool:
+        # Only cookies go stale between uses. Refresh tokens and master tokens
+        # would just add an hourly Google call for nothing.
+        if self._keep_warm_disabled or not (
+            self._client.issue_token and self._client.cookies
+        ):
+            return False
+        now = time.time()
+        if now < self._google_refreshed_at:
+            # The clock went backwards. Re-anchor and refresh now, so the
+            # schedule (including retry backoff) applies again from here.
+            self._google_refreshed_at = now
+            self._google_next_refresh_at = now
+        if now < self._google_throttled_until:
+            return False
+        return now >= self._google_next_refresh_at
 
     async def _async_track_google_request[T](self, request: Awaitable[T]) -> T:
         """Await a Google token request, accounting for it and any throttling."""
@@ -286,6 +356,50 @@ class NestSessionManager:
 
         await self._async_call_google()
 
+    async def _async_keep_google_credentials_warm(self) -> bool:
+        """Exercise the Google credentials while the Nest session is still valid.
+
+        Google rotates the auth cookies and only honours superseded values for
+        a limited grace window, while Nest issues sessions lasting weeks, so
+        the cookies have to be exercised on their own cadence. This is best
+        effort: the Nest session still works, so a failure here must not
+        interrupt updates or commands. It is retried on its own backoff.
+        Caller must hold the lock. Returns True when the refresh succeeded.
+        """
+        try:
+            if await self._async_call_google():
+                return True
+        except BadCredentialsException:
+            # Retrying dead credentials every hour only adds load; the next
+            # Nest re-authentication surfaces this as a reauth request.
+            self._keep_warm_disabled = True
+            LOGGER.warning(
+                "Google rejected the stored credentials. Updates continue until "
+                "the current Nest session expires (%s); re-authenticate the "
+                "integration before then to avoid an interruption",
+                self._client.nest_session.expires_in,
+            )
+            return False
+        except Exception as err:  # noqa: BLE001 - any failure is retried later
+            self._schedule_keep_warm_retry(repr(err))
+            return False
+
+        self._schedule_keep_warm_retry("no usable token")
+        return False
+
+    def _schedule_keep_warm_retry(self, reason: str) -> None:
+        self._google_retry_failures += 1
+        idx = min(self._google_retry_failures, len(GOOGLE_REFRESH_RETRY_INTERVALS))
+        delay = GOOGLE_REFRESH_RETRY_INTERVALS[idx - 1] * random.uniform(  # noqa: S311
+            0.8, 1.2
+        )
+        self._google_next_refresh_at = time.time() + delay
+        LOGGER.debug(
+            "Refreshing Google credentials failed (%s); retrying in %d minutes",
+            reason,
+            delay // 60,
+        )
+
     def _has_valid_session(self) -> bool:
         """Return True if the current Nest session is not (nearly) expired."""
         return bool(
@@ -296,12 +410,19 @@ class NestSessionManager:
         )
 
     async def ensure_session(self) -> None:
-        """Ensure a valid Nest session exists, refreshing if needed."""
-        if self._has_valid_session():
+        """Ensure a valid Nest session, keeping the Google credentials warm."""
+        if self._has_valid_session() and not self._keep_warm_due():
             return
 
+        # Keep-warm takes the lock too: concurrent refreshes would each rotate
+        # the cookies while only the last response survives.
         async with self._refresh_lock:
             if self._has_valid_session():
+                if (
+                    self._keep_warm_due()
+                    and await self._async_keep_google_credentials_warm()
+                ):
+                    await self._async_persist(self._client.nest_session)
                 return
 
             await self._async_refresh_session()
@@ -375,5 +496,6 @@ class NestSessionManager:
             {
                 "nest_session": nest_session.to_dict(),
                 "transport_url": self._client.transport_url,
+                "google_refreshed_at": self._google_refreshed_at,
             }
         )
