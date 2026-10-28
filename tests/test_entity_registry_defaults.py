@@ -2,7 +2,10 @@
 
 import pytest
 
-from custom_components.nest_protect.binary_sensor import BINARY_SENSOR_DESCRIPTIONS
+from custom_components.nest_protect.binary_sensor import (
+    BINARY_SENSOR_DESCRIPTIONS,
+    CONNECTIVITY_DESCRIPTION,
+)
 from custom_components.nest_protect.sensor import SENSOR_DESCRIPTIONS
 
 DISABLED_BY_DEFAULT = {
@@ -32,7 +35,11 @@ ENABLED_BY_DEFAULT = {
     "auto_away",
 }
 
-DESCRIPTIONS = [*BINARY_SENSOR_DESCRIPTIONS, *SENSOR_DESCRIPTIONS]
+DESCRIPTIONS = [
+    *BINARY_SENSOR_DESCRIPTIONS,
+    CONNECTIVITY_DESCRIPTION,
+    *SENSOR_DESCRIPTIONS,
+]
 
 
 @pytest.mark.parametrize("key", sorted(DISABLED_BY_DEFAULT))

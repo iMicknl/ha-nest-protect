@@ -13,14 +13,20 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
+    PERCENTAGE,
+    UnitOfElectricPotential,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
+from homeassistant.util import dt as dt_util
 
 from . import NestProtectConfigEntry
-from .entity import NestDescriptiveEntity
+from .entity import NestDescriptiveEntity, NestHomeEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
 
@@ -38,6 +44,21 @@ def smoke_co_status_to_state(state: int) -> str | None:
     """Convert the raw smoke/CO status code to an enum state."""
     # An unrecognised code must surface as unknown, never as a false "ok".
     return SMOKE_CO_STATUS_TO_STATE.get(state)
+
+
+def utc_secs_to_datetime(state: int) -> datetime.datetime | None:
+    """Convert epoch seconds to an aware UTC datetime."""
+    # Nest reports 0 when the event never happened (e.g. no self-test yet).
+    if not state:
+        return None
+    return dt_util.utc_from_timestamp(state)
+
+
+def utc_secs_to_date(state: int) -> datetime.date | None:
+    """Convert epoch seconds to its UTC calendar date."""
+    if (value := utc_secs_to_datetime(state)) is None:
+        return None
+    return value.date()
 
 
 def milli_volt_to_percentage(state: int):
@@ -72,10 +93,18 @@ def milli_volt_to_percentage(state: int):
 class NestProtectSensorDescription(SensorEntityDescription):
     """Class to describe an Nest Protect sensor."""
 
-    value_fn: Callable[[Any], StateType] | None = None
+    value_fn: Callable[[Any], StateType | datetime.date] | None = None
     bucket_type: BucketType | None = (
         None  # used to filter out sensors that are not supported by the device
     )
+    # Bucket field to read when it differs from `key`; `key` must stay unique
+    # because it is also the unique_id suffix.
+    value_key: str | None = None
+
+    @property
+    def source_key(self) -> str:
+        """Return the bucket field this sensor reads."""
+        return self.value_key or self.key
 
 
 SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
@@ -88,16 +117,6 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         bucket_type=BucketType.KRYPTONITE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    # TODO Due to duplicate keys, this sensor is not available yet
-    # NestProtectSensorDescription(
-    #     key="battery_level",
-    #     name="Battery Voltage",
-    #     value_fn=lambda state: round(state / 1000, 3),
-    #     device_class=SensorDeviceClass.BATTERY,
-    #     native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-    #     entity_category=EntityCategory.DIAGNOSTIC,
-    #     bucket_type=BucketType.TOPAZ,
-    # ),
     NestProtectSensorDescription(
         key="battery_level",
         translation_key="battery_level",
@@ -109,25 +128,38 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         state_class=SensorStateClass.MEASUREMENT,
     ),
     NestProtectSensorDescription(
+        key="battery_voltage",
+        translation_key="battery_voltage",
+        value_key="battery_level",
+        value_fn=lambda state: round(state / 1000, 3),
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        suggested_display_precision=3,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        bucket_type=BucketType.TOPAZ,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    NestProtectSensorDescription(
         key="replace_by_date_utc_secs",
         translation_key="replace_by_date_utc_secs",
-        value_fn=datetime.datetime.utcfromtimestamp,
+        value_fn=utc_secs_to_date,
         device_class=SensorDeviceClass.DATE,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     NestProtectSensorDescription(
         key="last_audio_self_test_end_utc_secs",
         translation_key="last_audio_self_test_end_utc_secs",
-        value_fn=datetime.datetime.utcfromtimestamp,
-        device_class=SensorDeviceClass.DATE,
+        value_fn=utc_secs_to_datetime,
+        device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
     NestProtectSensorDescription(
         key="latest_manual_test_end_utc_secs",
         translation_key="latest_manual_test_end_utc_secs",
-        value_fn=datetime.datetime.utcfromtimestamp,
-        device_class=SensorDeviceClass.DATE,
+        value_fn=utc_secs_to_datetime,
+        device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
@@ -155,7 +187,34 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         options=list(SMOKE_CO_STATUS_TO_STATE.values()),
         icon="mdi:molecule-co",
     ),
+    # A latched peak rather than a live reading, so no state_class.
+    NestProtectSensorDescription(
+        key="co_previous_peak",
+        translation_key="co_previous_peak",
+        device_class=SensorDeviceClass.CO,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     # TODO Add Color Status (gray, green, yellow, red)
+]
+
+# MEASUREMENT rather than TOTAL: these count currently open issues and drop
+# back when they are resolved, they never accumulate.
+HOME_SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
+    SensorEntityDescription(
+        key="total_critical_failures",
+        translation_key="total_critical_failures",
+        icon="mdi:alert-octagon",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SensorEntityDescription(
+        key="total_warnings",
+        translation_key="total_warnings",
+        icon="mdi:alert",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
 ]
 
 
@@ -167,20 +226,25 @@ async def async_setup_entry(
     """Set up the Nest Protect sensors from a config entry."""
 
     data = entry.runtime_data
-    entities: list[NestProtectSensor] = []
+    entities: list[NestProtectSensor | NestHomeSensor] = []
 
     for device in data.devices.values():
-        supported_keys: dict[str, NestProtectSensorDescription] = {
-            description.key: description
-            for description in SENSOR_DESCRIPTIONS
-            if (not description.bucket_type or device.type == description.bucket_type)
-        }
-
-        for key in device.value:
-            if description := supported_keys.get(key):
+        for description in SENSOR_DESCRIPTIONS:
+            if (
+                not description.bucket_type or device.type == description.bucket_type
+            ) and description.source_key in device.value:
                 entities.append(
                     NestProtectSensor(device, description, data.areas, data.client)
                 )
+
+    for safety_summary in data.safety_summaries.values():
+        home_name = data.structure_names.get(
+            safety_summary.object_key.removeprefix("safety_summary.")
+        )
+        entities.extend(
+            NestHomeSensor(safety_summary, description, home_name, data.client)
+            for description in HOME_SENSOR_DESCRIPTIONS
+        )
 
     async_add_devices(entities)
 
@@ -194,9 +258,9 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     entity_description: NestProtectSensorDescription
 
     @property
-    def native_value(self) -> StateType | datetime.datetime:
+    def native_value(self) -> StateType | datetime.date:
         """Return the state of the sensor."""
-        state = self.bucket.value.get(self.entity_description.key)
+        state = self.bucket.value.get(self.entity_description.source_key)
         if state is None:
             return None
 
@@ -204,3 +268,12 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
             return self.entity_description.value_fn(state)
 
         return state
+
+
+class NestHomeSensor(NestHomeEntity, SensorEntity):
+    """Representation of a Nest home sensor."""
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self.bucket.value.get(self.entity_description.key)

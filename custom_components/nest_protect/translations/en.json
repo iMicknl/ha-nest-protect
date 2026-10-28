@@ -2,7 +2,9 @@
   "config": {
     "abort": {
       "already_configured": "Account is already configured",
-      "reauth_successful": "Re-authentication successful!"
+      "reauth_successful": "Re-authentication successful!",
+      "reconfigure_successful": "Reconfiguration was successful",
+      "wrong_account": "The credentials belong to a different Nest account than the one configured. Sign in with the original account, or add the other account as a new entry."
     },
     "error": {
       "cannot_connect": "Failed to connect",
@@ -61,6 +63,9 @@
       "heat_status": {
         "name": "Heat status"
       },
+      "hushed_state": {
+        "name": "Alarm hushed"
+      },
       "component_speaker_test_passed": {
         "name": "Speaker test"
       },
@@ -91,6 +96,12 @@
       "component_hum_test_passed": {
         "name": "Humidity test"
       },
+      "component_als_test_passed": {
+        "name": "Ambient light sensor test"
+      },
+      "component_temp_test_passed": {
+        "name": "Temperature sensor test"
+      },
       "removed_from_base": {
         "name": "Removed from base"
       },
@@ -104,6 +115,9 @@
     "sensor": {
       "battery_level": {
         "name": "Battery level"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
       },
       "replace_by_date_utc_secs": {
         "name": "Replace by"
@@ -134,6 +148,15 @@
           "warning": "Warning",
           "emergency": "Emergency"
         }
+      },
+      "co_previous_peak": {
+        "name": "CO previous peak"
+      },
+      "total_critical_failures": {
+        "name": "Safety critical failures"
+      },
+      "total_warnings": {
+        "name": "Safety warnings"
       }
     },
     "select": {

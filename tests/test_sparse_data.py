@@ -64,7 +64,10 @@ async def test_unknown_power_source_does_not_abort_binary_platform(hass, missing
     entry = SimpleNamespace(
         entry_id="test",
         runtime_data=SimpleNamespace(
-            devices={device.object_key: device}, areas={}, client=MagicMock()
+            devices={device.object_key: device},
+            widget_tracks={},
+            areas={},
+            client=MagicMock(),
         ),
     )
     add_entities = MagicMock()
@@ -72,7 +75,10 @@ async def test_unknown_power_source_does_not_abort_binary_platform(hass, missing
     await async_setup_entry(hass, entry, add_entities)
 
     entities = add_entities.call_args.args[0]
-    assert [entity.entity_description.key for entity in entities] == ["smoke_status"]
+    assert [entity.entity_description.key for entity in entities] == [
+        "smoke_status",
+        "is_online",
+    ]
     assert entities[0].is_on is False
 
 

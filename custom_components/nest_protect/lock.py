@@ -21,12 +21,13 @@ from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
-from .pynest.exceptions import PynestException
+from .pynest.exceptions import NestLockAuthException, PynestException
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
 
 if TYPE_CHECKING:
     from . import NestProtectConfigEntry
+    from .session import NestSessionManager
 
 PARALLEL_UPDATES = 1
 
@@ -101,12 +102,14 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up lock entities. Discovery is event-driven via dispatcher."""
-    grpc_client = entry.runtime_data.grpc_lock_client
+    entry_data = entry.runtime_data
     subscribe_to_lock_discovery(
         hass,
         entry,
         async_add_entities,
-        lambda state: NestLockEntity(grpc_client, state),
+        lambda state: NestLockEntity(
+            entry_data.grpc_lock_client, entry_data.session_manager, state
+        ),
     )
 
 
@@ -117,9 +120,15 @@ class NestLockEntity(LockEntity):
     _attr_should_poll = False
     _attr_name = None  # The lock is the primary feature of the device
 
-    def __init__(self, grpc_client: GrpcLockClient, lock_state: LockState) -> None:
+    def __init__(
+        self,
+        grpc_client: GrpcLockClient,
+        session_manager: NestSessionManager,
+        lock_state: LockState,
+    ) -> None:
         """Initialize."""
         self._grpc_client = grpc_client
+        self._session_manager = session_manager
         self._lock_state = lock_state
         self._attr_unique_id = f"lock_{lock_state.resource_id}"
         self._attr_attribution = ATTRIBUTION
@@ -193,21 +202,25 @@ class NestLockEntity(LockEntity):
             )
         self.async_write_ha_state()
 
+    async def _send_lock_command(self, lock: bool) -> None:
+        await self._session_manager.async_run_command(
+            lambda: self._grpc_client.send_lock_command(
+                self._lock_state.resource_id, lock=lock
+            ),
+            NestLockAuthException,
+        )
+
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the lock."""
         try:
-            await self._grpc_client.send_lock_command(
-                self._lock_state.resource_id, lock=True
-            )
+            await self._send_lock_command(lock=True)
         except (ClientError, TimeoutError, PynestException) as err:
             raise HomeAssistantError(f"Failed to lock: {err}") from err
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the lock."""
         try:
-            await self._grpc_client.send_lock_command(
-                self._lock_state.resource_id, lock=False
-            )
+            await self._send_lock_command(lock=False)
         except (ClientError, TimeoutError, PynestException) as err:
             raise HomeAssistantError(f"Failed to unlock: {err}") from err
 
