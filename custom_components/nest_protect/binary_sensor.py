@@ -54,6 +54,12 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
+        key="hushed_state",
+        translation_key="hushed_state",
+        icon="mdi:bell-sleep",
+        value_fn=lambda state: state,
+    ),
+    NestProtectBinarySensorDescription(
         key="component_speaker_test_passed",
         translation_key="component_speaker_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
