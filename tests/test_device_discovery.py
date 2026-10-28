@@ -294,6 +294,19 @@ async def test_remove_device_blocked_while_reported(hass):
         ), identifier
 
 
+async def test_remove_home_blocked_while_reported(hass):
+    """A home with a safety summary the account still reports cannot be removed."""
+    entry = _loaded_entry_with_devices(hass)
+    hass.data[DOMAIN][entry.entry_id].safety_summaries = {
+        "safety_summary.HOME": Bucket("safety_summary.HOME", 1, 1, {})
+    }
+    device = _register_device(
+        hass, entry, "safety_summary.HOME", "safety_summary.HOME-total_warnings"
+    )
+
+    assert not await async_remove_config_entry_device(hass, entry, device)
+
+
 async def test_remove_device_allowed_when_gone(hass):
     """Devices the account no longer reports can be removed."""
     entry = _loaded_entry_with_devices(hass)

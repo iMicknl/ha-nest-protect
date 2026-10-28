@@ -479,6 +479,25 @@ async def test_send_lock_command_raises_when_gateway_rejects_the_command():
         await client.send_lock_command("X", lock=True)
 
 
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (16, "Request had invalid authentication credentials"),
+        (16, ""),
+        (7, "Authentication failed"),
+        (7, "authentication failed: token expired"),
+    ],
+)
+async def test_send_lock_command_classifies_auth_statuses(code, message):
+    resp = v1_pb2.SendCommandResponse()
+    resp.status.code = code
+    resp.status.message = message
+    client = _make_client(_FakeResponse(body=resp.SerializeToString()))
+
+    with pytest.raises(NestLockAuthException, match=f"code={code}"):
+        await client.send_lock_command("X", lock=True)
+
+
 # -- observe frame parsing ---------------------------------------------------
 
 
@@ -634,6 +653,33 @@ def test_parse_observe_buffer_surfaces_a_gateway_status_frame(caplog):
     assert client._parse_observe_buffer(buffer) == []
     assert "code=7" in caplog.text
     assert "permission denied" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("code", "message"), [(16, "unauthenticated"), (7, "Authentication failed")]
+)
+def test_parse_observe_buffer_raises_on_an_auth_status_frame(code, message):
+    body = streambody_pb2.StreamBody()
+    body.status.code = code
+    body.status.message = message
+    buffer = bytearray(body.SerializeToString())
+
+    with pytest.raises(NestLockAuthException, match=f"code={code}"):
+        _make_client()._parse_observe_buffer(buffer)
+
+
+async def test_observe_locks_propagates_an_auth_status_frame(recorded_sleeps):
+    # The gateway can accept the HTTP request and only reject the session in
+    # the stream body; that must reach the caller's session-refresh path.
+    body = streambody_pb2.StreamBody()
+    body.status.code = 16
+    client = _make_client(_FakeResponse(chunks=[body.SerializeToString()]))
+
+    with pytest.raises(NestLockAuthException):
+        async for _ in client.observe_locks():
+            pass
+
+    assert recorded_sleeps == []
 
 
 def test_parse_observe_buffer_ignores_a_zero_status_frame(caplog):

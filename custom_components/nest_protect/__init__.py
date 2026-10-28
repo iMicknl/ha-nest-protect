@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
+import time
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
     ClientError,
     ClientOSError,
+    ConnectionTimeoutError,
     ServerDisconnectedError,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -24,6 +28,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    BACKOFF_INTERVALS,
     CONF_ACCOUNT_TYPE,
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
@@ -31,8 +36,10 @@ from .const import (
     DOMAIN,
     LOGGER,
     PLATFORMS,
+    RECONNECT_INTERVALS,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
+    SUBSCRIBE_HEALTHY_SECONDS,
 )
 from .lock import discovery_signal, lock_signal
 from .pynest.client import NestClient
@@ -55,6 +62,7 @@ from .pynest.models import (
     WhereBucketValue,
 )
 from .session import NestSessionManager
+from .stream_health import StreamHealth
 
 DEVICE_BUCKET_TYPES = {BucketType.TOPAZ, BucketType.KRYPTONITE}
 
@@ -68,9 +76,14 @@ class HomeAssistantNestProtectData:
     client: NestClient
     session_manager: NestSessionManager
     grpc_lock_client: GrpcLockClient
+    stream_health: StreamHealth
     subscription_task: asyncio.Task | None = None
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
+    connection_failures: int = 0
+    widget_tracks: dict[str, Bucket] = field(default_factory=dict)
+    safety_summaries: dict[str, Bucket] = field(default_factory=dict)
+    structure_names: dict[str, str] = field(default_factory=dict)
     # Device keys from the account's bucket list at setup; None if not returned.
     listed_device_keys: set[str] | None = None
 
@@ -109,12 +122,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
 
-    session_manager = NestSessionManager(client=client, store=store)
+    session_manager = NestSessionManager(
+        client=client,
+        store=store,
+        on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
+    )
 
     try:
         data = await session_manager.async_setup()
     except (TimeoutError, ClientError) as exception:
         raise ConfigEntryNotReady from exception
+    except NestServiceException as exception:
+        raise ConfigEntryNotReady(
+            f"Nest service temporarily unavailable: {exception}"
+        ) from exception
     except BadCredentialsException as exception:
         raise ConfigEntryAuthFailed from exception
     except Exception as exception:  # pylint: disable=broad-except
@@ -124,17 +145,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if data is None:
         raise ConfigEntryAuthFailed("No credentials available")
 
-    # Update cookies in config entry if Google returned refreshed ones
-    _persist_refreshed_cookies(hass, entry, client, session_manager)
-
     device_buckets: list[Bucket] = []
+    widget_tracks: dict[str, Bucket] = {}
+    safety_summary_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
+    structure_names: dict[str, str] = {}
     listed_device_keys: set[str] | None = None
 
     for bucket in data.updated_buckets:
         if bucket.type in DEVICE_BUCKET_TYPES:
             device_buckets.append(bucket)
 
+        if bucket.type == BucketType.WIDGET_TRACK:
+            widget_tracks[bucket.object_key] = bucket
+        if bucket.type == BucketType.SAFETY_SUMMARY:
+            safety_summary_buckets.append(bucket)
+
+        if bucket.type == BucketType.STRUCTURE and (name := bucket.value.get("name")):
+            structure_names[bucket.object_key.removeprefix("structure.")] = name
         if bucket.type == BucketType.BUCKETS:
             listed_device_keys = _listed_device_keys(bucket.value)
 
@@ -147,15 +175,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     devices: dict[str, Bucket] = {b.object_key: b for b in device_buckets}
 
+    # Nest returns a safety summary for every home, including homes without a
+    # Protect, where it would only ever report zeros.
+    protect_structure_ids = {
+        b.value.get("structure_id")
+        for b in device_buckets
+        if b.type == BucketType.TOPAZ
+    }
+    safety_summaries: dict[str, Bucket] = {
+        b.object_key: b
+        for b in safety_summary_buckets
+        if b.object_key.removeprefix("safety_summary.") in protect_structure_ids
+    }
+
     entry_data = HomeAssistantNestProtectData(
         devices=devices,
         areas=areas,
         client=client,
         session_manager=session_manager,
         grpc_lock_client=GrpcLockClient(client),
+        widget_tracks=widget_tracks,
+        safety_summaries=safety_summaries,
+        structure_names=structure_names,
+        stream_health=StreamHealth(hass, entry.entry_id),
         listed_device_keys=listed_device_keys,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+    # The first data fetch above counts as a response and starts the deadline.
+    entry_data.stream_health.async_record_response()
+    entry.async_on_unload(entry_data.stream_health.async_stop)
 
     _async_remove_stale_devices(hass, entry, entry_data)
 
@@ -209,7 +257,10 @@ def _is_reported_device(
         return True
 
     # Sparse responses can omit the serial number the device was registered with.
-    return not _device_bucket_keys(hass, device.id).isdisjoint(entry_data.devices)
+    # Homes are devices too, keyed by their safety summary bucket.
+    return not _device_bucket_keys(hass, device.id).isdisjoint(
+        entry_data.devices.keys() | entry_data.safety_summaries.keys()
+    )
 
 
 @callback
@@ -255,8 +306,9 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
     while True:
         try:
             async for batch in entry_data.grpc_lock_client.observe_locks():
-                # A working stream clears failures recorded by either transport.
-                sm.record_success()
+                # A working stream clears auth failures recorded by either
+                # transport; REST parse errors are the subscriber's own concern.
+                sm.record_auth_success()
                 new_locks: dict[str, LockState] = {}
                 for resource_id, lock_state in batch.items():
                     previous = cache.get(resource_id)
@@ -274,12 +326,12 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
-            sm.record_failure()
+            sm.record_auth_failure()
             if sm.should_trigger_reauth:
                 LOGGER.warning(
                     "Lock observer: %d consecutive auth failures, triggering "
                     "re-authentication",
-                    sm.consecutive_failures,
+                    sm.consecutive_auth_failures,
                 )
                 entry.async_start_reauth(hass)
                 return
@@ -327,21 +379,17 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await store.async_remove()
 
 
+@callback
 def _persist_refreshed_cookies(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    client: NestClient,
-    sm: NestSessionManager,
+    hass: HomeAssistant, entry: ConfigEntry, new_cookies: str
 ) -> None:
-    """Persist Google-rotated cookies back to the config entry and client.
+    """Persist Google-rotated cookies back to the config entry.
 
     Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
-    Without writing them back, a HA restart would use stale cookies and force
-    re-authentication; the in-memory client also needs the update so the next
-    refresh in the same HA session uses fresh cookies.
+    Without writing them back, a setup retry or HA restart would use stale
+    cookies and eventually force re-authentication.
     """
-    new_cookies = sm.refreshed_cookies
-    if not new_cookies or new_cookies == entry.data.get(CONF_COOKIES):
+    if new_cookies == entry.data.get(CONF_COOKIES):
         return
 
     LOGGER.debug("Persisting refreshed Nest cookies")
@@ -349,7 +397,6 @@ def _persist_refreshed_cookies(
         entry,
         data={**entry.data, CONF_COOKIES: new_cookies},
     )
-    client.cookies = new_cookies
 
 
 async def _async_recover_session(
@@ -373,14 +420,11 @@ async def _async_recover_session(
         PynestException,
     ) as err:
         LOGGER.debug("Session recovery failed; retrying background updates: %s", err)
+    except Exception:
+        # Escaping here would end the background task with nothing to restart it.
+        LOGGER.exception("Unexpected error during session recovery; retrying later")
 
-    if entry.entry_id not in hass.data.get(DOMAIN, {}):
-        return False
-
-    _persist_refreshed_cookies(
-        hass, entry, entry_data.client, entry_data.session_manager
-    )
-    return True
+    return entry.entry_id in hass.data.get(DOMAIN, {})
 
 
 def _register_subscribe_task(
@@ -397,6 +441,38 @@ def _register_subscribe_task(
     return task
 
 
+async def _async_resubscribe(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    entry_data: HomeAssistantNestProtectData,
+    data: FirstDataAPIResponse,
+    started: float,
+) -> None:
+    """Re-subscribe after a connection error, backing off when errors come fast.
+
+    A long-poll ending in a timeout or disconnect is the normal cycle and
+    re-subscribes straight away. An attempt that fails quickly (offline, DNS,
+    connection reset, a failing Google refresh) would otherwise retry in a
+    tight loop, spinning the CPU and hammering Google or Nest.
+    """
+    if time.monotonic() - started >= SUBSCRIBE_HEALTHY_SECONDS:
+        entry_data.connection_failures = 0
+    else:
+        entry_data.connection_failures += 1
+        idx = min(entry_data.connection_failures, len(RECONNECT_INTERVALS)) - 1
+        # Jitter keeps installs that lost connectivity together from
+        # reconnecting in lockstep.
+        delay = RECONNECT_INTERVALS[idx] * random.uniform(0.8, 1.2)  # noqa: S311
+        LOGGER.debug(
+            "Subscriber: connection failing, retrying in %.0fs (attempt %d)",
+            delay,
+            entry_data.connection_failures,
+        )
+        await asyncio.sleep(delay)
+
+    _register_subscribe_task(hass, entry, data)
+
+
 async def _async_subscribe_for_data(
     hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
 ):
@@ -406,21 +482,32 @@ async def _async_subscribe_for_data(
 
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     sm = entry_data.session_manager
+    started = time.monotonic()
 
     try:
         await asyncio.sleep(0)
 
         await sm.ensure_session()
-        _persist_refreshed_cookies(hass, entry, entry_data.client, sm)
 
-        result = await entry_data.client.subscribe_for_data(
-            entry_data.client.nest_session.access_token,
-            entry_data.client.nest_session.userid,
-            data.service_urls["urls"]["transport_url"],
-            data.updated_buckets,
-        )
+        try:
+            result = await entry_data.client.subscribe_for_data(
+                entry_data.client.nest_session.access_token,
+                entry_data.client.nest_session.userid,
+                entry_data.client.transport_url,
+                data.updated_buckets,
+            )
+        except ConnectionTimeoutError:
+            # Subclass of TimeoutError, but an unreachable host proves nothing.
+            raise
+        except TimeoutError:
+            # Only a long-poll running out its timeout proves Nest is reachable;
+            # a timed-out session refresh above must not reset the deadline.
+            entry_data.stream_health.async_record_response()
+            raise
 
-        sm.record_success()
+        sm.record_auth_success()
+        entry_data.connection_failures = 0
+        entry_data.stream_health.async_record_response()
 
         devices_changed = False
 
@@ -455,6 +542,18 @@ async def _async_subscribe_for_data(
 
                 async_dispatcher_send(hass, key, kryptonite)
 
+            # Nest Protect connectivity
+            if key.startswith("widget_track."):
+                widget_track = Bucket(**bucket)
+                entry_data.widget_tracks[key] = widget_track
+
+                async_dispatcher_send(hass, key, widget_track)
+            # Home safety summaries
+            if key in entry_data.safety_summaries:
+                safety_summary = Bucket(**bucket)
+                entry_data.safety_summaries[key] = safety_summary
+
+                async_dispatcher_send(hass, key, safety_summary)
         if devices_changed:
             # Setup rebuilds the device list and records the new bucket list,
             # so the reload only repeats if the account changes again.
@@ -482,36 +581,53 @@ async def _async_subscribe_for_data(
             for bucket in objects
         ]
 
+        sm.record_success()
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
+        await _async_resubscribe(hass, entry, entry_data, data, started)
+
+    # Subclass of TimeoutError, so it must be caught before the long-poll timeout.
+    # Counted apart from the session manager so an outage can't push a later
+    # 401 over the reauth threshold.
+    except ConnectionTimeoutError:
+        entry_data.connection_failures += 1
+        idx = min(entry_data.connection_failures, len(BACKOFF_INTERVALS)) - 1
+        LOGGER.debug(
+            "Subscriber: connection timed out, retrying in %ds (attempt %d).",
+            BACKOFF_INTERVALS[idx],
+            entry_data.connection_failures,
+        )
+        await asyncio.sleep(BACKOFF_INTERVALS[idx])
         _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
         sm.record_success()
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except ClientConnectorError:
         LOGGER.debug("Subscriber: cannot connect to host.")
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except ClientOSError:
         LOGGER.debug("Subscriber: connection reset.")
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except EmptyResponseException:
         LOGGER.debug("Subscriber: Nest Service sent empty response.")
-        _register_subscribe_task(hass, entry, data)
+        # A 200 without a body still proves the long-poll round trip works.
+        entry_data.stream_health.async_record_response()
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
-        sm.record_failure()
+        sm.record_auth_failure()
 
         if sm.should_trigger_reauth:
             LOGGER.warning(
                 "Subscriber: %d consecutive auth failures, triggering re-authentication",
-                sm.consecutive_failures,
+                sm.consecutive_auth_failures,
             )
             entry.async_start_reauth(hass)
             return
@@ -519,7 +635,7 @@ async def _async_subscribe_for_data(
         LOGGER.debug(
             "Subscriber: retrying in %ds (attempt %d)",
             sm.backoff_interval,
-            sm.consecutive_failures,
+            sm.consecutive_auth_failures,
         )
         await asyncio.sleep(sm.backoff_interval)
 
@@ -552,12 +668,12 @@ async def _async_subscribe_for_data(
         raise
 
     except Exception:  # pylint: disable=broad-except
-        sm.record_failure()
+        sm.record_error()
         LOGGER.exception(
             "Unknown exception. Please create an issue on GitHub with your logfile. Updates paused for %ds.",
-            sm.backoff_interval,
+            sm.error_backoff_interval,
         )
-        await asyncio.sleep(sm.backoff_interval)
+        await asyncio.sleep(sm.error_backoff_interval)
         _register_subscribe_task(hass, entry, data)
 
 
