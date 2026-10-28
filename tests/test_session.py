@@ -70,6 +70,7 @@ async def test_restore_valid_session():
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
+    client.master_token = None
     client.get_first_data = AsyncMock(return_value=_make_first_data())
     client.get_access_token_from_cookies = AsyncMock()
     client.get_access_token_from_refresh_token = AsyncMock()
@@ -104,10 +105,11 @@ async def test_restore_expired_session_falls_through():
 
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
+    client.master_token = None
     client.get_access_token_from_cookies = AsyncMock(
         return_value=MagicMock(access_token="new-google-token")
     )
@@ -144,10 +146,11 @@ async def test_restore_rejected_session_falls_through():
 
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
+    client.master_token = None
     # First call with persisted token raises 401, second call succeeds
     client.get_first_data = AsyncMock(
         side_effect=[
@@ -184,10 +187,11 @@ async def test_no_persisted_session_uses_cookies():
     """Test that no stored data triggers cookie auth."""
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
+    client.master_token = None
     client.get_access_token_from_cookies = AsyncMock(
         return_value=MagicMock(access_token="google-token")
     )
@@ -650,12 +654,13 @@ async def test_record_success_resets_both_counters():
 ROTATED_COOKIES = "SID=rotated; HSID=test"
 
 
-def _make_rotating_client() -> MagicMock:
+def _make_rotating_client() -> NestClient:
     """Create a client whose cookie exchange rotates cookies but Nest auth fails."""
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test; HSID=test"
     client.refresh_token = None
+    client.master_token = None
     client.nest_session = None
     client.auth = None
     client.refreshed_cookies = None
@@ -667,7 +672,6 @@ def _make_rotating_client() -> MagicMock:
         return client.auth
 
     client.get_access_token_from_cookies = AsyncMock(side_effect=rotate)
-    client.get_access_token = AsyncMock(side_effect=rotate)
     client.authenticate = AsyncMock(side_effect=PynestException("session failed"))
     return client
 
@@ -1045,7 +1049,7 @@ async def test_throttling_pauses_all_google_refreshes(retry_after, expected_paus
 @pytest.mark.asyncio
 async def test_startup_google_request_is_counted():
     """Startup authentication shows up in the refresh statistics."""
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refreshed_cookies = None
@@ -1064,7 +1068,7 @@ async def test_startup_google_request_is_counted():
 @pytest.mark.asyncio
 async def test_startup_google_failure_is_counted():
     """A failed startup request is counted as an attempt and a failure."""
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refreshed_cookies = None

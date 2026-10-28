@@ -201,25 +201,17 @@ class NestSessionManager:
         )
 
     async def _async_authenticate_with_credentials(self) -> NestResponse | None:
-        """Authenticate using cookies or refresh_token.
+        """Authenticate using a master token, cookies or refresh_token.
 
         Returns a NestResponse on success, None if no credentials are available.
         Raises authentication exceptions from the underlying client on failure.
         """
-        if self._client.issue_token and self._client.cookies:
-            with self._report_rotated_cookies():
-                auth = await self._async_track_google_request(
-                    self._client.get_access_token_from_cookies(
-                        self._client.issue_token, self._client.cookies
-                    )
-                )
-        elif self._client.refresh_token:
+        with self._report_rotated_cookies():
             auth = await self._async_track_google_request(
-                self._client.get_access_token_from_refresh_token(
-                    self._client.refresh_token
-                )
+                self._client.get_access_token()
             )
-        else:
+
+        if auth is None:
             return None
 
         self._record_google_success()

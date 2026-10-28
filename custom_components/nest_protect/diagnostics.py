@@ -11,14 +11,26 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntry
 
 from . import HomeAssistantNestProtectData, NestProtectConfigEntry
-from .const import CONF_COOKIES, CONF_ISSUE_TOKEN, CONF_REFRESH_TOKEN, DOMAIN, LOGGER
+from .const import (
+    CONF_ANDROID_ID,
+    CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
+    CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
+    CONF_REFRESH_TOKEN,
+    DOMAIN,
+    LOGGER,
+)
 from .pynest.client import NestClient
 from .pynest.const import FULL_NEST_REQUEST
 from .pynest.models import FirstDataAPIResponse
 
 TO_REDACT = [
+    CONF_ANDROID_ID,
     CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
     CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
     CONF_REFRESH_TOKEN,
     "access_token",
     "address_lines",

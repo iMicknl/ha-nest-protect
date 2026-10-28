@@ -28,7 +28,8 @@
   "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
   "requirements": [
     "protobuf>=6.31.1",
-    "googleapis-common-protos>=1.56.0"
+    "googleapis-common-protos>=1.56.0",
+    "gpsoauth>=2.0.0"
   ],
   "version": "0.5.0"
 }

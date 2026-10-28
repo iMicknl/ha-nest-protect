@@ -30,6 +30,31 @@ DEFAULT_NEST_ENVIRONMENT = NEST_ENVIRONMENTS[Environment.PRODUCTION]
 # / URL for refresh token generation
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
+# Android "master token" flow. This reproduces how the Nest/Google mobile apps stay
+# logged in: a master token (aas_et/...) with no fixed lifetime, which still ends
+# on a password change, revocation or a Google security logout. From it we mint
+# short-lived nest-account access tokens. The app package + signing cert are the Google Home app's (the same ones
+# used by glocaltokens); only the requested service/scope is Nest-specific.
+EMBEDDED_SETUP_URL = "https://accounts.google.com/EmbeddedSetup"
+GOOGLE_HOME_APP = "com.google.android.apps.chromecast.app"
+GOOGLE_OAUTH_CLIENT_SIG = "24bb24c05e47e0aefa68a58a766179d9b613a600"
+NEST_ACCOUNT_OAUTH_SERVICE = "oauth2:https://www.googleapis.com/auth/nest-account"
+# Google auth error codes meaning the master token can no longer be used (password
+# changed, access revoked, account problems). Others, such as ServiceUnavailable,
+# are transient and retried without asking the user to re-authenticate.
+MASTER_TOKEN_CREDENTIAL_ERRORS = frozenset(
+    {
+        "BadAuthentication",
+        "NeedsBrowser",
+        "NotVerified",
+        "TermsNotAgreed",
+        "CaptchaRequired",
+        "AccountDeleted",
+        "AccountDisabled",
+        "ServiceDisabled",
+    }
+)
+
 # App launch API endpoint
 APP_LAUNCH_URL_FORMAT = "{host}/api/0.1/user/{user_id}/app_launch"
 NEST_AUTH_URL_JWT = "https://nestauthproxyservice-pa.googleapis.com/v1/issue_jwt"

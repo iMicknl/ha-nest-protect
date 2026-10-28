@@ -10,28 +10,41 @@ from typing import Any
 import voluptuous as vol
 from aiohttp import ClientError
 from homeassistant import config_entries
-from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    ConfigEntry,
+)
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import (
     CONF_ACCOUNT_TYPE,
+    CONF_ANDROID_ID,
     CONF_AUTH_CODE,
     CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
     CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
+    CONF_OAUTH_TOKEN,
     CONF_REFRESH_TOKEN,
+    CREDENTIAL_KEYS,
     DOMAIN,
     LOGGER,
 )
 from .pynest.client import NestClient
-from .pynest.const import NEST_ENVIRONMENTS
+from .pynest.const import EMBEDDED_SETUP_URL, NEST_ENVIRONMENTS
 from .pynest.enums import Environment
-from .pynest.exceptions import BadCredentialsException, NestServiceException
+from .pynest.exceptions import (
+    BadCredentialsException,
+    NestServiceException,
+)
 
 DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
     "issue_token_prefix": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken",
     "accounts_url": "https://accounts.google.com/",
+    "embedded_setup_url": EMBEDDED_SETUP_URL,
     # Pinned to a specific release rather than "latest", which may resolve to a
     # pre-release that is incompatible with this version of the integration.
     "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/download/v0.5.0/nest-auth-helper.zip",
@@ -44,6 +57,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 3
 
     _default_account_type: Environment = Environment.PRODUCTION
+    # Email, oauth_token, android_id and master_token of the last exchange.
+    _exchanged_master_token: tuple[str, str, str, str] | None = None
+    _master_token_client: NestClient | None = None
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -102,36 +118,53 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         elif refresh_token:
             auth = await client.get_access_token_from_refresh_token(refresh_token)
 
-        nest = await client.authenticate(auth.access_token)
-        data = await client.get_first_data(nest.access_token, nest.userid)
+        user_id, email = await self._async_fetch_account(client, auth.access_token)
 
         if client.refreshed_cookies:
             cookies = client.refreshed_cookies
 
-        email = ""
-        for bucket in data.updated_buckets:
-            key = bucket.object_key
-            if key.startswith("user."):
-                email = bucket.value["email"]
-
-        # Set unique id to user_id (object.key: user.xxxx)
-        await self.async_set_unique_id(nest.user)
+        await self.async_set_unique_id(user_id)
 
         return [issue_token, cookies, email]
+
+    @staticmethod
+    async def _async_fetch_account(
+        client: NestClient, access_token: str
+    ) -> tuple[str, str]:
+        """Sign in to Nest and return the Nest user ID (user.xxxx) and email."""
+        nest = await client.authenticate(access_token)
+        data = await client.get_first_data(nest.access_token, nest.userid)
+
+        email = ""
+        for bucket in data.updated_buckets:
+            if bucket.object_key.startswith("user."):
+                email = bucket.value.get("email", "")
+
+        return nest.user, email
+
+    def _entry_being_updated(self) -> ConfigEntry | None:
+        """Return the entry being reauthenticated or reconfigured, if any."""
+        if self.source == SOURCE_REAUTH:
+            return self._get_reauth_entry()
+        if self.source == SOURCE_RECONFIGURE:
+            return self._get_reconfigure_entry()
+        return None
 
     def _async_create_or_update_entry(
         self, data: dict[str, Any], email: str
     ) -> FlowResult:
         """Create a new entry, or update the entry being reauthenticated/reconfigured."""
-        if self.source not in (SOURCE_REAUTH, SOURCE_RECONFIGURE):
+        entry = self._entry_being_updated()
+        if entry is None:
             self._abort_if_unique_id_configured()
             return self.async_create_entry(title=f"Nest Protect ({email})", data=data)
 
-        entry = (
-            self._get_reauth_entry()
-            if self.source == SOURCE_REAUTH
-            else self._get_reconfigure_entry()
-        )
+        # Setup prefers some credentials over others, so any left over from a
+        # previous method would shadow the ones just entered.
+        data = {
+            **{k: v for k, v in entry.data.items() if k not in CREDENTIAL_KEYS},
+            **data,
+        }
 
         # Entries created before v0.4.0 are keyed by their refresh token instead
         # of the Nest user ID, so the account can't be compared. Adopt the account
@@ -142,11 +175,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ):
                 return self.async_abort(reason="already_configured")
             return self.async_update_reload_and_abort(
-                entry, unique_id=self.unique_id, data_updates=data
+                entry, unique_id=self.unique_id, data=data
             )
 
         self._abort_if_unique_id_mismatch(reason="wrong_account")
-        return self.async_update_reload_and_abort(entry, data_updates=data)
+        return self.async_update_reload_and_abort(entry, data=data)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -177,7 +210,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle auth method selection."""
         if user_input:
-            if user_input["method"] == "extension":
+            method = user_input["method"]
+            if method == "master_token":
+                return await self.async_step_master_token()
+            if method == "extension":
                 return await self.async_step_extension()
             return await self.async_step_account_link()
 
@@ -189,11 +225,106 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         {
                             "extension": "Use the Chrome Extension (recommended)",
                             "manual": "Enter credentials manually",
+                            "master_token": "Master token (experimental)",
                         }
                     ),
                 }
             ),
             description_placeholders=DESCRIPTION_PLACEHOLDERS,
+        )
+
+    async def async_step_master_token(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle authentication via the durable Google master-token flow.
+
+        The user provides their Google email and a one-time ``oauth_token``
+        captured from ``accounts.google.com/EmbeddedSetup``. Home Assistant
+        exchanges it for a master token, which lasts until it is revoked, and
+        stores that. No browser extension or companion service is
+        used; renewal happens entirely inside HA.
+        """
+        errors: dict[str, str] = {}
+        environment = self._default_account_type
+
+        if user_input:
+            email = user_input[CONF_GOOGLE_EMAIL].strip()
+            oauth_token = user_input[CONF_OAUTH_TOKEN].strip()
+            # Keep presenting the same device to Google across reauths, as
+            # ha-google-home does.
+            entry = self._entry_being_updated()
+            android_id = (
+                entry and entry.data.get(CONF_ANDROID_ID)
+            ) or NestClient.generate_android_id()
+            user_id = None
+
+            if not email or not oauth_token:
+                errors["base"] = "invalid_auth"
+
+            if not errors:
+                # Kept across retries, so a gpsoauth call still hanging from the
+                # last attempt blocks a new one instead of abandoning another thread.
+                if self._master_token_client is None:
+                    self._master_token_client = NestClient(
+                        session=async_create_clientsession(self.hass),
+                        environment=NEST_ENVIRONMENTS[environment],
+                    )
+                client = self._master_token_client
+                try:
+                    # Google accepts an oauth_token only once, so a retry after a
+                    # later step failed reuses the master token it was exchanged for.
+                    exchanged = self._exchanged_master_token
+                    if exchanged and exchanged[:2] == (email, oauth_token):
+                        *_, android_id, master_token = exchanged
+                    else:
+                        master_token = await client.exchange_master_token(
+                            oauth_token, email, android_id
+                        )
+                        self._exchanged_master_token = (
+                            email,
+                            oauth_token,
+                            android_id,
+                            master_token,
+                        )
+                    auth = await client.get_access_token_from_master_token(
+                        master_token, email, android_id
+                    )
+                    user_id, account_email = await self._async_fetch_account(
+                        client, auth.access_token
+                    )
+                except TimeoutError, ClientError, NestServiceException:
+                    errors["base"] = "cannot_connect"
+                except BadCredentialsException:
+                    errors["base"] = "invalid_auth"
+                except Exception as exception:  # pylint: disable=broad-except
+                    errors["base"] = "unknown"
+                    LOGGER.exception(exception)
+
+            if not errors and user_id is not None:
+                await self.async_set_unique_id(user_id)
+
+                new_data = {
+                    CONF_MASTER_TOKEN: master_token,
+                    CONF_GOOGLE_EMAIL: email,
+                    CONF_ANDROID_ID: android_id,
+                    CONF_ACCOUNT_TYPE: environment,
+                }
+
+                return self._async_create_or_update_entry(
+                    new_data, account_email or email
+                )
+
+        return self.async_show_form(
+            step_id="master_token",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_GOOGLE_EMAIL): str,
+                    vol.Required(CONF_OAUTH_TOKEN): str,
+                }
+            ),
+            description_placeholders=DESCRIPTION_PLACEHOLDERS,
+            errors=errors,
+            last_step=True,
         )
 
     async def async_step_extension(
