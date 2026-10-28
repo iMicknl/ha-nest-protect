@@ -28,6 +28,9 @@ from . import NestProtectConfigEntry
 from .entity import NestDescriptiveEntity, NestHomeEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
+from .pynest.models import Bucket
+from .pynest.thermostat_models import TemperatureSource, ThermostatState
+from .thermostat import NestThermostatEntity, subscribe_to_thermostat_discovery
 
 PARALLEL_UPDATES = 0
 
@@ -217,6 +220,52 @@ HOME_SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
 ]
 
 
+@dataclass(frozen=True, kw_only=True)
+class NestThermostatSensorDescription(SensorEntityDescription):
+    """Class to describe a Nest thermostat sensor."""
+
+    value_fn: Callable[[ThermostatState], StateType]
+
+
+THERMOSTAT_SENSOR_DESCRIPTIONS: list[NestThermostatSensorDescription] = [
+    NestThermostatSensorDescription(
+        key="backplate_temperature",
+        translation_key="backplate_temperature",
+        value_fn=lambda state: state.backplate_temperature,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    # What the thermostat controls on, which is what Google's SDM API reports.
+    NestThermostatSensorDescription(
+        key="current_temperature",
+        value_fn=lambda state: state.current_temperature,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    NestThermostatSensorDescription(
+        key="current_humidity",
+        value_fn=lambda state: state.current_humidity,
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+]
+
+ACTIVE_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="active_temperature_sensor",
+    translation_key="active_temperature_sensor",
+    icon="mdi:thermometer-check",
+)
+
+# State when the thermostat controls on its own sensor.
+THERMOSTAT_SOURCE_NAME = "Thermostat"
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NestProtectConfigEntry,
@@ -250,6 +299,21 @@ async def async_setup_entry(
     # Battery sensors for any discovered Nest x Yale locks.
     subscribe_to_lock_discovery(hass, entry, async_add_devices, NestLockBatterySensor)
 
+    subscribe_to_thermostat_discovery(
+        hass,
+        entry,
+        async_add_devices,
+        lambda state: [
+            *(
+                NestThermostatSensor(state, description)
+                for description in THERMOSTAT_SENSOR_DESCRIPTIONS
+            ),
+            NestThermostatActiveSensor(
+                state, ACTIVE_SENSOR_DESCRIPTION, data.devices, data.areas
+            ),
+        ],
+    )
+
 
 class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     """Representation of a Nest Protect Sensor."""
@@ -276,3 +340,55 @@ class NestHomeSensor(NestHomeEntity, SensorEntity):
     def native_value(self) -> StateType:
         """Return the state of the sensor."""
         return self.bucket.value.get(self.entity_description.key)
+
+
+class NestThermostatSensor(NestThermostatEntity, SensorEntity):
+    """A reading from a Nest thermostat."""
+
+    entity_description: NestThermostatSensorDescription
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor."""
+        return self.entity_description.value_fn(self._state)
+
+
+class NestThermostatActiveSensor(NestThermostatEntity, SensorEntity):
+    """Which temperature sensors a Nest thermostat currently controls on.
+
+    Google's SDM API reports the resulting temperature without saying where it
+    comes from.
+    """
+
+    def __init__(
+        self,
+        state: ThermostatState,
+        description: SensorEntityDescription,
+        devices: dict[str, Bucket],
+        areas: dict[str, str],
+    ) -> None:
+        """Initialize with the REST devices, to name the selected sensors."""
+        super().__init__(state, description)
+        self._devices = devices
+        self._areas = areas
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the name of the active temperature source."""
+        if self._state.temperature_source is TemperatureSource.BACKPLATE:
+            return THERMOSTAT_SOURCE_NAME
+        if not self._state.active_sensors:
+            return None
+        return ", ".join(
+            sorted(self._sensor_name(sensor) for sensor in self._state.active_sensors)
+        )
+
+    def _sensor_name(self, resource_id: str) -> str:
+        """Name a Nest Temperature Sensor like its own device: label, else room."""
+        sensor_id = resource_id.removeprefix("DEVICE_")
+        if bucket := self._devices.get(f"{BucketType.KRYPTONITE}.{sensor_id}"):
+            if label := bucket.value.get("description"):
+                return label
+            if area := self._areas.get(bucket.value.get("where_id")):
+                return area
+        return sensor_id

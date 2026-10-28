@@ -185,7 +185,7 @@ def _load(
             store,
             on_cookies_refreshed=_cookie_persister(hass, entry),
         ),
-        grpc_lock_client=MagicMock(),
+        grpc_client=MagicMock(),
         stream_health=MagicMock(),
         lock_state_cache=locks or {},
     )

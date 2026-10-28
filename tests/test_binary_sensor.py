@@ -152,7 +152,7 @@ async def test_connectivity_from_first_data_and_subscriber(
     with (
         patch.object(NestSessionManager, "async_setup", return_value=first_data),
         patch("custom_components.nest_protect._async_subscribe_for_data"),
-        patch("custom_components.nest_protect._async_observe_locks_loop"),
+        patch("custom_components.nest_protect._async_observe_loop"),
     ):
         await component_setup_with_cookies()
 

@@ -1,4 +1,4 @@
-"""Tests for the Nest x Yale lock gRPC-web client."""
+"""Tests for the gRPC-web gateway client."""
 
 from __future__ import annotations
 
@@ -16,17 +16,29 @@ from custom_components.nest_protect.pynest.exceptions import (
 )
 from custom_components.nest_protect.pynest.grpc_client import (
     _SOCK_READ_TIMEOUT,
-    GrpcLockClient,
+    GrpcClient,
     _decode_varint,
     _extract_lock_state,
-    _resolve_lock_location,
+    _resolve_location,
 )
 from custom_components.nest_protect.pynest.lock_models import LockBoltState
 from custom_components.nest_protect.pynest.protobuf_gen.google.rpc import (
     streambody_pb2,
 )
 from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    hvac_pb2 as nest_hvac_pb2,
+)
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
     located_pb2 as nest_located_pb2,
+)
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    occupancy_pb2 as nest_occupancy_pb2,
+)
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    sensor_pb2 as nest_sensor_pb2,
+)
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    structure_pb2 as nest_structure_pb2,
 )
 from custom_components.nest_protect.pynest.protobuf_gen.nestlabs.gateway import (
     v1_pb2,
@@ -41,6 +53,7 @@ from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
 from custom_components.nest_protect.pynest.protobuf_gen.weave.trait import (
     security_pb2 as weave_security_pb2,
 )
+from custom_components.nest_protect.pynest.thermostat_models import TemperatureSource
 
 # -- _decode_varint ---------------------------------------------------------
 
@@ -186,7 +199,7 @@ def test_compose_lock_device_name(location, name, expected):
     assert _compose_lock_device_name(location, name) == expected
 
 
-# -- _resolve_lock_location -------------------------------------------------
+# -- _resolve_location -------------------------------------------------
 
 
 def _make_located_settings(
@@ -205,7 +218,7 @@ def _make_located_settings(
     return trait
 
 
-def test_resolve_lock_location_prefers_literal():
+def test_resolve_location_prefers_literal():
     settings = _make_located_settings(
         where_label_literal="Front Door",
         where_annotation_rid="ANNOTATION_AAAA",
@@ -214,32 +227,27 @@ def test_resolve_lock_location_prefers_literal():
         nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings
     }
     # Even though the map has an entry, the literal wins.
-    assert (
-        _resolve_lock_location(traits, {"ANNOTATION_AAAA": "Other Room"})
-        == "Front Door"
-    )
+    assert _resolve_location(traits, {"ANNOTATION_AAAA": "Other Room"}) == "Front Door"
 
 
-def test_resolve_lock_location_falls_back_to_wheres_map():
+def test_resolve_location_falls_back_to_wheres_map():
     settings = _make_located_settings(where_annotation_rid="ANNOTATION_AAAA")
     traits = {
         nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings
     }
-    assert (
-        _resolve_lock_location(traits, {"ANNOTATION_AAAA": "Back Door"}) == "Back Door"
-    )
+    assert _resolve_location(traits, {"ANNOTATION_AAAA": "Back Door"}) == "Back Door"
 
 
-def test_resolve_lock_location_returns_none_when_unresolved():
+def test_resolve_location_returns_none_when_unresolved():
     settings = _make_located_settings(where_annotation_rid="ANNOTATION_UNKNOWN")
     traits = {
         nest_located_pb2.DeviceLocatedSettingsTrait.DESCRIPTOR.full_name: settings
     }
-    assert _resolve_lock_location(traits, {}) is None
+    assert _resolve_location(traits, {}) is None
 
 
-def test_resolve_lock_location_no_trait_returns_none():
-    assert _resolve_lock_location({}, {"ANNOTATION_AAAA": "Front Door"}) is None
+def test_resolve_location_no_trait_returns_none():
+    assert _resolve_location({}, {"ANNOTATION_AAAA": "Front Door"}) is None
 
 
 def test_extract_lock_state_sets_location_from_wheres_map():
@@ -359,8 +367,8 @@ class _FakeNestClient:
         self.environment = _FakeEnv()
 
 
-def _make_client(response: _FakeResponse | None = None) -> GrpcLockClient:
-    return GrpcLockClient(_FakeNestClient(response))  # type: ignore[arg-type]
+def _make_client(response: _FakeResponse | None = None) -> GrpcClient:
+    return GrpcClient(_FakeNestClient(response))  # type: ignore[arg-type]
 
 
 # -- headers -----------------------------------------------------------------
@@ -387,7 +395,7 @@ def test_headers_without_a_session_raise_auth_exception():
         client._headers()
 
 
-# -- GrpcLockClient.send_lock_command ----------------------------------------
+# -- GrpcClient.send_lock_command ----------------------------------------
 
 
 def _ok_send_command_response() -> bytes:
@@ -401,7 +409,7 @@ def _decode_send_command(body: bytes) -> v1_pb2.SendCommandRequest:
     return req
 
 
-async def _send(resource_id: str, lock: bool) -> tuple[GrpcLockClient, dict]:
+async def _send(resource_id: str, lock: bool) -> tuple[GrpcClient, dict]:
     """Run the real send_lock_command and return the client plus its POST call."""
     client = _make_client(_FakeResponse(body=_ok_send_command_response()))
     await client.send_lock_command(resource_id, lock=lock)
@@ -498,6 +506,46 @@ async def test_send_lock_command_classifies_auth_statuses(code, message):
 
     with pytest.raises(NestLockAuthException, match=f"code={code}"):
         await client.send_lock_command("X", lock=True)
+
+
+# -- send_structure_mode_command ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("away", "mode"),
+    [
+        (True, nest_occupancy_pb2.StructureModeTrait.StructureMode.STRUCTURE_MODE_AWAY),
+        (
+            False,
+            nest_occupancy_pb2.StructureModeTrait.StructureMode.STRUCTURE_MODE_HOME,
+        ),
+    ],
+)
+async def test_send_structure_mode_command_encodes_the_mode(away, mode):
+    client = _make_client(_FakeResponse(body=_ok_send_command_response()))
+    await client.send_structure_mode_command("STRUCTURE_ABC", away=away)
+
+    req = _decode_send_command(client._nest_client.session.calls[0]["data"])
+    assert req.resourceRequest.resourceId == "STRUCTURE_ABC"
+    assert req.resourceCommands[0].traitLabel == "structure_mode"
+    change = nest_occupancy_pb2.StructureModeTrait.StructureModeChangeRequest()
+    assert req.resourceCommands[0].command.Unpack(change)
+    assert change.structureMode == mode
+    assert (
+        change.reason
+        == nest_occupancy_pb2.StructureModeTrait.StructureModeReason.STRUCTURE_MODE_REASON_EXPLICIT_INTENT
+    )
+
+
+async def test_send_structure_mode_command_names_itself_when_rejected():
+    resp = v1_pb2.SendCommandResponse()
+    resp.status.code = 9
+    client = _make_client(_FakeResponse(body=resp.SerializeToString()))
+
+    with pytest.raises(
+        NestLockCommandException, match="Structure mode command rejected: code=9"
+    ):
+        await client.send_structure_mode_command("STRUCTURE_ABC", away=True)
 
 
 # -- observe frame parsing ---------------------------------------------------
@@ -670,7 +718,7 @@ def test_parse_observe_buffer_raises_on_an_auth_status_frame(code, message):
         _make_client()._parse_observe_buffer(buffer)
 
 
-async def test_observe_locks_propagates_an_auth_status_frame(recorded_sleeps):
+async def test_observe_propagates_an_auth_status_frame(recorded_sleeps):
     # The gateway can accept the HTTP request and only reject the session in
     # the stream body; that must reach the caller's session-refresh path.
     body = streambody_pb2.StreamBody()
@@ -678,7 +726,7 @@ async def test_observe_locks_propagates_an_auth_status_frame(recorded_sleeps):
     client = _make_client(_FakeResponse(chunks=[body.SerializeToString()]))
 
     with pytest.raises(NestLockAuthException):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == []
@@ -745,16 +793,16 @@ def test_ingest_skips_traits_outside_the_subscribed_set():
     assert client._trait_cache == {}
 
 
-def test_ingest_bolt_lock_trait_marks_locks_present():
+def test_ingest_bolt_lock_trait_marks_devices_present():
     client = _make_client()
-    assert client._locks_present is None
+    assert client._devices_present is None
     client._ingest_observe_response(
         _make_inner(trait_states=[("DEVICE_X", _make_bolt_trait())])
     )
-    assert client._locks_present is True
+    assert client._devices_present is True
 
 
-def test_ingest_bolt_lock_resource_meta_marks_locks_present():
+def test_ingest_bolt_lock_resource_meta_marks_devices_present():
     client = _make_client()
     client._ingest_observe_response(
         _make_inner(
@@ -762,7 +810,7 @@ def test_ingest_bolt_lock_resource_meta_marks_locks_present():
             metas_continue=False,
         )
     )
-    assert client._locks_present is True
+    assert client._devices_present is True
     assert client._seen_resource_metas is True
     assert client._initial_metas_continue is False
 
@@ -794,6 +842,231 @@ def test_ingest_annotation_change_re_emits_every_cached_lock():
     )
     assert touched == {"DEVICE_X"}
     assert client._wheres_map == {"ANNOTATION_FRONT": "Front Door"}
+
+
+# -- structure_resource_id ---------------------------------------------------
+
+
+def _structure_info(rts_structure_id: str) -> nest_structure_pb2.StructureInfoTrait:
+    return nest_structure_pb2.StructureInfoTrait(rtsStructureId=rts_structure_id)
+
+
+def test_structure_resource_id_follows_structure_info():
+    client = _make_client()
+    client._ingest_observe_response(
+        _make_inner(
+            trait_states=[
+                ("STRUCTURE_A", _structure_info("structure.home-1")),
+                ("STRUCTURE_B", _structure_info("structure.home-2")),
+            ]
+        )
+    )
+
+    assert client.structure_resource_id("structure.home-1") == "STRUCTURE_A"
+    assert client.structure_resource_id("structure.home-2") == "STRUCTURE_B"
+
+
+def test_structure_resource_id_is_unknown_before_the_stream_reports_it():
+    assert _make_client().structure_resource_id("structure.home-1") is None
+
+
+# -- thermostats -------------------------------------------------------------
+
+THERMOSTAT = "DEVICE_T"
+THERMOSTAT_TYPE = "nest.resource.NestLearningThermostat3Resource"
+RCS = nest_hvac_pb2.RemoteComfortSensingSettingsTrait
+
+
+def _labelled_inner(
+    traits: list[tuple[str, object]],
+    *,
+    resource_id: str = THERMOSTAT,
+    resource_type: str | None = None,
+) -> v2_pb2.ObserveResponse.ObserveResponse:
+    """Build an inner response from [(trait_label, trait_proto)] on one resource."""
+    inner = v2_pb2.ObserveResponse.ObserveResponse()
+    if resource_type is not None:
+        meta = inner.resourceMetas.add()
+        meta.resourceId = resource_id
+        meta.type = resource_type
+    for label, trait in traits:
+        state = inner.traitStates.add()
+        state.traitId.resourceId = resource_id
+        state.traitId.traitLabel = label
+        state.patch.values.Pack(trait, type_url_prefix="type.nestlabs.com/")
+    return inner
+
+
+def _identity(serial: str = "T123") -> weave_description_pb2.DeviceIdentityTrait:
+    return weave_description_pb2.DeviceIdentityTrait(
+        serialNumber=serial, softwareVersion="6.2"
+    )
+
+
+def _temperature(value: float) -> nest_sensor_pb2.TemperatureTrait:
+    trait = nest_sensor_pb2.TemperatureTrait()
+    trait.temperatureValue.temperature.value = value
+    return trait
+
+
+def _humidity(value: float) -> nest_sensor_pb2.HumidityTrait:
+    trait = nest_sensor_pb2.HumidityTrait()
+    trait.humidityValue.humidity.value = value
+    return trait
+
+
+def _thermostat(client: GrpcClient, *traits: tuple[str, object]):
+    """Feed one thermostat to the client and return its emitted state."""
+    touched = client._ingest_observe_response(
+        _labelled_inner(
+            [("device_identity", _identity()), *traits],
+            resource_type=THERMOSTAT_TYPE,
+        )
+    )
+    return client._snapshot(touched).thermostats.get(THERMOSTAT)
+
+
+def test_thermostat_keeps_backplate_and_current_readings_apart():
+    """Both TemperatureTraits share a type; only the label tells them apart."""
+    state = _thermostat(
+        _make_client(),
+        ("backplate_temperature", _temperature(21.5)),
+        ("current_temperature", _temperature(19.0)),
+        ("backplate_humidity", _humidity(55.0)),
+        ("current_humidity", _humidity(48.0)),
+    )
+
+    assert state.serial_number == "T123"
+    assert state.model == "Learning Thermostat (3rd gen)"
+    assert state.software_version == "6.2"
+    assert state.backplate_temperature == pytest.approx(21.5)
+    assert state.current_temperature == pytest.approx(19.0)
+    assert state.current_humidity == pytest.approx(48.0)
+
+
+def test_thermostat_ignores_history_and_unpaired_labels():
+    state = _thermostat(
+        _make_client(),
+        ("current_temperature", _temperature(19.0)),
+        ("current_temperature_bucketized", _temperature(5.0)),
+        ("unpaired_current_temperature", _temperature(6.0)),
+    )
+
+    assert state.current_temperature == pytest.approx(19.0)
+
+
+def test_thermostat_waits_for_its_serial_number():
+    client = _make_client()
+    touched = client._ingest_observe_response(
+        _labelled_inner(
+            [("current_temperature", _temperature(19.0))],
+            resource_type=THERMOSTAT_TYPE,
+        )
+    )
+    assert client._snapshot(touched).thermostats == {}
+
+    touched = client._ingest_observe_response(
+        _labelled_inner([("device_identity", _identity())])
+    )
+    state = client._snapshot(touched).thermostats[THERMOSTAT]
+    assert state.current_temperature == pytest.approx(19.0)
+
+
+def test_thermostat_traits_that_arrive_before_its_type_are_kept():
+    """The gateway doesn't order resource metas before trait states."""
+    client = _make_client()
+    touched = client._ingest_observe_response(
+        _labelled_inner(
+            [
+                ("device_identity", _identity()),
+                ("current_temperature", _temperature(19.0)),
+            ]
+        )
+    )
+    assert client._snapshot(touched).thermostats == {}
+
+    touched = client._ingest_observe_response(
+        _labelled_inner([], resource_type=THERMOSTAT_TYPE)
+    )
+    state = client._snapshot(touched).thermostats[THERMOSTAT]
+    assert state.current_temperature == pytest.approx(19.0)
+
+
+def test_other_resource_types_are_not_thermostats():
+    client = _make_client()
+    touched = client._ingest_observe_response(
+        _labelled_inner(
+            [("device_identity", _identity())],
+            resource_type="nest.resource.NestKryptoniteResource",
+        )
+    )
+    assert client._snapshot(touched).thermostats == {}
+
+
+def test_a_thermostat_counts_as_a_device_to_watch():
+    client = _make_client()
+    client._ingest_observe_response(_labelled_inner([], resource_type=THERMOSTAT_TYPE))
+    assert client._devices_present is True
+
+
+def _rcs(source: int, *, single: str = "", group: tuple[str, ...] = ()):
+    trait = RCS()
+    trait.activeRcsSelection.rcsSourceType = source
+    if single:
+        trait.activeRcsSelection.activeRcsSensor.resourceId = single
+    for resource_id in group:
+        trait.multiSensorSettings.multiSensorGroup.add().resourceId = resource_id
+    return trait
+
+
+@pytest.mark.parametrize(
+    ("trait", "source", "active"),
+    [
+        (_rcs(RCS.RCS_SOURCE_TYPE_BACKPLATE), TemperatureSource.BACKPLATE, []),
+        (
+            _rcs(RCS.RCS_SOURCE_TYPE_SINGLE_SENSOR, single="DEVICE_S1"),
+            TemperatureSource.SINGLE_SENSOR,
+            ["DEVICE_S1"],
+        ),
+        (
+            # The group is kept while a single sensor is selected, and must not
+            # be reported as active then.
+            _rcs(
+                RCS.RCS_SOURCE_TYPE_SINGLE_SENSOR,
+                single="DEVICE_S1",
+                group=("DEVICE_S1", "DEVICE_S2"),
+            ),
+            TemperatureSource.SINGLE_SENSOR,
+            ["DEVICE_S1"],
+        ),
+        (
+            _rcs(RCS.RCS_SOURCE_TYPE_MULTI_SENSOR, group=("DEVICE_S1", "DEVICE_S2")),
+            TemperatureSource.MULTI_SENSOR,
+            ["DEVICE_S1", "DEVICE_S2"],
+        ),
+        (_rcs(RCS.RCS_SOURCE_TYPE_UNSPECIFIED), None, []),
+    ],
+)
+def test_thermostat_reports_its_temperature_source(trait, source, active):
+    state = _thermostat(_make_client(), ("remote_comfort_sensing_settings", trait))
+
+    assert state.temperature_source == source
+    assert state.active_sensors == active
+
+
+def test_annotation_change_re_emits_thermostats():
+    client = _make_client()
+    _thermostat(client)
+
+    ann = nest_located_pb2.LocatedAnnotationsTrait()
+    item = ann.predefinedWheres[1]
+    item.whereId.resourceId = "ANNOTATION_HALL"
+    item.label.literal = "Hallway"
+    touched = client._ingest_observe_response(
+        _make_inner(trait_states=[("STRUCTURE_1", ann)])
+    )
+
+    assert touched == {THERMOSTAT}
 
 
 # -- _rebuild_wheres_map -----------------------------------------------------
@@ -858,7 +1131,7 @@ async def test_observe_once_yields_lock_states():
 
     batches = [batch async for batch in client._observe_once()]
     assert len(batches) == 1
-    assert batches[0]["DEVICE_X"].bolt_state == LockBoltState.LOCKED
+    assert batches[0].locks["DEVICE_X"].bolt_state == LockBoltState.LOCKED
 
 
 async def test_observe_once_uses_a_read_timeout_not_a_total_timeout():
@@ -891,7 +1164,7 @@ async def test_observe_once_concludes_no_locks_once_enumeration_settles():
     client._first_observe_at = -1000.0  # settle window already elapsed
 
     assert [batch async for batch in client._observe_once()] == []
-    assert client._locks_present is False
+    assert client._devices_present is False
 
 
 async def test_observe_once_waits_out_the_settle_window_before_concluding():
@@ -907,7 +1180,7 @@ async def test_observe_once_waits_out_the_settle_window_before_concluding():
 
     assert [batch async for batch in client._observe_once()] == []
     # Enumeration looks empty, but the stream only just opened, so no verdict.
-    assert client._locks_present is None
+    assert client._devices_present is None
 
 
 async def test_observe_once_does_not_conclude_while_metas_still_arriving():
@@ -918,7 +1191,7 @@ async def test_observe_once_does_not_conclude_while_metas_still_arriving():
     client._first_observe_at = -1000.0
 
     assert [batch async for batch in client._observe_once()] == []
-    assert client._locks_present is None
+    assert client._devices_present is None
 
 
 async def test_observe_once_never_concludes_no_locks_when_a_lock_exists():
@@ -934,16 +1207,16 @@ async def test_observe_once_never_concludes_no_locks_when_a_lock_exists():
 
     batches = [batch async for batch in client._observe_once()]
     assert len(batches) == 1
-    assert client._locks_present is True
+    assert client._devices_present is True
 
 
-# -- observe_locks reconnect loop --------------------------------------------
+# -- observe reconnect loop --------------------------------------------
 
 
 class _StopLoop(BaseException):
     """Sentinel used to break out of the endless reconnect loop under test.
 
-    Deliberately a BaseException so `observe_locks`'s broad `except Exception`
+    Deliberately a BaseException so `observe`'s broad `except Exception`
     cannot swallow it.
     """
 
@@ -968,10 +1241,10 @@ def _observe_once_stub(monkeypatch, behaviour):
         return
         yield  # pragma: no cover - makes this an async generator
 
-    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+    monkeypatch.setattr(GrpcClient, "_observe_once", _stub)
 
 
-async def test_observe_locks_backs_off_when_the_stream_ends_cleanly(
+async def test_observe_backs_off_when_the_stream_ends_cleanly(
     monkeypatch, recorded_sleeps
 ):
     # A stream that ends immediately must not reconnect once a second forever.
@@ -982,13 +1255,13 @@ async def test_observe_locks_backs_off_when_the_stream_ends_cleanly(
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
 
 
-async def test_observe_locks_backs_off_on_errors(monkeypatch, recorded_sleeps):
+async def test_observe_backs_off_on_errors(monkeypatch, recorded_sleeps):
     async def _boom(_self):
         raise ClientError("connection reset")
 
@@ -996,13 +1269,13 @@ async def test_observe_locks_backs_off_on_errors(monkeypatch, recorded_sleeps):
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
 
 
-async def test_observe_locks_reconnects_an_idle_stream_without_backoff(
+async def test_observe_reconnects_an_idle_stream_without_backoff(
     monkeypatch, recorded_sleeps, caplog
 ):
     # Quiet locks mean a silent stream; its read timeout is not an error.
@@ -1012,16 +1285,16 @@ async def test_observe_locks_reconnects_an_idle_stream_without_backoff(
     _observe_once_stub(monkeypatch, _idle)
 
     client = _make_client()
-    client._locks_present = True
+    client._devices_present = True
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 1.0, 1.0, 1.0]
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-async def test_observe_locks_caps_the_backoff(monkeypatch):
+async def test_observe_caps_the_backoff(monkeypatch):
     sleeps: list[float] = []
 
     async def _fake_sleep(delay: float) -> None:
@@ -1038,14 +1311,14 @@ async def test_observe_locks_caps_the_backoff(monkeypatch):
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert max(sleeps) == 60.0
     assert sleeps[-1] == 60.0
 
 
-async def test_observe_locks_propagates_auth_failures_instead_of_retrying(
+async def test_observe_propagates_auth_failures_instead_of_retrying(
     monkeypatch, recorded_sleeps
 ):
     async def _rejected(_self):
@@ -1055,27 +1328,27 @@ async def test_observe_locks_propagates_auth_failures_instead_of_retrying(
 
     client = _make_client()
     with pytest.raises(NestLockAuthException):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     # Retrying a rejected token never recovers, so it must not back off at all.
     assert recorded_sleeps == []
 
 
-async def test_observe_locks_stops_when_the_account_has_no_locks(
+async def test_observe_stops_when_the_account_has_no_locks(
     monkeypatch, recorded_sleeps
 ):
     async def _no_locks(client):
-        client._locks_present = False
+        client._devices_present = False
 
     _observe_once_stub(monkeypatch, _no_locks)
 
     client = _make_client()
-    assert [batch async for batch in client.observe_locks()] == []
+    assert [batch async for batch in client.observe()] == []
     assert recorded_sleeps == []
 
 
-async def test_observe_locks_reaches_the_verdict_after_the_stream_ends(
+async def test_observe_reaches_the_verdict_after_the_stream_ends(
     monkeypatch, recorded_sleeps
 ):
     # The stream ends right after the enumeration, so the per-chunk check never
@@ -1088,12 +1361,12 @@ async def test_observe_locks_reaches_the_verdict_after_the_stream_ends(
     _observe_once_stub(monkeypatch, _enumerated_then_ended)
 
     client = _make_client()
-    assert [batch async for batch in client.observe_locks()] == []
-    assert client._locks_present is False
+    assert [batch async for batch in client.observe()] == []
+    assert client._devices_present is False
     assert recorded_sleeps == []
 
 
-async def test_observe_locks_stays_quiet_about_errors_until_a_lock_is_known(
+async def test_observe_stays_quiet_about_errors_until_a_lock_is_known(
     monkeypatch, recorded_sleeps, caplog
 ):
     async def _boom(_self):
@@ -1103,25 +1376,25 @@ async def test_observe_locks_stays_quiet_about_errors_until_a_lock_is_known(
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     # Most accounts have no lock; their stream errors must not warn.
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
-async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
+async def test_observe_warns_about_errors_once_a_lock_is_known(
     monkeypatch, recorded_sleeps, caplog
 ):
     async def _boom(client):
-        client._locks_present = True
+        client._devices_present = True
         raise ClientError("connection reset")
 
     _observe_once_stub(monkeypatch, _boom)
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -1130,7 +1403,7 @@ async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
     assert "ClientError" in warnings[0].getMessage()
 
 
-async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
+async def test_observe_resets_the_backoff_after_a_successful_batch(
     monkeypatch, recorded_sleeps
 ):
     # Treat every stream as having stayed up long enough to count as healthy.
@@ -1145,11 +1418,11 @@ async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
         if calls["n"] % 2:
             yield {"DEVICE_X": "state"}  # a batch arrived: backoff resets
 
-    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+    monkeypatch.setattr(GrpcClient, "_observe_once", _stub)
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     # Attempts alternate yield / no-yield. Each yielding attempt resets the
@@ -1157,7 +1430,7 @@ async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
     assert recorded_sleeps == [1.0, 2.0, 1.0, 2.0]
 
 
-async def test_observe_locks_keeps_backing_off_when_streams_close_after_one_batch(
+async def test_observe_keeps_backing_off_when_streams_close_after_one_batch(
     monkeypatch, recorded_sleeps
 ):
     # Every stream opens with the current state; one closed right after must not
@@ -1165,11 +1438,11 @@ async def test_observe_locks_keeps_backing_off_when_streams_close_after_one_batc
     async def _stub(self):
         yield {"DEVICE_X": "state"}
 
-    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+    monkeypatch.setattr(GrpcClient, "_observe_once", _stub)
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]

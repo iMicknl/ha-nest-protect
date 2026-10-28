@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING
 
 from aiohttp import ClientError
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity, EntityDescription
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
@@ -24,6 +25,7 @@ from .pynest.exceptions import (
 from .pynest.models import Bucket
 
 if TYPE_CHECKING:
+    from . import NestProtectConfigEntry
     from .session import NestSessionManager
     from .stream_health import StreamHealth
 
@@ -50,6 +52,40 @@ async def async_run_entity_command[T](
         PynestException,
     ) as err:
         raise HomeAssistantError(f"{failure}: {err}") from err
+
+
+def subscribe_to_discovery[T](
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    *,
+    signal: str,
+    cache: dict[str, T],
+    async_add_entities: AddEntitiesCallback,
+    factory: Callable[[T], Iterable[Entity]],
+) -> None:
+    """Wire one `async_add_entities` callback into per-resource gRPC discovery.
+
+    `factory(state)` builds the entities for one newly-seen resource_id. States
+    already cached on the config entry (from observe events that arrived before
+    this platform set up) are replayed immediately.
+    """
+    known: set[str] = set()
+
+    @callback
+    def _on_discovered(states: dict[str, T]) -> None:
+        new_entities: list[Entity] = []
+        for resource_id, state in states.items():
+            if resource_id in known:
+                continue
+            known.add(resource_id)
+            new_entities.extend(factory(state))
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(async_dispatcher_connect(hass, signal, _on_discovered))
+
+    if cache:
+        _on_discovered(cache)
 
 
 class NestEntity(Entity):

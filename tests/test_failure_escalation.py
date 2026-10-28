@@ -10,7 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.nest_protect import (
     DOMAIN,
     HomeAssistantNestProtectData,
-    _async_observe_locks_loop,
+    _async_observe_loop,
     _async_subscribe_for_data,
     _cookie_persister,
 )
@@ -23,6 +23,7 @@ from custom_components.nest_protect.pynest.exceptions import (
     NestServiceException,
     PynestException,
 )
+from custom_components.nest_protect.pynest.grpc_client import ObserveBatch
 from custom_components.nest_protect.session import NestSessionManager
 
 from .conftest import COOKIES, ISSUE_TOKEN
@@ -46,7 +47,7 @@ def _entry_data(hass, entry):
         areas={},
         client=client,
         session_manager=sm,
-        grpc_lock_client=MagicMock(),
+        grpc_client=MagicMock(),
         stream_health=MagicMock(),
     )
     return client, sm
@@ -96,11 +97,11 @@ async def test_lock_stream_rejected_after_a_batch_escalates_to_reauth(hass):
     entry.add_to_hass(hass)
     _, sm = _entry_data(hass, entry)
 
-    async def observe_locks():
-        yield {}
+    async def observe():
+        yield ObserveBatch()
         raise NestLockAuthException("UNAUTHENTICATED in stream status")
 
-    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_client.observe = observe
 
     with (
         patch.object(sm, "async_refresh_session", return_value=True) as refresh,
@@ -109,7 +110,7 @@ async def test_lock_stream_rejected_after_a_batch_escalates_to_reauth(hass):
         ) as sleep,
         patch.object(entry, "async_start_reauth") as reauth,
     ):
-        await _async_observe_locks_loop(hass, entry)
+        await _async_observe_loop(hass, entry)
 
     reauth.assert_called_once()
     assert refresh.await_count == MAX_AUTH_FAILURES - 1
@@ -125,15 +126,15 @@ async def test_lock_stream_failures_far_apart_do_not_add_up(hass):
     _, sm = _entry_data(hass, entry)
     streams = 0
 
-    async def observe_locks():
+    async def observe():
         nonlocal streams
         streams += 1
         if streams > MAX_AUTH_FAILURES + 1:
             raise asyncio.CancelledError
-        yield {}
+        yield ObserveBatch()
         raise NestLockAuthException("UNAUTHENTICATED in stream status")
 
-    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_client.observe = observe
     clock = iter(range(0, 100_000, 1_000))
 
     with (
@@ -146,7 +147,7 @@ async def test_lock_stream_failures_far_apart_do_not_add_up(hass):
         patch.object(entry, "async_start_reauth") as reauth,
         pytest.raises(asyncio.CancelledError),
     ):
-        await _async_observe_locks_loop(hass, entry)
+        await _async_observe_loop(hass, entry)
 
     reauth.assert_not_called()
 

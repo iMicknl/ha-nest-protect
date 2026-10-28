@@ -1,11 +1,11 @@
-"""gRPC-web client for Nest x Yale lock state and commands.
+"""gRPC-web client for the Nest gateway.
 
 Talks to nestlabs.gateway.v2.GatewayService/Observe (streaming state) and
-nestlabs.gateway.v1.ResourceApi/SendCommand (lock/unlock), both at
+nestlabs.gateway.v1.ResourceApi/SendCommand (commands), both at
 grpc-web.production.nest.com. Reuses the ha-nest-protect session's
 Basic access_token verbatim — no separate JWT issuance is required.
 
-This is a focused port of the lock-relevant slice of tronikos/nest_legacy.
+This is a focused port of slices of tronikos/nest_legacy.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientTimeout, SocketTimeoutError
@@ -22,11 +23,16 @@ from .const import PROTOBUF_USER_AGENT
 from .exceptions import NestLockAuthException, NestLockCommandException
 from .lock_models import LockBoltState, LockState
 from .protobuf_gen.google.rpc import streambody_pb2
+from .protobuf_gen.nest.trait import hvac_pb2 as nest_hvac_pb2
 from .protobuf_gen.nest.trait import located_pb2 as nest_located_pb2
+from .protobuf_gen.nest.trait import occupancy_pb2 as nest_occupancy_pb2
+from .protobuf_gen.nest.trait import sensor_pb2 as nest_sensor_pb2
+from .protobuf_gen.nest.trait import structure_pb2 as nest_structure_pb2
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
 from .protobuf_gen.weave.trait import description_pb2 as weave_description_pb2
 from .protobuf_gen.weave.trait import power_pb2 as weave_power_pb2
 from .protobuf_gen.weave.trait import security_pb2 as weave_security_pb2
+from .thermostat_models import TemperatureSource, ThermostatState
 
 if TYPE_CHECKING:
     from .client import NestClient
@@ -53,11 +59,12 @@ _RECONNECT_MAX_DELAY = 60.0
 _STREAM_HEALTHY_SECONDS = 60.0
 
 # How long the observe stream must have been running, cumulatively across
-# reconnects, before an account is declared lock-less. The gateway sends its
-# resource metas and the initial trait states in the first moments of a stream,
-# but the ordering between the two isn't guaranteed, so a settle window keeps a
-# slow initial dump from being mistaken for "no locks here".
-_NO_LOCK_SETTLE_SECONDS = 30.0
+# reconnects, before an account is declared to have no lock or thermostat. The
+# gateway sends its resource metas and the initial trait states in the first
+# moments of a stream, but the ordering between the two isn't guaranteed, so a
+# settle window keeps a slow initial dump from being mistaken for "nothing to
+# watch here".
+_NO_DEVICE_SETTLE_SECONDS = 30.0
 
 # HTTP statuses that mean the session token was rejected rather than that the
 # gateway had a transient problem. Retrying these forever never recovers.
@@ -74,12 +81,14 @@ _GRPC_UNAUTHENTICATED = 16
 # means the buffer is out of sync and must be reset.
 _WIRE_TYPE_LENGTH_DELIMITED = 2
 
-# The lock-relevant trait types we ask the server to stream. Limited set keeps
-# bandwidth and parsing cost down vs subscribing to the entire trait surface.
+# The trait types we ask the server to stream. Limited set keeps bandwidth and
+# parsing cost down vs subscribing to the entire trait surface.
 # The three nest.trait.located traits are needed to resolve human-readable
 # room labels: DeviceLocatedSettingsTrait lives on each lock, the two
 # *Annotations traits live on the structure resource as a where_id → label
-# catalogue.
+# catalogue. StructureInfoTrait links each protobuf structure to the REST
+# `structure.<id>` bucket, which commands to that home need. The sensor and
+# RemoteComfortSensingSettingsTrait traits carry thermostat readings.
 _TRAIT_NAME_TO_CLASS: dict[str, type] = {
     cls.DESCRIPTOR.full_name: cls
     for cls in (
@@ -90,7 +99,44 @@ _TRAIT_NAME_TO_CLASS: dict[str, type] = {
         nest_located_pb2.DeviceLocatedSettingsTrait,
         nest_located_pb2.LocatedAnnotationsTrait,
         nest_located_pb2.CustomLocatedAnnotationsTrait,
+        nest_structure_pb2.StructureInfoTrait,
+        nest_sensor_pb2.TemperatureTrait,
+        nest_sensor_pb2.HumidityTrait,
+        nest_hvac_pb2.RemoteComfortSensingSettingsTrait,
     )
+}
+
+# A thermostat publishes TemperatureTrait and HumidityTrait twice, and only the
+# trait label tells them apart: `backplate_*` is its own sensor, `current_*` the
+# reading it controls on. These are cached by label instead of by trait name,
+# so one can't overwrite the other.
+_LABEL_SPECIFIC_TRAITS: frozenset[str] = frozenset(
+    {
+        "backplate_temperature",
+        "current_temperature",
+        "backplate_humidity",
+        "current_humidity",
+    }
+)
+
+# Thermostat resource types and their models, from tronikos/nest_legacy.
+_THERMOSTAT_MODELS: dict[str, str] = {
+    "nest.resource.NestLearningThermostat1Resource": "Learning Thermostat (1st gen)",
+    "nest.resource.NestLearningThermostat2Resource": "Learning Thermostat (2nd gen)",
+    "nest.resource.NestAmber1DisplayResource": "Learning Thermostat (2nd gen)",
+    "nest.resource.NestLearningThermostat3Resource": "Learning Thermostat (3rd gen)",
+    "nest.resource.NestLearningThermostat3v2Resource": "Learning Thermostat (3rd gen)",
+    "nest.resource.NestAmber2DisplayResource": "Learning Thermostat (3rd gen)",
+    "nest.resource.NestOnyxResource": "Thermostat E",
+    "nest.resource.NestAgateDisplayResource": "Thermostat E",
+    "google.resource.GoogleZirconium1Resource": "Thermostat (2020)",
+    "google.resource.GoogleBismuth1Resource": "Learning Thermostat (4th gen)",
+}
+
+_RCS_SOURCE_TYPES: dict[int, TemperatureSource] = {
+    nest_hvac_pb2.RemoteComfortSensingSettingsTrait.RcsSourceType.RCS_SOURCE_TYPE_BACKPLATE: TemperatureSource.BACKPLATE,
+    nest_hvac_pb2.RemoteComfortSensingSettingsTrait.RcsSourceType.RCS_SOURCE_TYPE_SINGLE_SENSOR: TemperatureSource.SINGLE_SENSOR,
+    nest_hvac_pb2.RemoteComfortSensingSettingsTrait.RcsSourceType.RCS_SOURCE_TYPE_MULTI_SENSOR: TemperatureSource.MULTI_SENSOR,
 }
 
 # Structure-level annotation traits — when they change we rebuild the
@@ -102,6 +148,7 @@ _STRUCTURE_ANNOTATION_TRAIT_NAMES: frozenset[str] = frozenset(
     }
 )
 _BOLT_LOCK_TRAIT_NAME = weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name
+_STRUCTURE_INFO_TRAIT_NAME = nest_structure_pb2.StructureInfoTrait.DESCRIPTOR.full_name
 
 
 def _decode_varint(buffer: bytes | bytearray) -> tuple[int | None, int]:
@@ -117,6 +164,15 @@ def _decode_varint(buffer: bytes | bytearray) -> tuple[int | None, int]:
         if not (i & 0x80):
             return result, bytes_read
     return None, 0
+
+
+def _is_non_live_trait_label(trait_label: str) -> bool:
+    """Return True for labels that never hold the device's current state.
+
+    "_bucketized" copies are history, and "unpaired_*" copies are the settings
+    a thermostat keeps for unpaired mode.
+    """
+    return trait_label.endswith("_bucketized") or trait_label.startswith("unpaired_")
 
 
 def _is_auth_status(code: int, message: str) -> bool:
@@ -141,10 +197,8 @@ _LOCKED_STATE_MAP: dict[int, LockBoltState] = {
 }
 
 
-def _resolve_lock_location(
-    traits: dict[str, Any], wheres_map: dict[str, str]
-) -> str | None:
-    """Resolve the room label for a lock.
+def _resolve_location(traits: dict[str, Any], wheres_map: dict[str, str]) -> str | None:
+    """Resolve the room label for a device.
 
     Checks `DeviceLocatedSettingsTrait` in this order, mirroring nest_legacy:
     1. The denormalized `whereLabel.literal` / `fixtureNameLabel.literal`
@@ -220,7 +274,7 @@ def _extract_lock_state(
         if remaining.HasField("remainingPercent"):
             battery_level = 100.0 * remaining.remainingPercent.value
 
-    location = _resolve_lock_location(traits, wheres_map or {})
+    location = _resolve_location(traits, wheres_map or {})
 
     return LockState(
         resource_id=resource_id,
@@ -233,8 +287,88 @@ def _extract_lock_state(
     )
 
 
-class GrpcLockClient:
-    """gRPC-web client scoped to Nest x Yale lock observe + command."""
+def _sensor_value(trait: Any, sample_field: str, value_field: str) -> float | None:
+    """Read the sample of a TemperatureTrait or HumidityTrait, if it has one."""
+    if trait is None or not trait.HasField(sample_field):
+        return None
+    sample = getattr(trait, sample_field)
+    if not sample.HasField(value_field):
+        return None
+    return getattr(sample, value_field).value
+
+
+def _extract_thermostat_state(
+    resource_id: str,
+    resource_type: str | None,
+    traits: dict[str, Any],
+    wheres_map: dict[str, str],
+) -> ThermostatState | None:
+    """Build a ThermostatState, or None if not a thermostat or not identified yet."""
+    model = _THERMOSTAT_MODELS.get(resource_type or "")
+    if model is None:
+        return None
+
+    identity = traits.get(
+        weave_description_pb2.DeviceIdentityTrait.DESCRIPTOR.full_name
+    )
+    # DeviceInfo is only read when an entity is added, so registering before the
+    # serial number arrives would leave the device without its real identifier.
+    if not identity or not identity.serialNumber:
+        return None
+
+    label = traits.get(weave_description_pb2.LabelSettingsTrait.DESCRIPTOR.full_name)
+
+    source: TemperatureSource | None = None
+    active_sensors: list[str] = []
+    rcs = traits.get(
+        nest_hvac_pb2.RemoteComfortSensingSettingsTrait.DESCRIPTOR.full_name
+    )
+    if rcs is not None:
+        selection = rcs.activeRcsSelection
+        source = _RCS_SOURCE_TYPES.get(selection.rcsSourceType)
+        if source is TemperatureSource.MULTI_SENSOR:
+            active_sensors = [
+                sensor.resourceId
+                for sensor in rcs.multiSensorSettings.multiSensorGroup
+                if sensor.resourceId
+            ]
+        elif (
+            source is TemperatureSource.SINGLE_SENSOR
+            and selection.activeRcsSensor.resourceId
+        ):
+            active_sensors = [selection.activeRcsSensor.resourceId]
+
+    return ThermostatState(
+        resource_id=resource_id,
+        serial_number=identity.serialNumber,
+        model=model,
+        name=label.label if label and label.label else None,
+        software_version=identity.softwareVersion or None,
+        location=_resolve_location(traits, wheres_map),
+        backplate_temperature=_sensor_value(
+            traits.get("backplate_temperature"), "temperatureValue", "temperature"
+        ),
+        current_temperature=_sensor_value(
+            traits.get("current_temperature"), "temperatureValue", "temperature"
+        ),
+        current_humidity=_sensor_value(
+            traits.get("current_humidity"), "humidityValue", "humidity"
+        ),
+        temperature_source=source,
+        active_sensors=active_sensors,
+    )
+
+
+@dataclass
+class ObserveBatch:
+    """Devices whose state changed in one observe update."""
+
+    locks: dict[str, LockState] = field(default_factory=dict)
+    thermostats: dict[str, ThermostatState] = field(default_factory=dict)
+
+
+class GrpcClient:
+    """gRPC-web client for the gateway's observe stream and commands."""
 
     def __init__(
         self, nest_client: NestClient, grpc_host: str = "grpc-web.production.nest.com"
@@ -249,13 +383,15 @@ class GrpcLockClient:
         self._grpc_host = grpc_host
         # Per-resource trait cache: resource_id -> {trait_full_name: trait_proto}
         self._trait_cache: dict[str, dict[str, Any]] = {}
+        # resource_id -> resource type, from the gateway's resource metas.
+        self._resource_types: dict[str, str] = {}
         # Global where_id -> room label, rebuilt whenever the structure-level
-        # annotation traits change. Locks use this to resolve their location.
+        # annotation traits change. Devices use this to resolve their location.
         self._wheres_map: dict[str, str] = {}
         # Tri-state: None until the gateway has told us enough to decide, then
-        # True once any BoltLockTrait is seen, or False once the initial
-        # enumeration has settled without one. See `_evaluate_lock_presence`.
-        self._locks_present: bool | None = None
+        # True once any lock or thermostat is seen, or False once the initial
+        # enumeration has settled without one. See `_evaluate_device_presence`.
+        self._devices_present: bool | None = None
         # Whether the gateway has sent any resourceMetas yet, and whether it
         # says more of the initial batch is still coming.
         self._seen_resource_metas = False
@@ -263,6 +399,18 @@ class GrpcLockClient:
         # Monotonic timestamp of the first observe attempt, used for the settle
         # window. Set once and kept across reconnects.
         self._first_observe_at: float | None = None
+
+    def structure_resource_id(self, structure_key: str) -> str | None:
+        """Return the protobuf resource id of the REST bucket `structure.<id>`.
+
+        Known once the observe stream has sent the structure's
+        StructureInfoTrait, which is part of every stream's initial state.
+        """
+        for resource_id, traits in self._trait_cache.items():
+            info = traits.get(_STRUCTURE_INFO_TRAIT_NAME)
+            if info is not None and info.rtsStructureId == structure_key:
+                return resource_id
+        return None
 
     def _headers(self) -> dict[str, str]:
         """Build the protobuf headers using the current session token."""
@@ -299,19 +447,12 @@ class GrpcLockClient:
         """Apply trait updates from one inner ObserveResponse to the cache.
 
         Returns the set of resource_ids that need re-emission. That includes
-        directly-touched lock resources plus, if a structure-level annotation
-        trait changed, every cached lock (so the new location propagates).
+        directly-touched resources, thermostats whose type just became known
+        (their traits may have arrived first), plus, if a structure-level
+        annotation trait changed, every cached lock and thermostat (so the new
+        location propagates).
         """
-        if inner.resourceMetas:
-            self._seen_resource_metas = True
-            self._initial_metas_continue = inner.initialResourceMetasContinue
-            for meta in inner.resourceMetas:
-                for trait_meta in meta.traitMetas:
-                    name = trait_meta.type.removeprefix(_NESTLABS_TYPE_URL_PREFIX)
-                    if name == _BOLT_LOCK_TRAIT_NAME:
-                        self._locks_present = True
-
-        touched: set[str] = set()
+        touched = self._ingest_resource_metas(inner)
         annotations_changed = False
         for state in inner.traitStates:
             type_url = state.patch.values.type_url
@@ -320,15 +461,21 @@ class GrpcLockClient:
             if target_class is None:
                 continue
 
+            label = state.traitId.traitLabel
+            if _is_non_live_trait_label(label):
+                continue
+
             unpacked = target_class()
             state.patch.values.Unpack(unpacked)
 
             resource_id = state.traitId.resourceId
             cache_entry = self._trait_cache.setdefault(resource_id, {})
-            cache_entry[full_name] = unpacked
+            cache_entry[label if label in _LABEL_SPECIFIC_TRAITS else full_name] = (
+                unpacked
+            )
 
             if full_name == _BOLT_LOCK_TRAIT_NAME:
-                self._locks_present = True
+                self._devices_present = True
 
             if full_name in _STRUCTURE_ANNOTATION_TRAIT_NAMES:
                 annotations_changed = True
@@ -338,9 +485,39 @@ class GrpcLockClient:
         if annotations_changed:
             self._rebuild_wheres_map()
             for rid, cached_traits in self._trait_cache.items():
-                if _BOLT_LOCK_TRAIT_NAME in cached_traits:
+                if (
+                    _BOLT_LOCK_TRAIT_NAME in cached_traits
+                    or self._resource_types.get(rid) in _THERMOSTAT_MODELS
+                ):
                     touched.add(rid)
 
+        return touched
+
+    def _ingest_resource_metas(
+        self, inner: v2_pb2.ObserveResponse.ObserveResponse
+    ) -> set[str]:
+        """Record resource types; return thermostats whose type just became known."""
+        touched: set[str] = set()
+        if not inner.resourceMetas:
+            return touched
+
+        self._seen_resource_metas = True
+        self._initial_metas_continue = inner.initialResourceMetasContinue
+        for meta in inner.resourceMetas:
+            if meta.type in _THERMOSTAT_MODELS:
+                self._devices_present = True
+                if self._resource_types.get(meta.resourceId) != meta.type:
+                    touched.add(meta.resourceId)
+            if meta.type and meta.resourceId not in self._resource_types:
+                # Thermostat discovery depends on this type, so it is worth
+                # seeing in debug logs when a device doesn't show up.
+                _LOGGER.debug("Observe: %s is a %s", meta.resourceId, meta.type)
+            if meta.type:
+                self._resource_types[meta.resourceId] = meta.type
+            for trait_meta in meta.traitMetas:
+                name = trait_meta.type.removeprefix(_NESTLABS_TYPE_URL_PREFIX)
+                if name == _BOLT_LOCK_TRAIT_NAME:
+                    self._devices_present = True
         return touched
 
     def _rebuild_wheres_map(self) -> None:
@@ -452,43 +629,46 @@ class GrpcLockClient:
                     results.append(touched)
         return results
 
-    def _snapshot_locks(self, touched: set[str]) -> dict[str, LockState]:
-        """Extract LockState for each touched resource from the cache."""
-        out: dict[str, LockState] = {}
+    def _snapshot(self, touched: set[str]) -> ObserveBatch:
+        """Extract the device states for each touched resource from the cache."""
+        batch = ObserveBatch()
         for rid in touched:
             traits = self._trait_cache.get(rid)
             if not traits:
                 continue
-            lock = _extract_lock_state(rid, traits, self._wheres_map)
-            if lock is not None:
-                out[rid] = lock
-        return out
+            if lock := _extract_lock_state(rid, traits, self._wheres_map):
+                batch.locks[rid] = lock
+            elif thermostat := _extract_thermostat_state(
+                rid, self._resource_types.get(rid), traits, self._wheres_map
+            ):
+                batch.thermostats[rid] = thermostat
+        return batch
 
-    def _evaluate_lock_presence(self, now: float) -> None:
-        """Decide whether this account has no locks at all.
+    def _evaluate_device_presence(self, now: float) -> None:
+        """Decide whether this account has no locks or thermostats at all.
 
-        Called after each chunk. Flips `_locks_present` from undetermined to
+        Called after each chunk. Flips `_devices_present` from undetermined to
         False once the gateway has finished its initial resource enumeration
-        without ever mentioning a `BoltLockTrait`, and the settle window has
-        passed. Never overrides a True — one BoltLockTrait anywhere is enough.
+        without ever mentioning a `BoltLockTrait` or a thermostat, and the settle
+        window has passed. Never overrides a True — one device is enough.
         """
-        if self._locks_present is not None:
+        if self._devices_present is not None:
             return
         if not self._seen_resource_metas or self._initial_metas_continue:
             return
         if self._first_observe_at is None:
             return
-        if now - self._first_observe_at < _NO_LOCK_SETTLE_SECONDS:
+        if now - self._first_observe_at < _NO_DEVICE_SETTLE_SECONDS:
             return
-        self._locks_present = False
+        self._devices_present = False
 
-    async def observe_locks(self) -> AsyncIterator[dict[str, LockState]]:
-        """Long-lived observer. Yields `{resource_id: LockState}` per update batch.
+    async def observe(self) -> AsyncIterator[ObserveBatch]:
+        """Long-lived observer. Yields an `ObserveBatch` per update.
 
         Reconnects on transient errors with exponential backoff. Ends the
         iteration — rather than reconnecting forever — once the account is
-        known to have no locks, so accounts without a Nest x Yale lock stop
-        talking to the gateway entirely. Auth failures propagate to the caller
+        known to have no lock or thermostat, so those accounts stop talking to
+        the gateway after the first stream. Auth failures propagate to the caller
         instead of being retried, since retrying a rejected token never
         recovers. Caller is responsible for cancelling the consuming task on
         shutdown.
@@ -507,11 +687,11 @@ class GrpcLockClient:
                 # Re-check on the way out too: a stream that ends right after
                 # the enumeration would otherwise need another connection
                 # before the verdict could be reached.
-                self._evaluate_lock_presence(asyncio.get_running_loop().time())
-                if self._locks_present is False:
+                self._evaluate_device_presence(asyncio.get_running_loop().time())
+                if self._devices_present is False:
                     return
                 # A clean end isn't an error, but still back off. An account
-                # with no lock resources can get the stream closed immediately,
+                # with no device resources can get the stream closed immediately,
                 # which would otherwise reconnect once a second forever.
                 _LOGGER.debug("Observe stream ended; reconnecting in %.1fs", delay)
                 await asyncio.sleep(delay)
@@ -522,29 +702,29 @@ class GrpcLockClient:
                 raise
             except SocketTimeoutError:
                 # The connection was up but stayed silent for _SOCK_READ_TIMEOUT:
-                # the locks were simply quiet. Re-open without growing the backoff;
+                # the devices were simply quiet. Re-open without growing the backoff;
                 # the timeout itself already spaces these out.
                 _LOGGER.debug(
-                    "Lock observe stream idle for %ss; reconnecting", _SOCK_READ_TIMEOUT
+                    "Observe stream idle for %ss; reconnecting", _SOCK_READ_TIMEOUT
                 )
                 delay = _RECONNECT_INITIAL_DELAY
                 await asyncio.sleep(delay)
             except Exception as err:  # noqa: BLE001
-                # Until a lock is known to exist, stream trouble isn't
-                # actionable for the user — most accounts have no lock, and
+                # Until a device is known to exist, stream trouble isn't
+                # actionable for the user — most accounts have none, and
                 # their first stream idles out before the presence check can
                 # settle. Only warn once we know there is something to watch.
-                log = _LOGGER.warning if self._locks_present else _LOGGER.debug
+                log = _LOGGER.warning if self._devices_present else _LOGGER.debug
                 log(
-                    "Lock observe stream error: %r. Reconnecting in %.1fs",
+                    "Observe stream error: %r. Reconnecting in %.1fs",
                     err,
                     delay,
                 )
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)
 
-    async def _observe_once(self) -> AsyncIterator[dict[str, LockState]]:
-        """Single observe-stream session. Yields LockState batches until stream ends."""
+    async def _observe_once(self) -> AsyncIterator[ObserveBatch]:
+        """Single observe-stream session. Yields batches until the stream ends."""
         url = f"https://{self._grpc_host}{OBSERVE_ENDPOINT}"
         body = self._build_observe_request()
         loop = asyncio.get_running_loop()
@@ -572,15 +752,15 @@ class GrpcLockClient:
                     break
                 buffer.extend(chunk)
                 for touched in self._parse_observe_buffer(buffer):
-                    locks = self._snapshot_locks(touched)
-                    if locks:
-                        yield locks
-                self._evaluate_lock_presence(loop.time())
-                if self._locks_present is False:
+                    batch = self._snapshot(touched)
+                    if batch.locks or batch.thermostats:
+                        yield batch
+                self._evaluate_device_presence(loop.time())
+                if self._devices_present is False:
                     _LOGGER.debug(
-                        "Observe enumeration completed with no BoltLockTrait; "
-                        "no Nest x Yale lock on this account. Reload the "
-                        "integration if you add one later"
+                        "Observe enumeration completed with no lock or "
+                        "thermostat on this account. Reload the integration "
+                        "if you add one later"
                     )
                     return
 
@@ -599,7 +779,31 @@ class GrpcLockClient:
         )
         command = v1_pb2.ResourceCommand(traitLabel="bolt_lock")
         command.command.Pack(change_req, type_url_prefix=_NESTLABS_TYPE_URL_PREFIX)
+        await self._send_command(resource_id, command, "Lock command")
 
+    async def send_structure_mode_command(
+        self, structure_resource_id: str, away: bool
+    ) -> None:
+        """Set a structure to Home or Away. Raises on failure."""
+        mode_trait = nest_occupancy_pb2.StructureModeTrait
+        change_req = mode_trait.StructureModeChangeRequest(
+            structureMode=(
+                mode_trait.StructureMode.STRUCTURE_MODE_AWAY
+                if away
+                else mode_trait.StructureMode.STRUCTURE_MODE_HOME
+            ),
+            reason=mode_trait.StructureModeReason.STRUCTURE_MODE_REASON_EXPLICIT_INTENT,
+        )
+        command = v1_pb2.ResourceCommand(traitLabel="structure_mode")
+        command.command.Pack(change_req, type_url_prefix=_NESTLABS_TYPE_URL_PREFIX)
+        await self._send_command(
+            structure_resource_id, command, "Structure mode command"
+        )
+
+    async def _send_command(
+        self, resource_id: str, command: v1_pb2.ResourceCommand, what: str
+    ) -> None:
+        """Send one resource command. Raises on failure."""
         send_req = v1_pb2.SendCommandRequest(
             resourceRequest=v1_pb2.ResourceRequest(
                 resourceId=resource_id, requestId=str(uuid.uuid4())
@@ -636,9 +840,9 @@ class GrpcLockClient:
         )
         if _is_auth_status(resp.status.code, resp.status.message):
             raise NestLockAuthException(
-                f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
+                f"{what} rejected: code={resp.status.code} message={resp.status.message!r}"
             )
         if resp.status.code != 0:
             raise NestLockCommandException(
-                f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
+                f"{what} rejected: code={resp.status.code} message={resp.status.message!r}"
             )

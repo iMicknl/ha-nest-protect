@@ -81,7 +81,7 @@ async def _setup(hass: HomeAssistant, buckets: list[dict]) -> MockConfigEntry:
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.nest_protect._async_observe_locks_loop",
+            "custom_components.nest_protect._async_observe_loop",
             new_callable=AsyncMock,
         ),
     ):
@@ -120,16 +120,10 @@ async def test_home_device_created_for_home_with_protect(hass: HomeAssistant):
         assert hass.states.get(entity_id).state == expected
 
 
-async def test_home_without_protect_is_skipped(hass: HomeAssistant):
-    """A home without a Protect must not get a device or sensors."""
-    entry = await _setup(hass, ACCOUNT_BUCKETS)
+async def test_home_without_protect_gets_no_safety_sensors(hass: HomeAssistant):
+    """A home without a Protect only reports zeros, so it gets no safety sensors."""
+    await _setup(hass, ACCOUNT_BUCKETS)
 
-    assert (
-        dr.async_get(hass).async_get_device_by_identifier(
-            (DOMAIN, "structure.home-2"), entry.entry_id
-        )
-        is None
-    )
     for description in HOME_SENSOR_DESCRIPTIONS:
         assert _entity_id(hass, f"safety_summary.home-2-{description.key}") is None
 
@@ -189,7 +183,7 @@ async def test_subscription_updates_safety_summary(hass: HomeAssistant):
         areas={},
         client=client,
         session_manager=sm,
-        grpc_lock_client=MagicMock(),
+        grpc_client=MagicMock(),
         safety_summaries={initial.object_key: initial},
         stream_health=MagicMock(),
     )
