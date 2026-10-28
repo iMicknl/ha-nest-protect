@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Collection
+from http.cookiejar import http2time
+from http.cookies import Morsel
 from random import randint
 from types import TracebackType
 from typing import Any, cast
@@ -40,15 +43,33 @@ from .models import (
 _LOGGER = logging.getLogger(__package__)
 
 
-def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
+def is_cookie_expired(morsel: Morsel[str]) -> bool:
+    """Return True if a Set-Cookie morsel tells the client to delete the cookie."""
+    # Max-Age takes precedence over Expires (RFC 6265 section 5.3).
+    if max_age := morsel["max-age"]:
+        try:
+            return int(max_age) <= 0
+        except ValueError:
+            pass
+
+    if expires := morsel["expires"]:
+        expires_at = http2time(expires)
+        return expires_at is not None and expires_at <= time.time()
+
+    return False
+
+
+def merge_cookies(
+    original: str, new_cookies: dict[str, str], expired: Collection[str] = ()
+) -> str:
     """Merge new cookie values into an existing cookie header string.
 
-    New values override existing cookies with the same name.
-    Preserves cookies not present in new_cookies.
+    New values override existing cookies with the same name, and cookies named
+    in expired are removed. Preserves all other cookies.
     We don't use aiohttp's cookie jar because the user-provided cookie string
     spans multiple Google domains/paths that the jar's scoping would break.
     """
-    if not new_cookies:
+    if not new_cookies and not expired:
         return original
 
     parsed: dict[str, str] = {}
@@ -59,6 +80,8 @@ def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
             parsed[name.strip()] = value.strip()
 
     parsed.update(new_cookies)
+    for name in expired:
+        parsed.pop(name, None)
 
     return "; ".join(f"{k}={v}" for k, v in parsed.items())
 
@@ -157,7 +180,7 @@ class NestClient:
 
             return self.auth
 
-    async def get_access_token_from_cookies(
+    async def get_access_token_from_cookies(  # noqa: PLR0912
         self, issue_token: str, cookies: str
     ) -> GoogleAuthResponse:
         """Get a Nest refresh token from an issue token and cookies."""
@@ -182,25 +205,59 @@ class NestClient:
         ) as response:
             # Capture refreshed cookies from Google's response
             new_cookies: dict[str, str] = {}
+            expired_cookies: set[str] = set()
             for cookie in response.cookies.values():
-                new_cookies[cookie.key] = cookie.value
+                if is_cookie_expired(cookie):
+                    expired_cookies.add(cookie.key)
+                else:
+                    new_cookies[cookie.key] = cookie.value
 
-            if new_cookies:
-                self.refreshed_cookies = merge_cookies(cookies, new_cookies)
-                self.cookies = self.refreshed_cookies
+            signed_out = False
+            if new_cookies or expired_cookies:
+                merged = merge_cookies(cookies, new_cookies, expired_cookies)
+                # Keep the stored cookies rather than replacing them with an
+                # empty header that later refreshes would silently skip.
+                signed_out = not merged
+                if not signed_out:
+                    self.refreshed_cookies = merged
+                    self.cookies = merged
 
-            result = await response.json()
+            # Server-side and throttling errors are transient; the cookies may
+            # still be valid, so they must not trigger re-authentication.
+            if response.status >= 500 or response.status in (408, 429):
+                raise NestServiceException(
+                    f"{response.status} error while retrieving Google access token"
+                )
 
+            try:
+                result = await response.json()
+            except (ContentTypeError, ValueError) as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                ) from exception
+
+            if not isinstance(result, dict):
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                )
+
+            # Any remaining Google error (USER_LOGGED_OUT, consent_required, ...)
+            # means the cookies or issue_token can no longer be used.
             if "error" in result:
-                # Cookie method
-                if result["error"] == "USER_LOGGED_OUT":
-                    raise BadCredentialsException(
-                        f"{result['error']} - {result['detail']}"
-                    )
+                detail = result.get("detail")
+                raise BadCredentialsException(
+                    f"{result['error']} - {detail}" if detail else result["error"]
+                )
 
-                raise Exception(result["error"])
+            if signed_out:
+                raise BadCredentialsException("Google expired all session cookies")
 
-            self.auth = GoogleAuthResponseForCookies(**result)
+            try:
+                self.auth = GoogleAuthResponseForCookies(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"Unexpected Google access token response fields: {list(result)}"
+                ) from exception
 
             return self.auth
 
@@ -224,7 +281,12 @@ class NestClient:
             },
         ) as response:
             result = await response.json()
-            nest_auth = NestAuthResponse(**result)
+            try:
+                nest_auth = NestAuthResponse(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Nest JWT response"
+                ) from exception
 
         async with self.session.get(
             self.environment.host + "/session",
