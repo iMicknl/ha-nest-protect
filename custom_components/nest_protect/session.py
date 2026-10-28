@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 
 from homeassistant.helpers.storage import Store
@@ -205,6 +205,25 @@ class NestSessionManager:
                 return
 
             await self._async_refresh_session()
+
+    async def async_run_command[T](
+        self,
+        command: Callable[[], Awaitable[T]],
+        auth_errors: type[Exception] | tuple[type[Exception], ...],
+    ) -> T:
+        """Run a command, refreshing the session and retrying once on auth errors.
+
+        A session can be revoked before its advertised expiry, so a valid-looking
+        session is no guarantee the command will be accepted.
+        """
+        await self.ensure_session()
+        try:
+            return await command()
+        except auth_errors:
+            LOGGER.debug("Command rejected by Nest, refreshing session and retrying")
+            if not await self.async_refresh_session():
+                raise
+        return await command()
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
