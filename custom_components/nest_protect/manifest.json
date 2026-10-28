@@ -1,6 +1,10 @@
 {
   "domain": "nest_protect",
   "name": "Nest Protect",
+  "categories": [
+    "security_safety.smoke_co_alarms",
+    "security_safety.locks_access"
+  ],
   "codeowners": [
     "@imicknl"
   ],

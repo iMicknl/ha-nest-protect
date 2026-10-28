@@ -191,7 +191,7 @@ async def _setup(hass, entry, data: FirstDataAPIResponse) -> None:
         await hass.async_block_till_done()
 
 
-async def test_setup_removes_devices_no_longer_on_account(hass):
+async def test_setup_removes_devices_no_longer_on_account(hass, caplog):
     """Setup removes Protects that the account no longer reports."""
     entry = _make_entry(hass)
     current = _register_device(hass, entry, "SERIAL_A", "topaz.A-smoke_status")
@@ -220,6 +220,8 @@ async def test_setup_removes_devices_no_longer_on_account(hass):
         )
         is None
     )
+    # HA reports the deprecated way of detaching a device from its entry.
+    assert "remove_config_entry_id" not in caplog.text
 
     assert entry.runtime_data.listed_device_keys == {
         "topaz.A",

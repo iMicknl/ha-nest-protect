@@ -425,6 +425,8 @@ async def test_reauth_same_account_updates_and_reloads(hass: HomeAssistant) -> N
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
+    # Translated centrally, strings.json has no key for it.
+    assert result["translation_domain"] == "homeassistant"
     assert entry.data["issue_token"] == VALID_ISSUE_TOKEN
     assert entry.data["cookies"] == VALID_COOKIES
     assert entry.data["account_type"] == "production"
@@ -563,6 +565,7 @@ async def test_reconfigure_same_account_updates_and_reloads(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    assert result["translation_domain"] == "homeassistant"
     assert entry.data["issue_token"] == VALID_ISSUE_TOKEN
     assert entry.data["cookies"] == VALID_COOKIES
     assert result["setup_entry_calls"] == 1

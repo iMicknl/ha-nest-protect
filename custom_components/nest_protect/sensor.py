@@ -14,7 +14,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
-    PERCENTAGE,
     UnitOfElectricPotential,
     UnitOfRatio,
     UnitOfTemperature,
@@ -112,7 +111,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         key="battery_level",
         translation_key="battery_level",
         device_class=SensorDeviceClass.BATTERY,
-        native_unit_of_measurement=PERCENTAGE,
+        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         bucket_type=BucketType.KRYPTONITE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -122,7 +121,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         translation_key="battery_level",
         value_fn=milli_volt_to_percentage,
         device_class=SensorDeviceClass.BATTERY,
-        native_unit_of_measurement=PERCENTAGE,
+        native_unit_of_measurement=UnitOfRatio.PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
         bucket_type=BucketType.TOPAZ,
         state_class=SensorStateClass.MEASUREMENT,

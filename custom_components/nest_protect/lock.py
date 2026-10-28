@@ -11,11 +11,12 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import UnitOfRatio
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
+from homeassistant.helpers.entity import Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
@@ -182,6 +183,11 @@ class NestLockEntity(LockEntity):
         )
 
     @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
+
+    @callback
     def _handle_update(self, lock_state: LockState) -> None:
         """Receive a new LockState from the observe loop."""
         previous = self._lock_state
@@ -229,7 +235,7 @@ class NestLockBatterySensor(SensorEntity):
     # No _attr_name / translation key: with has_entity_name and the BATTERY
     # device class, HA names this entity "Battery" on its own.
     _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -258,6 +264,11 @@ class NestLockBatterySensor(SensorEntity):
                 self._handle_update,
             )
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def _handle_update(self, lock_state: LockState) -> None:
