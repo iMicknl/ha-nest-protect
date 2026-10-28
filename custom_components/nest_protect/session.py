@@ -6,7 +6,8 @@ import asyncio
 import datetime
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from homeassistant.helpers.storage import Store
@@ -38,6 +39,13 @@ def _isoformat(timestamp: float) -> str | None:
     return datetime.datetime.fromtimestamp(timestamp, datetime.UTC).isoformat()
 
 
+def _backoff_for(consecutive: int) -> int:
+    """Return the backoff interval in seconds for a consecutive failure count."""
+    if consecutive == 0:
+        return BACKOFF_INTERVALS[0]
+    return BACKOFF_INTERVALS[min(consecutive - 1, len(BACKOFF_INTERVALS) - 1)]
+
+
 class NestSessionManager:
     """Manage Nest session lifecycle: persist, restore, and authenticate.
 
@@ -54,12 +62,18 @@ class NestSessionManager:
         self,
         client: NestClient,
         store: Store,
+        on_cookies_refreshed: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize the session manager."""
         self._client = client
         self._store = store
-        self._consecutive_failures: int = 0
+        self._on_cookies_refreshed = on_cookies_refreshed
+        self._consecutive_auth_failures: int = 0
+        # Kept apart from auth failures so unrelated errors only slow polling
+        # down and never push the user toward re-authentication.
+        self._consecutive_errors: int = 0
         self._refresh_lock = asyncio.Lock()
+        self._refresh_generation: int = 0
         self._google_refreshed_at: float = 0.0
         # Wall-clock times; 0 means "not scheduled" / "not throttled".
         self._google_next_refresh_at: float = 0.0
@@ -73,10 +87,6 @@ class NestSessionManager:
             "throttled": 0,
             "last_error": None,
         }
-        # Invoked after Google credentials are refreshed, so the caller can
-        # persist the cookies Google rotated during it. Every refresh path
-        # runs through here, which the individual call sites did not.
-        self.on_credentials_refreshed: Callable[[], None] | None = None
 
     @property
     def refreshed_cookies(self) -> str | None:
@@ -84,22 +94,29 @@ class NestSessionManager:
         return self._client.refreshed_cookies
 
     @property
-    def consecutive_failures(self) -> int:
-        """Return the number of consecutive failures."""
-        return self._consecutive_failures
+    def consecutive_auth_failures(self) -> int:
+        """Return the number of consecutive authentication failures."""
+        return self._consecutive_auth_failures
+
+    @property
+    def consecutive_errors(self) -> int:
+        """Return the number of consecutive non-authentication errors."""
+        return self._consecutive_errors
 
     @property
     def should_trigger_reauth(self) -> bool:
-        """Return True if failures exceed the threshold."""
-        return self._consecutive_failures >= MAX_AUTH_FAILURES
+        """Return True if authentication failures exceed the threshold."""
+        return self._consecutive_auth_failures >= MAX_AUTH_FAILURES
 
     @property
     def backoff_interval(self) -> int:
-        """Return the current backoff interval in seconds."""
-        if self._consecutive_failures == 0:
-            return BACKOFF_INTERVALS[0]
-        idx = min(self._consecutive_failures - 1, len(BACKOFF_INTERVALS) - 1)
-        return BACKOFF_INTERVALS[idx]
+        """Return the backoff interval in seconds after an auth failure."""
+        return _backoff_for(self._consecutive_auth_failures)
+
+    @property
+    def error_backoff_interval(self) -> int:
+        """Return the backoff interval in seconds after a non-auth error."""
+        return _backoff_for(self._consecutive_errors)
 
     @property
     def google_refresh_diagnostics(self) -> dict[str, Any]:
@@ -112,13 +129,22 @@ class NestSessionManager:
             "keep_warm_disabled": self._keep_warm_disabled,
         }
 
-    def record_failure(self) -> None:
-        """Record a consecutive failure."""
-        self._consecutive_failures += 1
+    def record_auth_failure(self) -> None:
+        """Record a consecutive authentication failure."""
+        self._consecutive_auth_failures += 1
+
+    def record_error(self) -> None:
+        """Record a consecutive non-authentication error."""
+        self._consecutive_errors += 1
+
+    def record_auth_success(self) -> None:
+        """Reset the auth failure counter once Nest accepts the session."""
+        self._consecutive_auth_failures = 0
 
     def record_success(self) -> None:
-        """Reset failure counter on success."""
-        self._consecutive_failures = 0
+        """Reset both counters after a fully successful update."""
+        self._consecutive_auth_failures = 0
+        self._consecutive_errors = 0
 
     async def async_setup(self) -> FirstDataAPIResponse | None:
         """Set up authentication using three-tier fallback.
@@ -206,18 +232,12 @@ class NestSessionManager:
         Raises authentication exceptions from the underlying client on failure.
         """
         if self._client.issue_token and self._client.cookies:
-            try:
+            with self._report_rotated_cookies():
                 auth = await self._async_track_google_request(
                     self._client.get_access_token_from_cookies(
                         self._client.issue_token, self._client.cookies
                     )
                 )
-            finally:
-                # Notify here rather than after async_setup() returns: Google
-                # may already have rotated the cookies, even if the request
-                # then failed, and a retry must not start from the superseded
-                # set.
-                self._notify_credentials_refreshed()
         elif self._client.refresh_token:
             auth = await self._async_track_google_request(
                 self._client.get_access_token_from_refresh_token(
@@ -304,7 +324,8 @@ class NestSessionManager:
         Returns True when a usable token came back.
         """
         LOGGER.debug("Retrieving new Google access token")
-        await self._async_track_google_request(self._client.get_access_token())
+        with self._report_rotated_cookies():
+            await self._async_track_google_request(self._client.get_access_token())
 
         if not self._client.auth or self._client.auth.is_expired():
             # No usable token came back — don't record a refresh that the
@@ -375,67 +396,73 @@ class NestSessionManager:
             delay // 60,
         )
 
-    def _notify_credentials_refreshed(self) -> None:
-        """Let the caller persist cookies Google rotated during a refresh.
-
-        Keyed on the cookies actually captured rather than on the token
-        request succeeding: the client applies rotated Set-Cookie values before
-        it reads the response body, so a body that fails or is cancelled still
-        leaves the rotated set authoritative and the superseded one unusable.
-
-        Called outside the lock, and from a finally block — the callback
-        reaches into Home Assistant to update the config entry, so it has no
-        business holding up other refreshes.
-        """
-        if self._client.refreshed_cookies and self.on_credentials_refreshed:
-            self.on_credentials_refreshed()
-
-    def _nest_session_valid(self) -> bool:
-        return self._client.nest_session is not None and not (
-            self._client.nest_session.is_expired(
+    def _has_valid_session(self) -> bool:
+        """Return True if the current Nest session is not (nearly) expired."""
+        return bool(
+            self._client.nest_session
+            and not self._client.nest_session.is_expired(
                 buffer_seconds=SESSION_EXPIRY_BUFFER_SECONDS
             )
         )
 
     async def ensure_session(self) -> None:
         """Ensure a valid Nest session, keeping the Google credentials warm."""
-        try:
-            # Serialised as a whole: the subscriber, entities and the lock
-            # observer share one manager. Concurrent refreshes would each
-            # rotate the cookies while only the last response survives —
-            # losing the value Google now expects — and would authenticate
-            # against Nest twice over.
-            async with self._refresh_lock:
-                # Re-read validity now the lock is held: a caller that waited
-                # here may find the session it was about to replace renewed.
-                if self._nest_session_valid():
-                    if (
-                        self._keep_warm_due()
-                        and await self._async_keep_google_credentials_warm()
-                    ):
-                        await self._async_persist(self._client.nest_session)
-                    return
+        if self._has_valid_session() and not self._keep_warm_due():
+            return
 
-                await self._async_ensure_google_token()
-                # Persists the session and the refresh clock together.
-                await self._async_refresh_nest_session()
-        finally:
-            self._notify_credentials_refreshed()
+        # Keep-warm takes the lock too: concurrent refreshes would each rotate
+        # the cookies while only the last response survives.
+        async with self._refresh_lock:
+            if self._has_valid_session():
+                if (
+                    self._keep_warm_due()
+                    and await self._async_keep_google_credentials_warm()
+                ):
+                    await self._async_persist(self._client.nest_session)
+                return
+
+            await self._async_refresh_session()
+
+    async def async_run_command[T](
+        self,
+        command: Callable[[], Awaitable[T]],
+        auth_errors: type[Exception] | tuple[type[Exception], ...],
+    ) -> T:
+        """Run a command, refreshing the session and retrying once on auth errors.
+
+        A session can be revoked before its advertised expiry, so a valid-looking
+        session is no guarantee the command will be accepted.
+        """
+        await self.ensure_session()
+        try:
+            return await command()
+        except auth_errors:
+            LOGGER.debug("Command rejected by Nest, refreshing session and retrying")
+            if not await self.async_refresh_session():
+                raise
+        return await command()
 
     async def async_refresh_session(self) -> bool:
         """Force-refresh the Nest session via Google credentials.
 
         Returns True when a fresh Nest session was obtained and persisted.
         """
-        try:
-            async with self._refresh_lock:
-                await self._async_ensure_google_token()
-                return await self._async_refresh_nest_session()
-        finally:
-            self._notify_credentials_refreshed()
+        # Callers force a refresh because Nest rejected the current session, so
+        # expiry can't tell whether it is still stale. Session identity can't
+        # either: it is swapped before persisting, which may still fail. Only a
+        # refresh that fully completed while this one waited counts.
+        generation = self._refresh_generation
 
-    async def _async_refresh_nest_session(self) -> bool:
-        """Re-authenticate against Nest and persist. Caller must hold the lock."""
+        async with self._refresh_lock:
+            if self._refresh_generation != generation:
+                return True
+
+            return await self._async_refresh_session()
+
+    async def _async_refresh_session(self) -> bool:
+        """Refresh the Nest session; the caller must hold the refresh lock."""
+        await self._async_ensure_google_token()
+
         if not self._client.auth:
             return False
 
@@ -443,7 +470,21 @@ class NestSessionManager:
             self._client.auth.access_token
         )
         await self._async_persist(self._client.nest_session)
+        self._refresh_generation += 1
         return True
+
+    @contextmanager
+    def _report_rotated_cookies(self) -> Iterator[None]:
+        """Report cookies rotated by a Google token exchange, even if it fails.
+
+        Google may already have invalidated the previous cookies, so they must be
+        stored before any later auth step gets a chance to fail.
+        """
+        try:
+            yield
+        finally:
+            if self._on_cookies_refreshed and self._client.refreshed_cookies:
+                self._on_cookies_refreshed(self._client.refreshed_cookies)
 
     async def _async_persist(self, nest_session: NestResponse) -> None:
         """Save Nest session to store for reuse across restarts."""

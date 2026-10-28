@@ -40,17 +40,27 @@ Copy the `custom_components/nest_protect` to your custom_components folder and r
 
 The values of "issue_token" and "cookies" are specific to your Google Account. You only need to retrieve them once, as long as you stay logged into your Google Account.
 
-### Recommended: Chrome Extension
+### Recommended: Nest Auth Helper extension
 
-The easiest way to get your credentials is with the **Nest Auth Helper** Chrome extension:
+The easiest way to get your credentials is with the **Nest Auth Helper** browser extension, which works in Chrome, Edge and Firefox (121+):
 
-1. Download `nest-auth-helper.zip` from the [v0.4.4 release](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip) and unzip it.
-1. In Chrome, go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
-1. Sign in to [home.nest.com](https://home.nest.com) in a regular browser window.
+1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.5.0b1/nest-auth-helper.zip) from the v0.5.0b1 release and unzip it.
+1. Load the extension:
+   - **Chrome/Edge**: go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
+   - **Firefox**: go to `about:debugging` → **This Firefox** → **Load Temporary Add-on**, and select `manifest.json` in the unzipped folder.
+1. Sign in to [home.nest.com](https://home.nest.com).
 1. Click the extension icon → **Extract Credentials** → **Copy Code**.
 1. Paste the code into the Home Assistant configuration flow.
 
 Keep the extension installed — you may need it again if Home Assistant requests re-authentication.
+
+> [!TIP]
+> **Getting credentials that last.** Google can end a captured session within hours if the browser you captured it from keeps using the same Google sign-in. Users report the longest-lasting credentials when they:
+>
+> - capture in a **separate browser profile** that is only used for this (Firefox works well; Chrome/Edge captures have more often expired within hours),
+> - close that profile right after copying the code, **without signing out**, and don't use Google in it afterwards.
+>
+> If your cookie string contains `__Secure-1PSIDTS` or `__Secure-3PSIDTS`, the session may be bound to that browser and expire sooner.
 
 ### Manual: Developer Tools
 
