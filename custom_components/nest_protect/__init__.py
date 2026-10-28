@@ -13,6 +13,7 @@ from aiohttp import (
     ClientConnectorError,
     ClientError,
     ClientOSError,
+    ConnectionTimeoutError,
     ServerDisconnectedError,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -24,6 +25,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    BACKOFF_INTERVALS,
     CONF_ACCOUNT_TYPE,
     CONF_COOKIES,
     CONF_ISSUE_TOKEN,
@@ -406,7 +408,7 @@ async def _async_subscribe_for_data(
         result = await entry_data.client.subscribe_for_data(
             entry_data.client.nest_session.access_token,
             entry_data.client.nest_session.userid,
-            data.service_urls["urls"]["transport_url"],
+            entry_data.client.transport_url,
             data.updated_buckets,
         )
 
@@ -476,6 +478,20 @@ async def _async_subscribe_for_data(
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
         await _async_resubscribe(hass, entry, entry_data, data, started)
+
+    # Subclass of TimeoutError, so it must be caught before the long-poll timeout.
+    # Counted apart from the session manager so an outage can't push a later
+    # 401 over the reauth threshold.
+    except ConnectionTimeoutError:
+        entry_data.connection_failures += 1
+        idx = min(entry_data.connection_failures, len(BACKOFF_INTERVALS)) - 1
+        LOGGER.debug(
+            "Subscriber: connection timed out, retrying in %ds (attempt %d).",
+            BACKOFF_INTERVALS[idx],
+            entry_data.connection_failures,
+        )
+        await asyncio.sleep(BACKOFF_INTERVALS[idx])
+        _register_subscribe_task(hass, entry, data)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")

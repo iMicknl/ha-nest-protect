@@ -24,6 +24,8 @@ from .const import (
     DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    SUBSCRIBE_CONNECT_TIMEOUT,
+    SUBSCRIBE_TIMEOUT,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -44,6 +46,7 @@ from .models import (
     NestAuthResponse,
     NestEnvironment,
     NestResponse,
+    NestUrls,
 )
 
 _LOGGER = logging.getLogger(__package__)
@@ -356,6 +359,13 @@ class NestClient:
                     f"{response.status} error while authenticating - {nest_response}. Please create an issue on GitHub."
                 ) from exception
 
+            # The transport host can change between sessions.
+            urls = self.nest_session.urls
+            if isinstance(urls, NestUrls):
+                urls = vars(urls)
+            if urls and urls.get("transport_url"):
+                self.transport_url = urls["transport_url"]
+
             return self.nest_session
 
     async def get_first_data(
@@ -399,8 +409,6 @@ class NestClient:
         updated_buckets: dict,
     ) -> Any:
         """Subscribe for data."""
-        timeout = 600
-
         objects = []
         for bucket in updated_buckets:
             bucket = cast(Bucket, bucket)
@@ -415,7 +423,9 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
-            timeout=ClientTimeout(total=timeout),
+            timeout=ClientTimeout(
+                total=SUBSCRIBE_TIMEOUT, connect=SUBSCRIBE_CONNECT_TIMEOUT
+            ),
             json={
                 "objects": objects,
                 # "timeout": timeout,
