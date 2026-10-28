@@ -1,5 +1,6 @@
 """Tests for the Nest Protect sensor platform."""
 
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -193,3 +194,38 @@ async def test_battery_voltage_sensor_only_created_for_protect(
 
     entities = add_entities.call_args.args[0]
     assert [entity.entity_description.key for entity in entities] == expected_keys
+
+
+@pytest.mark.parametrize(
+    "key", ["last_audio_self_test_end_utc_secs", "latest_manual_test_end_utc_secs"]
+)
+def test_self_test_sensor_is_timezone_aware_timestamp(key: str):
+    """Test that self-test sensors keep the time of day as an aware UTC timestamp."""
+    sensor = build_sensor(key, {key: 1700000000})
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+    assert sensor.native_value == datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC)
+
+
+def test_replace_by_sensor_is_utc_calendar_date():
+    """Test that the replace-by sensor reports the UTC calendar date."""
+    key = "replace_by_date_utc_secs"
+    # 23:30 UTC, so a local-time conversion east of UTC would roll to the next day.
+    sensor = build_sensor(key, {key: 1893454200})
+    assert sensor.device_class == SensorDeviceClass.DATE
+    assert type(sensor.native_value) is date
+    assert sensor.native_value == date(2029, 12, 31)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "replace_by_date_utc_secs",
+        "last_audio_self_test_end_utc_secs",
+        "latest_manual_test_end_utc_secs",
+    ],
+)
+@pytest.mark.parametrize("value", [{}, {"raw": None}, {"raw": 0}], ids=str)
+def test_date_sensors_unknown_when_missing_or_zero(key: str, value: dict):
+    """Test that a missing or zero (never run) value reports unknown, not 1970."""
+    sensor = build_sensor(key, {key: value["raw"]} if value else {})
+    assert sensor.native_value is None
