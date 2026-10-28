@@ -3,20 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from homeassistant.helpers.storage import Store
 
 from .const import (
     BACKOFF_INTERVALS,
+    GOOGLE_THROTTLE_MAX_SECONDS,
+    GOOGLE_THROTTLE_SECONDS,
     LOGGER,
     MAX_AUTH_FAILURES,
     SESSION_EXPIRY_BUFFER_SECONDS,
 )
 from .pynest.client import NestClient
-from .pynest.exceptions import NotAuthenticatedException, PynestException
+from .pynest.exceptions import (
+    GoogleThrottledException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .pynest.models import FirstDataAPIResponse, NestResponse
+
+
+def _isoformat(timestamp: float) -> str | None:
+    if not timestamp:
+        return None
+    return datetime.datetime.fromtimestamp(timestamp, datetime.UTC).isoformat()
 
 
 def _backoff_for(consecutive: int) -> int:
@@ -51,6 +66,16 @@ class NestSessionManager:
         self._consecutive_errors: int = 0
         self._refresh_lock = asyncio.Lock()
         self._refresh_generation: int = 0
+        # Wall-clock times; 0 means "never" / "not throttled".
+        self._google_refreshed_at: float = 0.0
+        self._google_throttled_until: float = 0.0
+        self._google_stats: dict[str, Any] = {
+            "attempts": 0,
+            "successes": 0,
+            "failures": 0,
+            "throttled": 0,
+            "last_error": None,
+        }
 
     @property
     def refreshed_cookies(self) -> str | None:
@@ -81,6 +106,15 @@ class NestSessionManager:
     def error_backoff_interval(self) -> int:
         """Return the backoff interval in seconds after a non-auth error."""
         return _backoff_for(self._consecutive_errors)
+
+    @property
+    def google_refresh_diagnostics(self) -> dict[str, Any]:
+        """Return Google credential refresh statistics for diagnostics."""
+        return {
+            **self._google_stats,
+            "last_refreshed_at": _isoformat(self._google_refreshed_at),
+            "throttled_until": _isoformat(self._google_throttled_until),
+        }
 
     def record_auth_failure(self) -> None:
         """Record a consecutive authentication failure."""
@@ -174,17 +208,83 @@ class NestSessionManager:
         """
         if self._client.issue_token and self._client.cookies:
             with self._report_rotated_cookies():
-                auth = await self._client.get_access_token_from_cookies(
-                    self._client.issue_token, self._client.cookies
+                auth = await self._async_track_google_request(
+                    self._client.get_access_token_from_cookies(
+                        self._client.issue_token, self._client.cookies
+                    )
                 )
         elif self._client.refresh_token:
-            auth = await self._client.get_access_token_from_refresh_token(
-                self._client.refresh_token
+            auth = await self._async_track_google_request(
+                self._client.get_access_token_from_refresh_token(
+                    self._client.refresh_token
+                )
             )
         else:
             return None
 
+        self._record_google_success()
         return await self._client.authenticate(auth.access_token)
+
+    def _record_google_success(self) -> None:
+        self._google_refreshed_at = time.time()
+        self._google_stats["successes"] += 1
+
+    async def _async_track_google_request[T](self, request: Awaitable[T]) -> T:
+        """Await a Google token request, accounting for it and any throttling."""
+        self._google_stats["attempts"] += 1
+        try:
+            return await request
+        except GoogleThrottledException as err:
+            pause = min(
+                max(err.retry_after or 0, GOOGLE_THROTTLE_SECONDS),
+                GOOGLE_THROTTLE_MAX_SECONDS,
+            )
+            self._google_throttled_until = time.time() + pause
+            self._google_stats["throttled"] += 1
+            self._google_stats["last_error"] = type(err).__name__
+            LOGGER.warning(
+                "Google is rate limiting credential refreshes; pausing them for %d minutes",
+                pause // 60,
+            )
+            raise
+        except Exception as err:
+            self._google_stats["failures"] += 1
+            self._google_stats["last_error"] = type(err).__name__
+            raise
+
+    async def _async_call_google(self) -> bool:
+        """Refresh the Google access token. Caller must hold the lock.
+
+        Returns True when a usable token came back.
+        """
+        LOGGER.debug("Retrieving new Google access token")
+        with self._report_rotated_cookies():
+            await self._async_track_google_request(self._client.get_access_token())
+
+        if not self._client.auth or self._client.auth.is_expired():
+            # No usable token came back — don't record a refresh that the
+            # cookies never actually went through.
+            self._google_stats["failures"] += 1
+            self._google_stats["last_error"] = "no usable token"
+            return False
+
+        self._record_google_success()
+        return True
+
+    async def _async_ensure_google_token(self) -> None:
+        """Make sure a valid Google token exists to authenticate against Nest.
+
+        Reuses a valid in-memory token. Caller must hold the lock.
+        """
+        if self._client.auth and not self._client.auth.is_expired():
+            return
+
+        if time.time() < self._google_throttled_until:
+            # Don't add to the load while Google is pushing back. The caller's
+            # retry loop comes back here without reaching the network.
+            raise GoogleThrottledException("Google credential refreshes are paused")
+
+        await self._async_call_google()
 
     def _has_valid_session(self) -> bool:
         """Return True if the current Nest session is not (nearly) expired."""
@@ -244,10 +344,7 @@ class NestSessionManager:
 
     async def _async_refresh_session(self) -> bool:
         """Refresh the Nest session; the caller must hold the refresh lock."""
-        if not self._client.auth or self._client.auth.is_expired():
-            LOGGER.debug("Retrieving new Google access token")
-            with self._report_rotated_cookies():
-                await self._client.get_access_token()
+        await self._async_ensure_google_token()
 
         if not self._client.auth:
             return False

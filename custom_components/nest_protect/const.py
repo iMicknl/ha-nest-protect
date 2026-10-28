@@ -31,6 +31,9 @@ PLATFORMS: list[Platform] = [
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
+# Minimum and maximum pause for all Google refreshes after a throttling response.
+GOOGLE_THROTTLE_SECONDS: Final = 900  # 15 minutes
+GOOGLE_THROTTLE_MAX_SECONDS: Final = 21600  # 6 hours
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min
 # Floors for the subscriber's error backoff, which escalates from there.
