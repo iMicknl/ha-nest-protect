@@ -31,9 +31,9 @@ DEFAULT_NEST_ENVIRONMENT = NEST_ENVIRONMENTS[Environment.PRODUCTION]
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Android "master token" flow. This reproduces how the Nest/Google mobile apps stay
-# logged in: a master token (aas_et/...) that never expires unless the password is
-# changed or access is revoked. From it we mint short-lived nest-account access
-# tokens. The app package + signing cert are the Google Home app's (the same ones
+# logged in: a master token (aas_et/...) with no fixed lifetime, which still ends
+# on a password change, revocation or a Google security logout. From it we mint
+# short-lived nest-account access tokens. The app package + signing cert are the Google Home app's (the same ones
 # used by glocaltokens); only the requested service/scope is Nest-specific.
 EMBEDDED_SETUP_URL = "https://accounts.google.com/EmbeddedSetup"
 GOOGLE_HOME_APP = "com.google.android.apps.chromecast.app"

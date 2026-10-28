@@ -17,6 +17,7 @@ test = [
     "pytest-timeout>=2.3",
     "protobuf>=7.36.2",
     "googleapis-common-protos>=1.76.0",
+    "gpsoauth>=2.0.0",
 ]
 
 [tool.pytest.ini_options]

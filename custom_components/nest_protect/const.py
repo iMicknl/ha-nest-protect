@@ -24,6 +24,14 @@ CONF_MASTER_TOKEN: Final = "master_token"
 CONF_GOOGLE_EMAIL: Final = "google_email"
 CONF_ANDROID_ID: Final = "android_id"
 CONF_OAUTH_TOKEN: Final = "oauth_token"
+CREDENTIAL_KEYS: Final = (
+    CONF_ANDROID_ID,
+    CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
+    CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
+    CONF_REFRESH_TOKEN,
+)
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,

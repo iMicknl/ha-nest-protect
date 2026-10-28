@@ -10,7 +10,11 @@ from typing import Any
 import voluptuous as vol
 from aiohttp import ClientError
 from homeassistant import config_entries
-from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    ConfigEntry,
+)
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
@@ -24,6 +28,7 @@ from .const import (
     CONF_MASTER_TOKEN,
     CONF_OAUTH_TOKEN,
     CONF_REFRESH_TOKEN,
+    CREDENTIAL_KEYS,
     DOMAIN,
     LOGGER,
 )
@@ -128,19 +133,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return [issue_token, cookies, email]
 
+    def _entry_being_updated(self) -> ConfigEntry | None:
+        """Return the entry being reauthenticated or reconfigured, if any."""
+        if self.source == SOURCE_REAUTH:
+            return self._get_reauth_entry()
+        if self.source == SOURCE_RECONFIGURE:
+            return self._get_reconfigure_entry()
+        return None
+
     def _async_create_or_update_entry(
         self, data: dict[str, Any], email: str
     ) -> FlowResult:
         """Create a new entry, or update the entry being reauthenticated/reconfigured."""
-        if self.source not in (SOURCE_REAUTH, SOURCE_RECONFIGURE):
+        entry = self._entry_being_updated()
+        if entry is None:
             self._abort_if_unique_id_configured()
             return self.async_create_entry(title=f"Nest Protect ({email})", data=data)
 
-        entry = (
-            self._get_reauth_entry()
-            if self.source == SOURCE_REAUTH
-            else self._get_reconfigure_entry()
-        )
+        # Setup prefers some credentials over others, so any left over from a
+        # previous method would shadow the ones just entered.
+        data = {
+            **{k: v for k, v in entry.data.items() if k not in CREDENTIAL_KEYS},
+            **data,
+        }
 
         # Entries created before v0.4.0 are keyed by their refresh token instead
         # of the Nest user ID, so the account can't be compared. Adopt the account
@@ -151,11 +166,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ):
                 return self.async_abort(reason="already_configured")
             return self.async_update_reload_and_abort(
-                entry, unique_id=self.unique_id, data_updates=data
+                entry, unique_id=self.unique_id, data=data
             )
 
         self._abort_if_unique_id_mismatch(reason="wrong_account")
-        return self.async_update_reload_and_abort(entry, data_updates=data)
+        return self.async_update_reload_and_abort(entry, data=data)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -216,8 +231,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         The user provides their Google email and a one-time ``oauth_token``
         captured from ``accounts.google.com/EmbeddedSetup``. Home Assistant
-        exchanges it for a master token (which never expires unless the password
-        changes) and stores that. No browser extension or companion service is
+        exchanges it for a master token, which lasts until it is revoked, and
+        stores that. No browser extension or companion service is
         used; renewal happens entirely inside HA.
         """
         errors: dict[str, str] = {}
@@ -226,7 +241,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             email = user_input[CONF_GOOGLE_EMAIL].strip()
             oauth_token = user_input[CONF_OAUTH_TOKEN].strip()
-            android_id = NestClient.generate_android_id()
+            # Reusing the ID keeps every reauth from adding another Android
+            # device to the Google account.
+            entry = self._entry_being_updated()
+            android_id = (
+                entry and entry.data.get(CONF_ANDROID_ID)
+            ) or NestClient.generate_android_id()
             nest = None
             data = None
 
@@ -243,7 +263,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     auth = await client.get_access_token_from_master_token()
                     nest = await client.authenticate(auth.access_token)
                     data = await client.get_first_data(nest.access_token, nest.userid)
-                except TimeoutError, ClientError:
+                except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
@@ -268,33 +288,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ACCOUNT_TYPE: environment,
                 }
 
-                if self._config_entry:
-                    # Reauth: switch to the durable credential, drop legacy creds.
-                    merged = {
-                        key: value
-                        for key, value in self._config_entry.data.items()
-                        if key
-                        not in (
-                            CONF_ISSUE_TOKEN,
-                            CONF_COOKIES,
-                            CONF_REFRESH_TOKEN,
-                        )
-                    }
-                    merged.update(new_data)
-                    self.hass.config_entries.async_update_entry(
-                        self._config_entry, data=merged
-                    )
-                    self.hass.async_create_task(
-                        self.hass.config_entries.async_reload(
-                            self._config_entry.entry_id
-                        )
-                    )
-                    return self.async_abort(reason="reauth_successful")
-
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"Nest Protect ({account_email})", data=new_data
-                )
+                return self._async_create_or_update_entry(new_data, account_email)
 
         return self.async_show_form(
             step_id="master_token",

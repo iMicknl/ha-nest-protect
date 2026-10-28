@@ -6,7 +6,7 @@ import asyncio
 import logging
 import secrets
 import time
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from http.cookiejar import http2time
 from http.cookies import Morsel
 from random import randint
@@ -234,7 +234,7 @@ class NestClient:
     @staticmethod
     def _exchange_token_sync(oauth_token: str, email: str, android_id: str) -> dict:
         """Blocking gpsoauth call: one-time oauth_token -> durable master token."""
-        import gpsoauth  # lazy import: optional runtime dependency
+        import gpsoauth  # keeps the blocking import off the loop
         import requests
 
         try:
@@ -247,7 +247,7 @@ class NestClient:
     @staticmethod
     def _perform_oauth_sync(email: str, master_token: str, android_id: str) -> dict:
         """Blocking gpsoauth call: master token -> short-lived nest-account token."""
-        import gpsoauth  # lazy import: optional runtime dependency
+        import gpsoauth  # keeps the blocking import off the loop
         import requests
 
         try:
@@ -264,6 +264,16 @@ class NestClient:
                 f"Could not reach Google to mint a Nest access token: {exception}"
             ) from exception
 
+    @staticmethod
+    async def _run_gpsoauth(func: Callable[..., dict], *args: str) -> dict:
+        """Run a blocking gpsoauth call in the executor.
+
+        gpsoauth sets no request timeout, and a hung call would hold the session
+        refresh lock forever. The worker thread can't be cancelled, only abandoned.
+        """
+        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+            return await asyncio.get_running_loop().run_in_executor(None, func, *args)
+
     async def exchange_master_token(
         self, oauth_token: str, email: str, android_id: str
     ) -> str:
@@ -271,17 +281,16 @@ class NestClient:
 
         The ``oauth_token`` (starts with ``oauth2_4/``) is captured once from
         ``accounts.google.com/EmbeddedSetup``. The resulting master token
-        (``aas_et/...``) never expires unless the password is changed or access is
-        revoked, mirroring how the mobile apps stay signed in.
+        (``aas_et/...``) has no fixed lifetime, mirroring how the mobile apps stay
+        signed in, but Google can still revoke it.
         """
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, self._exchange_token_sync, oauth_token, email, android_id
+        result = await self._run_gpsoauth(
+            self._exchange_token_sync, oauth_token, email, android_id
         )
 
         master_token = result.get("Token")
         if not master_token:
-            error = result.get("Error", result)
+            error = result.get("Error", list(result))
             raise BadCredentialsException(f"Could not obtain master token: {error}")
 
         self.master_token = master_token
@@ -307,9 +316,7 @@ class NestClient:
         if not (self.master_token and self.google_email and self.android_id):
             raise PynestException("Master token credentials are incomplete")
 
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None,
+        result = await self._run_gpsoauth(
             self._perform_oauth_sync,
             self.google_email,
             self.master_token,
@@ -326,7 +333,7 @@ class NestClient:
                     f"Could not mint access token from master token: {error}"
                 )
             raise NestServiceException(
-                f"Google could not mint a Nest access token: {error or result}"
+                f"Google could not mint a Nest access token: {error or list(result)}"
             )
 
         expiry = int(result.get("Expiry", 0))

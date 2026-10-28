@@ -431,6 +431,33 @@ async def test_reauth_same_account_updates_and_reloads(hass: HomeAssistant) -> N
     assert result["setup_entry_calls"] == 1
 
 
+async def test_reauth_with_cookies_drops_master_token(hass: HomeAssistant) -> None:
+    """A master token left behind would take precedence over the new cookies."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=3,
+        unique_id="user.1",
+        data={
+            "master_token": "aas_et/revoked",
+            "google_email": "user@example.com",
+            "android_id": "abcdef0123456789",
+            "refresh_token": "legacy",
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+    result = await _submit_manual_credentials(hass, result, _mock_client("user.1"))
+
+    assert result["reason"] == "reauth_successful"
+    assert entry.data == {
+        "issue_token": VALID_ISSUE_TOKEN,
+        "cookies": VALID_COOKIES,
+        "account_type": "production",
+    }
+
+
 async def test_reauth_extension_same_account_updates_entry(
     hass: HomeAssistant,
 ) -> None:

@@ -649,6 +649,7 @@ def _make_rotating_client() -> MagicMock:
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test; HSID=test"
     client.refresh_token = None
+    client.master_token = None
     client.nest_session = None
     client.auth = None
     client.refreshed_cookies = None

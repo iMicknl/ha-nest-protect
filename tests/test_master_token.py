@@ -1,5 +1,6 @@
 """Tests for the Google master token auth method."""
 
+import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -73,6 +74,27 @@ async def test_access_token_from_master_token() -> None:
     assert 1790 <= auth.expires_in <= 1800
     assert client.auth is auth
     assert not auth.is_expired()
+
+
+async def test_access_token_from_master_token_times_out() -> None:
+    """A hung gpsoauth call is abandoned instead of holding the refresh lock."""
+    client = NestClient(session=MagicMock())
+    client.master_token = "aas_et/master"
+    client.google_email = "user@example.com"
+    client.android_id = "abcdef0123456789"
+    release = threading.Event()
+
+    with (
+        patch(PERFORM, side_effect=lambda *args: release.wait(5)),
+        patch(
+            "custom_components.nest_protect.pynest.client.REQUEST_TIMEOUT_SECONDS",
+            0.01,
+        ),
+        pytest.raises(TimeoutError),
+    ):
+        await client.get_access_token_from_master_token()
+
+    release.set()
 
 
 async def test_access_token_from_master_token_revoked() -> None:
@@ -306,3 +328,77 @@ async def test_reauth_with_master_token_drops_cookies(hass: HomeAssistant) -> No
         "android_id": "abcdef0123456789",
         "account_type": "production",
     }
+
+
+async def test_reauth_with_master_token_reuses_android_id(hass: HomeAssistant) -> None:
+    """Reauth keeps the stored Android ID instead of registering a new device."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="user.1",
+        version=3,
+        data={
+            "master_token": "aas_et/revoked",
+            "google_email": "user@example.com",
+            "android_id": "0123456789abcdef",
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"method": "master_token"}
+    )
+
+    client = _flow_client()
+    with (
+        patch(
+            "custom_components.nest_protect.config_flow.NestClient",
+            return_value=client,
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_reload",
+            return_value=True,
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                "google_email": "user@example.com",
+                "oauth_token": "oauth2_4/once",
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reauth_successful"
+    client.exchange_master_token.assert_awaited_once_with(
+        "oauth2_4/once", "user@example.com", "0123456789abcdef"
+    )
+    assert entry.data["android_id"] == "0123456789abcdef"
+
+
+async def test_master_token_step_network_error(hass: HomeAssistant) -> None:
+    """A network failure inside gpsoauth shows cannot_connect, not unknown."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"account_type": "production"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"method": "master_token"}
+    )
+
+    client = _flow_client()
+    client.exchange_master_token = AsyncMock(
+        side_effect=NestServiceException("Could not reach Google")
+    )
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient", return_value=client
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"google_email": "user@example.com", "oauth_token": "x"},
+        )
+
+    assert result["errors"] == {"base": "cannot_connect"}
