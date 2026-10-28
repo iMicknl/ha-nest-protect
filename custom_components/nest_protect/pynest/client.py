@@ -189,18 +189,39 @@ class NestClient:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
                 self.cookies = self.refreshed_cookies
 
-            result = await response.json()
+            # Server-side and throttling errors are transient; the cookies may
+            # still be valid, so they must not trigger re-authentication.
+            if response.status >= 500 or response.status in (408, 429):
+                raise NestServiceException(
+                    f"{response.status} error while retrieving Google access token"
+                )
 
+            try:
+                result = await response.json()
+            except (ContentTypeError, ValueError) as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                ) from exception
+
+            if not isinstance(result, dict):
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                )
+
+            # Any remaining Google error (USER_LOGGED_OUT, consent_required, ...)
+            # means the cookies or issue_token can no longer be used.
             if "error" in result:
-                # Cookie method
-                if result["error"] == "USER_LOGGED_OUT":
-                    raise BadCredentialsException(
-                        f"{result['error']} - {result['detail']}"
-                    )
+                detail = result.get("detail")
+                raise BadCredentialsException(
+                    f"{result['error']} - {detail}" if detail else result["error"]
+                )
 
-                raise Exception(result["error"])
-
-            self.auth = GoogleAuthResponseForCookies(**result)
+            try:
+                self.auth = GoogleAuthResponseForCookies(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"Unexpected Google access token response fields: {list(result)}"
+                ) from exception
 
             return self.auth
 
@@ -224,7 +245,12 @@ class NestClient:
             },
         ) as response:
             result = await response.json()
-            nest_auth = NestAuthResponse(**result)
+            try:
+                nest_auth = NestAuthResponse(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Nest JWT response"
+                ) from exception
 
         async with self.session.get(
             self.environment.host + "/session",
