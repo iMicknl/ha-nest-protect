@@ -31,6 +31,12 @@ PLATFORMS: list[Platform] = [
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
+# How often the Google credentials are re-exercised to keep the auth cookies
+# from going stale. Matches the lifetime of a Google access token.
+GOOGLE_REFRESH_INTERVAL_SECONDS: Final = 3600  # 1 hour
+GOOGLE_REFRESH_JITTER_SECONDS: Final = 600  # +/- 10 minutes
+# Backoff for a failed keep-warm refresh while the Nest session is still valid.
+GOOGLE_REFRESH_RETRY_INTERVALS: Final = (900, 1800, 3600)  # seconds
 # Minimum and maximum pause for all Google refreshes after a throttling response.
 GOOGLE_THROTTLE_SECONDS: Final = 900  # 15 minutes
 GOOGLE_THROTTLE_MAX_SECONDS: Final = 21600  # 6 hours
