@@ -13,7 +13,11 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
+from homeassistant.const import (
+    CONCENTRATION_PARTS_PER_MILLION,
+    PERCENTAGE,
+    UnitOfTemperature,
+)
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.typing import StateType
 
@@ -149,6 +153,14 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         device_class=SensorDeviceClass.ENUM,
         options=list(SMOKE_CO_STATUS_TO_STATE.values()),
         icon="mdi:molecule-co",
+    ),
+    # A latched peak rather than a live reading, so no state_class.
+    NestProtectSensorDescription(
+        key="co_previous_peak",
+        translation_key="co_previous_peak",
+        device_class=SensorDeviceClass.CO,
+        native_unit_of_measurement=CONCENTRATION_PARTS_PER_MILLION,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
 ]
