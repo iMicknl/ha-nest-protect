@@ -9,8 +9,9 @@ from aiohttp import ClientError
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
+from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
