@@ -37,6 +37,12 @@ RECONNECT_INTERVALS: Final = (5, 15, 30, 60, 120, 300)  # seconds, capped at 5 m
 # A subscribe attempt that fails sooner than this counts as a connection failure;
 # one that lasted longer ended a normal long-poll cycle.
 SUBSCRIBE_HEALTHY_SECONDS: Final = 30
+# Nest answering a subscribe with data sooner than this counts as a fast answer.
+# One is normal (updates arrive in bursts). A run of them means we keep sending
+# stale bucket revisions, the loop that once flooded the Nest API (#347/#374),
+# so re-subscribes are spaced out and a warning is logged.
+SUBSCRIBE_MIN_INTERVAL_SECONDS: Final = 2
+SUBSCRIBE_FAST_RESPONSE_WARNING: Final = 10
 
 # A healthy long-poll can stay silent for its full client timeout. A single
 # failed request may itself run that long and pause before retrying, and then a
