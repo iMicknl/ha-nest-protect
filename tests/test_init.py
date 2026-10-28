@@ -470,6 +470,7 @@ def _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0):
         client=client,
         session_manager=sm,
         grpc_lock_client=MagicMock(),
+        stream_health=MagicMock(),
     )
     return client, sm
 

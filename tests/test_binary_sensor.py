@@ -114,6 +114,8 @@ async def test_connectivity_sensor_follows_widget_track_updates(hass):
     sensor = build_connectivity_sensor(None)
     sensor.hass = hass
     sensor.entity_id = "binary_sensor.nest_protect_online"
+    # Built without a platform, so there is no entry to read stream health from.
+    sensor._follows_stream_health = False
 
     with patch.object(sensor, "async_write_ha_state") as write_state:
         await sensor.async_added_to_hass()

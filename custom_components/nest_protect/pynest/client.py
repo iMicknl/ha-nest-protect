@@ -25,7 +25,7 @@ from .const import (
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
     SUBSCRIBE_CONNECT_TIMEOUT,
-    SUBSCRIBE_TIMEOUT,
+    SUBSCRIBE_TIMEOUT_SECONDS,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -424,11 +424,11 @@ class NestClient:
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
             timeout=ClientTimeout(
-                total=SUBSCRIBE_TIMEOUT, connect=SUBSCRIBE_CONNECT_TIMEOUT
+                total=SUBSCRIBE_TIMEOUT_SECONDS, connect=SUBSCRIBE_CONNECT_TIMEOUT
             ),
             json={
                 "objects": objects,
-                # "timeout": timeout,
+                # "timeout": SUBSCRIBE_TIMEOUT_SECONDS,
                 # "sessionID": f"ios-${user_id}.{random}.{epoch}",
             },
             headers={

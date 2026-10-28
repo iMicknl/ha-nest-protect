@@ -16,6 +16,7 @@ from .pynest.models import Bucket
 
 if TYPE_CHECKING:
     from .session import NestSessionManager
+    from .stream_health import StreamHealth
 
 
 class NestEntity(Entity):
@@ -23,6 +24,10 @@ class NestEntity(Entity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    # Entities reporting the device's own connectivity set this to False, so
+    # that state stays visible while other values are considered stale.
+    _follows_stream_health = True
+    _stream_health: StreamHealth | None = None
 
     def __init__(
         self,
@@ -106,6 +111,13 @@ class NestEntity(Entity):
 
         return None
 
+    @property
+    def available(self) -> bool:
+        """Return False when updates from Nest have stopped arriving."""
+        if self._stream_health is not None and not self._stream_health.available:
+            return False
+        return super().available
+
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to register update signal handler."""
         self.async_on_remove(
@@ -113,6 +125,15 @@ class NestEntity(Entity):
                 self.hass, self.bucket.object_key, self.update_callback
             )
         )
+
+        if self._follows_stream_health:
+            entry_data = self.hass.data[DOMAIN][self.platform.config_entry.entry_id]
+            self._stream_health = entry_data.stream_health
+            self.async_on_remove(
+                async_dispatcher_connect(
+                    self.hass, self._stream_health.signal, self.async_write_ha_state
+                )
+            )
 
     @callback
     def update_callback(self, bucket: Bucket):

@@ -191,6 +191,7 @@ async def test_subscription_updates_safety_summary(hass: HomeAssistant):
         session_manager=sm,
         grpc_lock_client=MagicMock(),
         safety_summaries={initial.object_key: initial},
+        stream_health=MagicMock(),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
     client.subscribe_for_data = AsyncMock(
