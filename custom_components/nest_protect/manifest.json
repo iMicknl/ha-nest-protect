@@ -31,5 +31,5 @@
     "googleapis-common-protos>=1.56.0",
     "gpsoauth>=2.0.0"
   ],
-  "version": "0.5.0b1"
+  "version": "0.5.0"
 }
