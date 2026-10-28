@@ -16,6 +16,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     CONCENTRATION_PARTS_PER_MILLION,
     PERCENTAGE,
+    UnitOfElectricPotential,
     UnitOfTemperature,
 )
 from homeassistant.helpers.entity import EntityCategory
@@ -77,6 +78,14 @@ class NestProtectSensorDescription(SensorEntityDescription):
     bucket_type: BucketType | None = (
         None  # used to filter out sensors that are not supported by the device
     )
+    # Bucket field to read when it differs from `key`; `key` must stay unique
+    # because it is also the unique_id suffix.
+    value_key: str | None = None
+
+    @property
+    def source_key(self) -> str:
+        """Return the bucket field this sensor reads."""
+        return self.value_key or self.key
 
 
 SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
@@ -89,16 +98,6 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         bucket_type=BucketType.KRYPTONITE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
-    # TODO Due to duplicate keys, this sensor is not available yet
-    # NestProtectSensorDescription(
-    #     key="battery_level",
-    #     name="Battery Voltage",
-    #     value_fn=lambda state: round(state / 1000, 3),
-    #     device_class=SensorDeviceClass.BATTERY,
-    #     native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-    #     entity_category=EntityCategory.DIAGNOSTIC,
-    #     bucket_type=BucketType.TOPAZ,
-    # ),
     NestProtectSensorDescription(
         key="battery_level",
         translation_key="battery_level",
@@ -106,6 +105,19 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         entity_category=EntityCategory.DIAGNOSTIC,
+        bucket_type=BucketType.TOPAZ,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    NestProtectSensorDescription(
+        key="battery_voltage",
+        translation_key="battery_voltage",
+        value_key="battery_level",
+        value_fn=lambda state: round(state / 1000, 3),
+        device_class=SensorDeviceClass.VOLTAGE,
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        suggested_display_precision=3,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
         bucket_type=BucketType.TOPAZ,
         state_class=SensorStateClass.MEASUREMENT,
     ),
@@ -192,14 +204,10 @@ async def async_setup_entry(hass, entry, async_add_devices):
     entities: list[NestProtectSensor | NestHomeSensor] = []
 
     for device in data.devices.values():
-        supported_keys: dict[str, NestProtectSensorDescription] = {
-            description.key: description
-            for description in SENSOR_DESCRIPTIONS
-            if (not description.bucket_type or device.type == description.bucket_type)
-        }
-
-        for key in device.value:
-            if description := supported_keys.get(key):
+        for description in SENSOR_DESCRIPTIONS:
+            if (
+                not description.bucket_type or device.type == description.bucket_type
+            ) and description.source_key in device.value:
                 entities.append(
                     NestProtectSensor(device, description, data.areas, data.client)
                 )
@@ -227,7 +235,7 @@ class NestProtectSensor(NestDescriptiveEntity, SensorEntity):
     @property
     def native_value(self) -> StateType | datetime.datetime:
         """Return the state of the sensor."""
-        state = self.bucket.value.get(self.entity_description.key)
+        state = self.bucket.value.get(self.entity_description.source_key)
         if state is None:
             return None
 

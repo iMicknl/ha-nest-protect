@@ -114,6 +114,9 @@
       "battery_level": {
         "name": "Battery level"
       },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
       "replace_by_date_utc_secs": {
         "name": "Replace by"
       },
