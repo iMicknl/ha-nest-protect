@@ -190,8 +190,9 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
     while True:
         try:
             async for batch in entry_data.grpc_lock_client.observe_locks():
-                # A working stream clears failures recorded by either transport.
-                sm.record_success()
+                # A working stream clears auth failures recorded by either
+                # transport; REST parse errors are the subscriber's own concern.
+                sm.record_auth_success()
                 new_locks: dict[str, LockState] = {}
                 for resource_id, lock_state in batch.items():
                     previous = cache.get(resource_id)
@@ -209,12 +210,12 @@ async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> 
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
-            sm.record_failure()
+            sm.record_auth_failure()
             if sm.should_trigger_reauth:
                 LOGGER.warning(
                     "Lock observer: %d consecutive auth failures, triggering "
                     "re-authentication",
-                    sm.consecutive_failures,
+                    sm.consecutive_auth_failures,
                 )
                 entry.async_start_reauth(hass)
                 return
@@ -391,7 +392,7 @@ async def _async_subscribe_for_data(
             data.updated_buckets,
         )
 
-        sm.record_success()
+        sm.record_auth_success()
         entry_data.connection_failures = 0
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
@@ -446,6 +447,7 @@ async def _async_subscribe_for_data(
             for bucket in objects
         ]
 
+        sm.record_success()
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
@@ -470,12 +472,12 @@ async def _async_subscribe_for_data(
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
-        sm.record_failure()
+        sm.record_auth_failure()
 
         if sm.should_trigger_reauth:
             LOGGER.warning(
                 "Subscriber: %d consecutive auth failures, triggering re-authentication",
-                sm.consecutive_failures,
+                sm.consecutive_auth_failures,
             )
             entry.async_start_reauth(hass)
             return
@@ -483,7 +485,7 @@ async def _async_subscribe_for_data(
         LOGGER.debug(
             "Subscriber: retrying in %ds (attempt %d)",
             sm.backoff_interval,
-            sm.consecutive_failures,
+            sm.consecutive_auth_failures,
         )
         await asyncio.sleep(sm.backoff_interval)
 
@@ -516,12 +518,12 @@ async def _async_subscribe_for_data(
         raise
 
     except Exception:  # pylint: disable=broad-except
-        sm.record_failure()
+        sm.record_error()
         LOGGER.exception(
             "Unknown exception. Please create an issue on GitHub with your logfile. Updates paused for %ds.",
-            sm.backoff_interval,
+            sm.error_backoff_interval,
         )
-        await asyncio.sleep(sm.backoff_interval)
+        await asyncio.sleep(sm.error_backoff_interval)
         _register_subscribe_task(hass, entry, data)
 
 

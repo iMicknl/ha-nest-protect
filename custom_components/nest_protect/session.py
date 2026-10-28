@@ -17,6 +17,13 @@ from .pynest.exceptions import NotAuthenticatedException, PynestException
 from .pynest.models import FirstDataAPIResponse, NestResponse
 
 
+def _backoff_for(consecutive: int) -> int:
+    """Return the backoff interval in seconds for a consecutive failure count."""
+    if consecutive == 0:
+        return BACKOFF_INTERVALS[0]
+    return BACKOFF_INTERVALS[min(consecutive - 1, len(BACKOFF_INTERVALS) - 1)]
+
+
 class NestSessionManager:
     """Manage Nest session lifecycle: persist, restore, and authenticate.
 
@@ -34,7 +41,10 @@ class NestSessionManager:
         """Initialize the session manager."""
         self._client = client
         self._store = store
-        self._consecutive_failures: int = 0
+        self._consecutive_auth_failures: int = 0
+        # Kept apart from auth failures so unrelated errors only slow polling
+        # down and never push the user toward re-authentication.
+        self._consecutive_errors: int = 0
         self._refresh_lock = asyncio.Lock()
         self._refresh_generation: int = 0
 
@@ -44,30 +54,46 @@ class NestSessionManager:
         return self._client.refreshed_cookies
 
     @property
-    def consecutive_failures(self) -> int:
-        """Return the number of consecutive failures."""
-        return self._consecutive_failures
+    def consecutive_auth_failures(self) -> int:
+        """Return the number of consecutive authentication failures."""
+        return self._consecutive_auth_failures
+
+    @property
+    def consecutive_errors(self) -> int:
+        """Return the number of consecutive non-authentication errors."""
+        return self._consecutive_errors
 
     @property
     def should_trigger_reauth(self) -> bool:
-        """Return True if failures exceed the threshold."""
-        return self._consecutive_failures >= MAX_AUTH_FAILURES
+        """Return True if authentication failures exceed the threshold."""
+        return self._consecutive_auth_failures >= MAX_AUTH_FAILURES
 
     @property
     def backoff_interval(self) -> int:
-        """Return the current backoff interval in seconds."""
-        if self._consecutive_failures == 0:
-            return BACKOFF_INTERVALS[0]
-        idx = min(self._consecutive_failures - 1, len(BACKOFF_INTERVALS) - 1)
-        return BACKOFF_INTERVALS[idx]
+        """Return the backoff interval in seconds after an auth failure."""
+        return _backoff_for(self._consecutive_auth_failures)
 
-    def record_failure(self) -> None:
-        """Record a consecutive failure."""
-        self._consecutive_failures += 1
+    @property
+    def error_backoff_interval(self) -> int:
+        """Return the backoff interval in seconds after a non-auth error."""
+        return _backoff_for(self._consecutive_errors)
+
+    def record_auth_failure(self) -> None:
+        """Record a consecutive authentication failure."""
+        self._consecutive_auth_failures += 1
+
+    def record_error(self) -> None:
+        """Record a consecutive non-authentication error."""
+        self._consecutive_errors += 1
+
+    def record_auth_success(self) -> None:
+        """Reset the auth failure counter once Nest accepts the session."""
+        self._consecutive_auth_failures = 0
 
     def record_success(self) -> None:
-        """Reset failure counter on success."""
-        self._consecutive_failures = 0
+        """Reset both counters after a fully successful update."""
+        self._consecutive_auth_failures = 0
+        self._consecutive_errors = 0
 
     async def async_setup(self) -> FirstDataAPIResponse | None:
         """Set up authentication using three-tier fallback.
