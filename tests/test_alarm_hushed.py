@@ -25,7 +25,10 @@ async def setup_entities(hass, value: dict) -> list[NestProtectBinarySensor]:
     entry = SimpleNamespace(entry_id="test")
     hass.data[DOMAIN] = {
         entry.entry_id: SimpleNamespace(
-            devices={device.object_key: device}, areas={}, client=MagicMock()
+            devices={device.object_key: device},
+            areas={},
+            client=MagicMock(),
+            widget_tracks={},
         )
     }
     add_entities = MagicMock()

@@ -11,11 +11,16 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.core import callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import EntityCategory
 
 from . import HomeAssistantNestProtectData
 from .const import DOMAIN
 from .entity import NestDescriptiveEntity
+from .pynest.client import NestClient
+from .pynest.enums import BucketType
+from .pynest.models import Bucket
 
 
 @dataclass
@@ -71,13 +76,6 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         key="battery_health_state",
         translation_key="battery_health_state",
         device_class=BinarySensorDeviceClass.BATTERY,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda state: state,
-    ),
-    NestProtectBinarySensorDescription(
-        key="is_online",
-        translation_key="is_online",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda state: state,
     ),
@@ -189,6 +187,15 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
 ]
 
+# Not a topaz field: online state comes from the Protect's widget_track bucket.
+CONNECTIVITY_DESCRIPTION = NestProtectBinarySensorDescription(
+    key="is_online",
+    translation_key="is_online",
+    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda state: state,
+)
+
 
 async def async_setup_entry(hass, entry, async_add_devices):
     """Set up the Nest Protect binary sensors from a config entry."""
@@ -213,6 +220,20 @@ async def async_setup_entry(hass, entry, async_add_devices):
                     )
                 )
 
+        if device.type == BucketType.TOPAZ:
+            serial = device.object_key.removeprefix("topaz.")
+            widget_track_key = f"widget_track.{serial}"
+            entities.append(
+                NestProtectConnectivitySensor(
+                    device,
+                    CONNECTIVITY_DESCRIPTION,
+                    data.areas,
+                    data.client,
+                    widget_track_key=widget_track_key,
+                    widget_track=data.widget_tracks.get(widget_track_key),
+                )
+            )
+
     async_add_devices(entities)
 
 
@@ -228,3 +249,52 @@ class NestProtectBinarySensor(NestDescriptiveEntity, BinarySensorEntity):
         if state is None:
             return None
         return self.entity_description.value_fn(state)
+
+
+class NestProtectConnectivitySensor(NestProtectBinarySensor):
+    """Representation of a Nest Protect connectivity sensor."""
+
+    def __init__(
+        self,
+        bucket: Bucket,
+        description: NestProtectBinarySensorDescription,
+        areas: dict[str, str],
+        client: NestClient,
+        *,
+        widget_track_key: str,
+        widget_track: Bucket | None,
+    ) -> None:
+        """Initialize the connectivity sensor."""
+        super().__init__(bucket, description, areas, client)
+        self.widget_track_key = widget_track_key
+        self.widget_track = widget_track
+
+    @property
+    def available(self) -> bool:
+        """Stay available so an offline Protect reports off, not unavailable."""
+        return True
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the Protect is online."""
+        if self.widget_track is None:
+            return None
+        state = self.widget_track.value.get("online")
+        if state is None:
+            return None
+        return self.entity_description.value_fn(state)
+
+    async def async_added_to_hass(self) -> None:
+        """Also follow widget_track updates for this Protect."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, self.widget_track_key, self.widget_track_callback
+            )
+        )
+
+    @callback
+    def widget_track_callback(self, bucket: Bucket) -> None:
+        """Update the connectivity state."""
+        self.widget_track = bucket
+        self.async_write_ha_state()
