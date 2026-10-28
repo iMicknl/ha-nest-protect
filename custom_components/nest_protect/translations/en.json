@@ -179,6 +179,9 @@
       },
       "steam_detection_enable": {
         "name": "Steam check"
+      },
+      "away": {
+        "name": "Away mode"
       }
     }
   }

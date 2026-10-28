@@ -120,16 +120,10 @@ async def test_home_device_created_for_home_with_protect(hass: HomeAssistant):
         assert hass.states.get(entity_id).state == expected
 
 
-async def test_home_without_protect_is_skipped(hass: HomeAssistant):
-    """A home without a Protect must not get a device or sensors."""
-    entry = await _setup(hass, ACCOUNT_BUCKETS)
+async def test_home_without_protect_gets_no_safety_sensors(hass: HomeAssistant):
+    """A home without a Protect only reports zeros, so it gets no safety sensors."""
+    await _setup(hass, ACCOUNT_BUCKETS)
 
-    assert (
-        dr.async_get(hass).async_get_device_by_identifier(
-            (DOMAIN, "structure.home-2"), entry.entry_id
-        )
-        is None
-    )
     for description in HOME_SENSOR_DESCRIPTIONS:
         assert _entity_id(hass, f"safety_summary.home-2-{description.key}") is None
 

@@ -30,7 +30,7 @@ class EmptyResponseException(NestServiceException):
 
 
 class NestLockException(PynestException):
-    """Raised when the gRPC-web lock transport fails."""
+    """Raised when the gRPC-web transport fails."""
 
 
 class NestLockAuthException(NestLockException):
@@ -38,4 +38,4 @@ class NestLockAuthException(NestLockException):
 
 
 class NestLockCommandException(NestLockException):
-    """Raised when a lock or unlock command is rejected."""
+    """Raised when the gateway rejects a command."""

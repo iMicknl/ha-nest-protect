@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "weave/common.proto";
+
+package nest.trait.structure;
+
+message HomeInfoSettingsTrait {
+    HouseType houseType = 1;
+    NumThermostats userSpecifiedNumThermostats = 2;
+    RenovationDate renovationDate = 3;
+    float structureArea = 4;
+    MeasurementScale measurementScale = 5;
+
+    enum HouseType {
+        HOUSE_TYPE_UNSPECIFIED = 0;
+        HOUSE_TYPE_SINGLE_FAMILY = 1;
+        HOUSE_TYPE_MULTI_FAMILY = 2;
+        HOUSE_TYPE_CONDO = 3;
+        HOUSE_TYPE_BUSINESS = 4;
+        HOUSE_TYPE_UNKNOWN = 5;
+    }
+
+    enum NumThermostats {
+        NUM_THERMOSTATS_UNSPECIFIED = 0;
+        NUM_THERMOSTATS_ONE = 1;
+        NUM_THERMOSTATS_TWO = 2;
+        NUM_THERMOSTATS_THREE = 3;
+        NUM_THERMOSTATS_FOUR = 4;
+        NUM_THERMOSTATS_FIVE_PLUS = 5;
+        NUM_THERMOSTATS_UNKNOWN = 6;
+    }
+
+    enum RenovationDate {
+        RENOVATION_DATE_UNSPECIFIED = 0;
+        RENOVATION_DATE_DONT_KNOW = 1;
+        RENOVATION_DATE_PRE_1940 = 2;
+        RENOVATION_DATE_1940 = 3;
+        RENOVATION_DATE_1950 = 4;
+        RENOVATION_DATE_1960 = 5;
+        RENOVATION_DATE_1970 = 6;
+        RENOVATION_DATE_1980 = 7;
+        RENOVATION_DATE_1990 = 8;
+        RENOVATION_DATE_2000 = 9;
+        RENOVATION_DATE_2010 = 10;
+        RENOVATION_DATE_UNKNOWN = 11;
+    }
+
+    enum MeasurementScale {
+        MEASUREMENT_SCALE_UNSPECIFIED = 0;
+        MEASUREMENT_SCALE_METRIC = 1;
+        MEASUREMENT_SCALE_IMPERIAL = 2;
+    }
+}
+
+message StructureInfoTrait {
+    string rtsStructureId = 1;
+    uint32 maxNestGuardCount = 2;
+    uint32 maxNestSensorCount = 3;
+    uint32 maxNestConnectCount = 4;
+    uint64 primaryFabricId = 5;
+    weave.common.ResourceId pairerId = 6;
+    uint32 maxNestLockCount = 7;
+    uint32 maxNestMoonstoneCount = 8;
+    uint32 maxNestProtectCount = 9;
+    string name = 10;
+    google.protobuf.Timestamp createdAt = 11;
+    google.protobuf.StringValue hgId = 12;
+    map<string, uint32> maxResourceCounts = 13;
+
+    enum StatusCode {
+        STATUS_CODE_UNSPECIFIED = 0;
+        STATUS_CODE_SUCCESS = 1;
+        STATUS_CODE_FAILURE = 2;
+        STATUS_CODE_UNAUTHORIZED = 3;
+        STATUS_CODE_RESOURCE_NOT_FOUND = 4;
+    }
+
+    message StructureDeletionEvent {
+        weave.common.ResourceId structureId = 1;
+    }
+
+    message SyncStructureMetadataRequest {
+        weave.common.ResourceId resourceId = 1;
+        string name = 2;
+    }
+
+    message SyncStructureMetadataResponse {
+        StatusCode status = 1;
+        weave.common.ResourceId resourceId = 2;
+    }
+}
+
+message StructureLocationTrait {
+    google.protobuf.StringValue postalCode = 1;
+    google.protobuf.StringValue countryCode = 2;
+    repeated string addressLines = 3;
+    google.protobuf.StringValue city = 4;
+    google.protobuf.StringValue state = 5;
+    GeoCoordinate geoCoordinate = 6;
+
+    enum StatusCode {
+        STATUS_CODE_UNSPECIFIED = 0;
+        STATUS_CODE_SUCCESS = 1;
+        STATUS_CODE_FAILURE = 2;
+        STATUS_CODE_UNAUTHORIZED = 3;
+        STATUS_CODE_RESOURCE_NOT_FOUND = 4;
+    }
+
+    message GeoCoordinate {
+        float latitude = 1;
+        float longitude = 2;
+    }
+
+    message UpdateAddressRequest {
+        weave.common.ResourceId resourceId = 1;
+        google.protobuf.StringValue postalCode = 2;
+        google.protobuf.StringValue countryCode = 3;
+        repeated string addressLines = 4;
+        google.protobuf.StringValue city = 5;
+        google.protobuf.StringValue state = 6;
+        GeoCoordinate geoCoordinate = 7;
+        google.protobuf.StringValue timezoneName = 8;
+    }
+
+    message UpdateAddressResponse {
+        StatusCode status = 1;
+        weave.common.ResourceId resourceId = 2;
+    }
+}

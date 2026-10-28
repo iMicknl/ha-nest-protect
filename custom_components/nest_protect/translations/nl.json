@@ -157,6 +157,9 @@
       },
       "steam_detection_enable": {
         "name": "Stoomcontrole"
+      },
+      "away": {
+        "name": "Afwezigheidsmodus"
       }
     }
   }

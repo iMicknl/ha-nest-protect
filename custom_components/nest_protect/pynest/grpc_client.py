@@ -23,6 +23,8 @@ from .exceptions import NestLockAuthException, NestLockCommandException
 from .lock_models import LockBoltState, LockState
 from .protobuf_gen.google.rpc import streambody_pb2
 from .protobuf_gen.nest.trait import located_pb2 as nest_located_pb2
+from .protobuf_gen.nest.trait import occupancy_pb2 as nest_occupancy_pb2
+from .protobuf_gen.nest.trait import structure_pb2 as nest_structure_pb2
 from .protobuf_gen.nestlabs.gateway import v1_pb2, v2_pb2
 from .protobuf_gen.weave.trait import description_pb2 as weave_description_pb2
 from .protobuf_gen.weave.trait import power_pb2 as weave_power_pb2
@@ -74,12 +76,13 @@ _GRPC_UNAUTHENTICATED = 16
 # means the buffer is out of sync and must be reset.
 _WIRE_TYPE_LENGTH_DELIMITED = 2
 
-# The lock-relevant trait types we ask the server to stream. Limited set keeps
-# bandwidth and parsing cost down vs subscribing to the entire trait surface.
+# The trait types we ask the server to stream. Limited set keeps bandwidth and
+# parsing cost down vs subscribing to the entire trait surface.
 # The three nest.trait.located traits are needed to resolve human-readable
 # room labels: DeviceLocatedSettingsTrait lives on each lock, the two
 # *Annotations traits live on the structure resource as a where_id → label
-# catalogue.
+# catalogue. StructureInfoTrait links each protobuf structure to the REST
+# `structure.<id>` bucket, which commands to that home need.
 _TRAIT_NAME_TO_CLASS: dict[str, type] = {
     cls.DESCRIPTOR.full_name: cls
     for cls in (
@@ -90,6 +93,7 @@ _TRAIT_NAME_TO_CLASS: dict[str, type] = {
         nest_located_pb2.DeviceLocatedSettingsTrait,
         nest_located_pb2.LocatedAnnotationsTrait,
         nest_located_pb2.CustomLocatedAnnotationsTrait,
+        nest_structure_pb2.StructureInfoTrait,
     )
 }
 
@@ -102,6 +106,7 @@ _STRUCTURE_ANNOTATION_TRAIT_NAMES: frozenset[str] = frozenset(
     }
 )
 _BOLT_LOCK_TRAIT_NAME = weave_security_pb2.BoltLockTrait.DESCRIPTOR.full_name
+_STRUCTURE_INFO_TRAIT_NAME = nest_structure_pb2.StructureInfoTrait.DESCRIPTOR.full_name
 
 
 def _decode_varint(buffer: bytes | bytearray) -> tuple[int | None, int]:
@@ -263,6 +268,18 @@ class GrpcClient:
         # Monotonic timestamp of the first observe attempt, used for the settle
         # window. Set once and kept across reconnects.
         self._first_observe_at: float | None = None
+
+    def structure_resource_id(self, structure_key: str) -> str | None:
+        """Return the protobuf resource id of the REST bucket `structure.<id>`.
+
+        Known once the observe stream has sent the structure's
+        StructureInfoTrait, which is part of every stream's initial state.
+        """
+        for resource_id, traits in self._trait_cache.items():
+            info = traits.get(_STRUCTURE_INFO_TRAIT_NAME)
+            if info is not None and info.rtsStructureId == structure_key:
+                return resource_id
+        return None
 
     def _headers(self) -> dict[str, str]:
         """Build the protobuf headers using the current session token."""
@@ -599,7 +616,31 @@ class GrpcClient:
         )
         command = v1_pb2.ResourceCommand(traitLabel="bolt_lock")
         command.command.Pack(change_req, type_url_prefix=_NESTLABS_TYPE_URL_PREFIX)
+        await self._send_command(resource_id, command, "Lock command")
 
+    async def send_structure_mode_command(
+        self, structure_resource_id: str, away: bool
+    ) -> None:
+        """Set a structure to Home or Away. Raises on failure."""
+        mode_trait = nest_occupancy_pb2.StructureModeTrait
+        change_req = mode_trait.StructureModeChangeRequest(
+            structureMode=(
+                mode_trait.StructureMode.STRUCTURE_MODE_AWAY
+                if away
+                else mode_trait.StructureMode.STRUCTURE_MODE_HOME
+            ),
+            reason=mode_trait.StructureModeReason.STRUCTURE_MODE_REASON_EXPLICIT_INTENT,
+        )
+        command = v1_pb2.ResourceCommand(traitLabel="structure_mode")
+        command.command.Pack(change_req, type_url_prefix=_NESTLABS_TYPE_URL_PREFIX)
+        await self._send_command(
+            structure_resource_id, command, "Structure mode command"
+        )
+
+    async def _send_command(
+        self, resource_id: str, command: v1_pb2.ResourceCommand, what: str
+    ) -> None:
+        """Send one resource command. Raises on failure."""
         send_req = v1_pb2.SendCommandRequest(
             resourceRequest=v1_pb2.ResourceRequest(
                 resourceId=resource_id, requestId=str(uuid.uuid4())
@@ -636,9 +677,9 @@ class GrpcClient:
         )
         if _is_auth_status(resp.status.code, resp.status.message):
             raise NestLockAuthException(
-                f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
+                f"{what} rejected: code={resp.status.code} message={resp.status.message!r}"
             )
         if resp.status.code != 0:
             raise NestLockCommandException(
-                f"Lock command rejected: code={resp.status.code} message={resp.status.message!r}"
+                f"{what} rejected: code={resp.status.code} message={resp.status.message!r}"
             )

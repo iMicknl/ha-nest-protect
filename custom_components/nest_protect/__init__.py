@@ -91,6 +91,7 @@ class HomeAssistantNestProtectData:
     fast_data_responses: int = 0
     widget_tracks: dict[str, Bucket] = field(default_factory=dict)
     safety_summaries: dict[str, Bucket] = field(default_factory=dict)
+    structures: dict[str, Bucket] = field(default_factory=dict)
     structure_names: dict[str, str] = field(default_factory=dict)
     # Device keys from the account's bucket list at setup; None if not returned.
     listed_device_keys: set[str] | None = None
@@ -163,6 +164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
     device_buckets: list[Bucket] = []
     widget_tracks: dict[str, Bucket] = {}
     safety_summary_buckets: list[Bucket] = []
+    structures: dict[str, Bucket] = {}
     areas: dict[str, str] = {}
     structure_names: dict[str, str] = {}
     listed_device_keys: set[str] | None = None
@@ -176,8 +178,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
         if bucket.type == BucketType.SAFETY_SUMMARY:
             safety_summary_buckets.append(bucket)
 
-        if bucket.type == BucketType.STRUCTURE and (name := bucket.value.get("name")):
-            structure_names[bucket.object_key.removeprefix("structure.")] = name
+        if bucket.type == BucketType.STRUCTURE:
+            structures[bucket.object_key] = bucket
+            if name := bucket.value.get("name"):
+                structure_names[bucket.object_key.removeprefix("structure.")] = name
         if bucket.type == BucketType.BUCKETS:
             listed_device_keys = _listed_device_keys(bucket.value)
 
@@ -211,6 +215,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
         grpc_client=GrpcClient(client),
         widget_tracks=widget_tracks,
         safety_summaries=safety_summaries,
+        structures=structures,
         structure_names=structure_names,
         stream_health=StreamHealth(hass, entry.entry_id),
         listed_device_keys=listed_device_keys,
@@ -258,6 +263,8 @@ def _is_reported_device(
 ) -> bool:
     """Return whether the account still reports this device."""
     reported = {lock.serial_number for lock in entry_data.lock_state_cache.values()}
+    # Home devices are identified by their structure bucket key.
+    reported.update(entry_data.structures)
     for key, bucket in entry_data.devices.items():
         reported.add(key)
         if serial_number := bucket.value.get("serial_number"):
@@ -603,6 +610,13 @@ async def _async_subscribe_for_data(
                 entry_data.widget_tracks[key] = widget_track
 
                 async_dispatcher_send(hass, key, widget_track)
+            # Homes, for Home/Away
+            if key in entry_data.structures:
+                structure = Bucket(**bucket)
+                entry_data.structures[key] = structure
+
+                async_dispatcher_send(hass, key, structure)
+
             # Home safety summaries
             if key in entry_data.safety_summaries:
                 safety_summary = Bucket(**bucket)

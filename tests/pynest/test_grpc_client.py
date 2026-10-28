@@ -1,4 +1,4 @@
-"""Tests for the Nest x Yale lock gRPC-web client."""
+"""Tests for the gRPC-web gateway client."""
 
 from __future__ import annotations
 
@@ -27,6 +27,12 @@ from custom_components.nest_protect.pynest.protobuf_gen.google.rpc import (
 )
 from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
     located_pb2 as nest_located_pb2,
+)
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    occupancy_pb2 as nest_occupancy_pb2,
+)
+from custom_components.nest_protect.pynest.protobuf_gen.nest.trait import (
+    structure_pb2 as nest_structure_pb2,
 )
 from custom_components.nest_protect.pynest.protobuf_gen.nestlabs.gateway import (
     v1_pb2,
@@ -500,6 +506,46 @@ async def test_send_lock_command_classifies_auth_statuses(code, message):
         await client.send_lock_command("X", lock=True)
 
 
+# -- send_structure_mode_command ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("away", "mode"),
+    [
+        (True, nest_occupancy_pb2.StructureModeTrait.StructureMode.STRUCTURE_MODE_AWAY),
+        (
+            False,
+            nest_occupancy_pb2.StructureModeTrait.StructureMode.STRUCTURE_MODE_HOME,
+        ),
+    ],
+)
+async def test_send_structure_mode_command_encodes_the_mode(away, mode):
+    client = _make_client(_FakeResponse(body=_ok_send_command_response()))
+    await client.send_structure_mode_command("STRUCTURE_ABC", away=away)
+
+    req = _decode_send_command(client._nest_client.session.calls[0]["data"])
+    assert req.resourceRequest.resourceId == "STRUCTURE_ABC"
+    assert req.resourceCommands[0].traitLabel == "structure_mode"
+    change = nest_occupancy_pb2.StructureModeTrait.StructureModeChangeRequest()
+    assert req.resourceCommands[0].command.Unpack(change)
+    assert change.structureMode == mode
+    assert (
+        change.reason
+        == nest_occupancy_pb2.StructureModeTrait.StructureModeReason.STRUCTURE_MODE_REASON_EXPLICIT_INTENT
+    )
+
+
+async def test_send_structure_mode_command_names_itself_when_rejected():
+    resp = v1_pb2.SendCommandResponse()
+    resp.status.code = 9
+    client = _make_client(_FakeResponse(body=resp.SerializeToString()))
+
+    with pytest.raises(
+        NestLockCommandException, match="Structure mode command rejected: code=9"
+    ):
+        await client.send_structure_mode_command("STRUCTURE_ABC", away=True)
+
+
 # -- observe frame parsing ---------------------------------------------------
 
 
@@ -794,6 +840,32 @@ def test_ingest_annotation_change_re_emits_every_cached_lock():
     )
     assert touched == {"DEVICE_X"}
     assert client._wheres_map == {"ANNOTATION_FRONT": "Front Door"}
+
+
+# -- structure_resource_id ---------------------------------------------------
+
+
+def _structure_info(rts_structure_id: str) -> nest_structure_pb2.StructureInfoTrait:
+    return nest_structure_pb2.StructureInfoTrait(rtsStructureId=rts_structure_id)
+
+
+def test_structure_resource_id_follows_structure_info():
+    client = _make_client()
+    client._ingest_observe_response(
+        _make_inner(
+            trait_states=[
+                ("STRUCTURE_A", _structure_info("structure.home-1")),
+                ("STRUCTURE_B", _structure_info("structure.home-2")),
+            ]
+        )
+    )
+
+    assert client.structure_resource_id("structure.home-1") == "STRUCTURE_A"
+    assert client.structure_resource_id("structure.home-2") == "STRUCTURE_B"
+
+
+def test_structure_resource_id_is_unknown_before_the_stream_reports_it():
+    assert _make_client().structure_resource_id("structure.home-1") is None
 
 
 # -- _rebuild_wheres_map -----------------------------------------------------
