@@ -1,6 +1,7 @@
 """Test init."""
 
 import asyncio
+import contextlib
 import datetime
 import logging
 from functools import partial
@@ -17,6 +18,7 @@ from custom_components.nest_protect import (
     _async_observe_locks_loop,
     _async_subscribe_for_data,
     _persist_refreshed_cookies,
+    _register_subscribe_task,
 )
 from custom_components.nest_protect.const import (
     BACKOFF_INTERVALS,
@@ -387,6 +389,87 @@ async def test_startup_falls_through_on_401_from_persisted_session(
     assert config_entry_with_cookies.state is ConfigEntryState.LOADED
 
 
+async def test_subscriber_runs_as_entry_background_task(
+    hass,
+    component_setup_with_cookies: ComponentSetup,
+    config_entry_with_cookies: MockConfigEntry,
+):
+    """The subscriber is tied to the entry so HA cancels it on unload."""
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(minutes=30)
+    stored_data = {
+        "nest_session": {
+            "access_token": "persisted-token",
+            "email": "test@test.com",
+            "expires_in": future.strftime("%a, %d-%b-%Y %H:%M:%S") + " GMT",
+            "userid": "user1",
+            "is_superuser": False,
+            "language": "en",
+            "weave": {},
+            "user": "user.1",
+            "is_staff": False,
+        },
+        "transport_url": "https://transport.example.com",
+    }
+    subscribed = asyncio.Event()
+
+    async def subscribe_forever(*args):
+        subscribed.set()
+        await asyncio.Event().wait()
+
+    with (
+        patch(
+            "custom_components.nest_protect.Store.async_load",
+            return_value=stored_data,
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.get_first_data",
+            return_value=MagicMock(
+                updated_buckets=[],
+                service_urls={"urls": {"transport_url": "https://t.example.com"}},
+            ),
+        ),
+        patch(
+            "custom_components.nest_protect.NestClient.subscribe_for_data",
+            side_effect=subscribe_forever,
+        ),
+        patch(
+            "custom_components.nest_protect._async_observe_locks_loop",
+            new=AsyncMock(),
+        ),
+    ):
+        await component_setup_with_cookies()
+        await asyncio.wait_for(subscribed.wait(), 1)
+
+        task = config_entry_with_cookies.runtime_data.subscription_task
+        assert task in config_entry_with_cookies._background_tasks
+
+        await hass.config_entries.async_unload(config_entry_with_cookies.entry_id)
+
+    assert task.cancelled()
+
+
+async def test_resubscribe_runs_as_entry_background_task(hass):
+    """Re-registered subscribers must stay tracked by the config entry."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    _make_subscriber_entry_data(hass, entry)
+
+    async def subscribe_forever(*args):
+        await asyncio.Event().wait()
+
+    with patch(
+        "custom_components.nest_protect._async_subscribe_for_data",
+        side_effect=subscribe_forever,
+    ):
+        task = _register_subscribe_task(hass, entry, _make_subscribe_data())
+
+    assert task is entry.runtime_data.subscription_task
+    assert task in entry._background_tasks
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
 async def test_command_refresh_persists_rotated_cookies(
     hass,
     component_setup_with_cookies: ComponentSetup,
@@ -421,7 +504,7 @@ async def test_command_refresh_persists_rotated_cookies(
     ):
         await component_setup_with_cookies()
 
-    entry_data = hass.data[DOMAIN][config_entry_with_cookies.entry_id]
+    entry_data = config_entry_with_cookies.runtime_data
     client = entry_data.client
     rotated_cookies = f"{COOKIES}; SIDCC=rotated"
 
@@ -464,7 +547,7 @@ def _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0):
     )
     sm._consecutive_auth_failures = consecutive_auth_failures
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
+    entry.runtime_data = HomeAssistantNestProtectData(
         devices={},
         areas={},
         client=client,
@@ -529,7 +612,7 @@ async def test_subscriber_connect_timeout_backs_off(hass):
     )
     entry.add_to_hass(hass)
     client, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=1)
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     client.subscribe_for_data = AsyncMock(
         side_effect=aiohttp.ConnectionTimeoutError("Connection timeout")
     )
@@ -604,7 +687,7 @@ async def test_subscriber_connection_resets_connection_failures(hass, outcome):
     )
     entry.add_to_hass(hass)
     client, sm = _make_subscriber_entry_data(hass, entry)
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     entry_data.connection_failures = 3
     if isinstance(outcome, BaseException):
         client.subscribe_for_data = AsyncMock(side_effect=outcome)
@@ -874,7 +957,7 @@ async def test_lock_batch_clears_auth_failures_only(hass):
     async def observe_locks():
         yield {}
 
-    hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
     await _async_observe_locks_loop(hass, entry)
 
     assert sm.consecutive_auth_failures == 0
@@ -913,8 +996,7 @@ async def test_auth_recovery_handles_refresh_errors(
             raise NestLockAuthException("rejected")
         yield {}
 
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    entry_data.grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
@@ -947,7 +1029,7 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
         yield {}
         raise NestLockAuthException("rejected")
 
-    hass.data[DOMAIN][entry.entry_id].grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
     operation = (
         _async_subscribe_for_data(hass, entry, _make_subscribe_data())
         if transport == "subscriber"
@@ -996,7 +1078,7 @@ async def test_subscriber_backs_off_on_rapid_connection_errors(hass, error):
     entry = _subscriber_entry(hass)
     client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(side_effect=error)
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as register,
@@ -1021,7 +1103,7 @@ async def test_subscriber_resubscribes_immediately_after_long_poll(hass):
     entry = _subscriber_entry(hass)
     client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(side_effect=TimeoutError())
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     entry_data.connection_failures = 2
 
     with (
@@ -1047,7 +1129,7 @@ async def test_subscriber_success_resets_connection_failures(hass):
     entry = _subscriber_entry(hass)
     client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(return_value={"objects": []})
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     entry_data.connection_failures = 4
 
     with (
@@ -1071,11 +1153,23 @@ async def test_subscriber_does_not_spin_while_offline(hass):
         task = asyncio.create_task(
             _async_subscribe_for_data(hass, entry, _make_subscribe_data())
         )
-        hass.data[DOMAIN][entry.entry_id].subscription_task = task
+        entry.runtime_data.subscription_task = task
         await asyncio.sleep(0.2)
-        pending = hass.data[DOMAIN][entry.entry_id].subscription_task
+        pending = entry.runtime_data.subscription_task
         pending.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pending
 
     assert client.subscribe_for_data.await_count == 1
+
+
+async def test_unloaded_entry_does_not_resubscribe(hass):
+    """Without runtime data the subscriber must neither run nor reschedule."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+
+    with patch.object(entry, "async_create_background_task") as create_task:
+        assert _register_subscribe_task(hass, entry, _make_subscribe_data()) is None
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    create_task.assert_not_called()

@@ -8,6 +8,15 @@
   "dhcp": [
     {
       "macaddress": "CCA7C1*"
+    },
+    {
+      "macaddress": "18B430*"
+    },
+    {
+      "macaddress": "641666*"
+    },
+    {
+      "macaddress": "D8EB46*"
     }
   ],
   "documentation": "https://github.com/imicknl/ha-nest-protect",

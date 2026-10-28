@@ -49,7 +49,7 @@ def _buckets_object(keys: list[str], revision: int = 2) -> dict:
 
 async def _run_subscriber(hass, entry, objects, listed_device_keys):
     client, sm = _make_subscriber_entry_data(hass, entry)
-    hass.data[DOMAIN][entry.entry_id].listed_device_keys = listed_device_keys
+    entry.runtime_data.listed_device_keys = listed_device_keys
     client.subscribe_for_data = AsyncMock(return_value={"objects": objects})
 
     with (
@@ -221,7 +221,7 @@ async def test_setup_removes_devices_no_longer_on_account(hass):
         is None
     )
 
-    assert hass.data[DOMAIN][entry.entry_id].listed_device_keys == {
+    assert entry.runtime_data.listed_device_keys == {
         "topaz.A",
         "topaz.SPARSE",
     }
@@ -235,7 +235,7 @@ async def test_setup_without_bucket_list(hass):
 
     await _setup(hass, entry, _setup_data(include_bucket_list=False))
 
-    assert hass.data[DOMAIN][entry.entry_id].listed_device_keys is None
+    assert entry.runtime_data.listed_device_keys is None
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
@@ -253,14 +253,14 @@ async def test_setup_with_malformed_bucket_list(hass, value):
     await _setup(hass, entry, _setup_data(bucket_list_value=value))
 
     assert entry.state is ConfigEntryState.LOADED
-    assert hass.data[DOMAIN][entry.entry_id].listed_device_keys is None
+    assert entry.runtime_data.listed_device_keys is None
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 def _loaded_entry_with_devices(hass) -> MockConfigEntry:
     entry = _make_entry(hass)
     _make_subscriber_entry_data(hass, entry)
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     entry_data.devices = {
         "topaz.A": Bucket("topaz.A", 1, 1, {"serial_number": "SERIAL_A"}),
         "kryptonite.B": Bucket("kryptonite.B", 1, 1, {}),
@@ -297,7 +297,7 @@ async def test_remove_device_blocked_while_reported(hass):
 async def test_remove_home_blocked_while_reported(hass):
     """A home with a safety summary the account still reports cannot be removed."""
     entry = _loaded_entry_with_devices(hass)
-    hass.data[DOMAIN][entry.entry_id].safety_summaries = {
+    entry.runtime_data.safety_summaries = {
         "safety_summary.HOME": Bucket("safety_summary.HOME", 1, 1, {})
     }
     device = _register_device(

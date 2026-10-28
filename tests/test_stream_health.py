@@ -128,9 +128,12 @@ def _build_entity(hass, health, cls=NestEntity) -> NestEntity:
         client=MagicMock(),
     )
     entity.hass = hass
-    entity.platform = MagicMock(config_entry=SimpleNamespace(entry_id="entry"))
+    entity.platform = MagicMock(
+        config_entry=SimpleNamespace(
+            entry_id="entry", runtime_data=SimpleNamespace(stream_health=health)
+        )
+    )
     entity.async_write_ha_state = MagicMock()
-    hass.data.setdefault(DOMAIN, {})["entry"] = SimpleNamespace(stream_health=health)
     return entity
 
 
@@ -200,7 +203,7 @@ async def test_subscriber_records_response(hass, outcome):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    health = hass.data[DOMAIN][entry.entry_id].stream_health
+    health = entry.runtime_data.stream_health
     health.async_record_response.assert_called_once()
 
 
@@ -228,7 +231,7 @@ async def test_subscriber_failure_does_not_record_response(hass, error):
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
-    health = hass.data[DOMAIN][entry.entry_id].stream_health
+    health = entry.runtime_data.stream_health
     health.async_record_response.assert_not_called()
 
 
@@ -248,5 +251,5 @@ async def test_session_refresh_timeout_does_not_record_response(hass):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
     client.subscribe_for_data.assert_not_called()
-    health = hass.data[DOMAIN][entry.entry_id].stream_health
+    health = entry.runtime_data.stream_health
     health.async_record_response.assert_not_called()

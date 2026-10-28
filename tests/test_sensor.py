@@ -12,7 +12,6 @@ from homeassistant.const import (
     UnitOfElectricPotential,
 )
 
-from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.pynest.models import Bucket
 from custom_components.nest_protect.sensor import (
     SENSOR_DESCRIPTIONS,
@@ -114,16 +113,14 @@ async def test_co_previous_peak_only_created_when_reported(
         object_key="topaz.1234", object_revision=1, object_timestamp=1, value=value
     )
     entry = MagicMock(entry_id="test")
-    hass.data[DOMAIN] = {
-        entry.entry_id: SimpleNamespace(
-            devices={device.object_key: device},
-            areas=AREAS,
-            client=MagicMock(),
-            lock_state_cache={},
-            safety_summaries={},
-            structure_names={},
-        )
-    }
+    entry.runtime_data = SimpleNamespace(
+        devices={device.object_key: device},
+        areas=AREAS,
+        client=MagicMock(),
+        lock_state_cache={},
+        safety_summaries={},
+        structure_names={},
+    )
     add_entities = MagicMock()
 
     await async_setup_entry(hass, entry, add_entities)
@@ -178,15 +175,13 @@ async def test_battery_voltage_sensor_only_created_for_protect(
     """Test that only Protect devices get a battery voltage sensor."""
     device = Bucket(object_key, 1, 1, {"battery_level": 5400})
     entry = SimpleNamespace(entry_id="test")
-    hass.data[DOMAIN] = {
-        entry.entry_id: SimpleNamespace(
-            devices={device.object_key: device},
-            areas={},
-            client=MagicMock(),
-            safety_summaries={},
-            structure_names={},
-        )
-    }
+    entry.runtime_data = SimpleNamespace(
+        devices={device.object_key: device},
+        areas={},
+        client=MagicMock(),
+        safety_summaries={},
+        structure_names={},
+    )
     add_entities = MagicMock()
 
     with patch("custom_components.nest_protect.sensor.subscribe_to_lock_discovery"):

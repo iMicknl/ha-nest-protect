@@ -10,7 +10,6 @@ from custom_components.nest_protect.binary_sensor import (
     NestProtectBinarySensor,
     async_setup_entry,
 )
-from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.pynest.models import Bucket
 
 
@@ -23,14 +22,12 @@ async def setup_entities(hass, value: dict) -> list[NestProtectBinarySensor]:
     """Run the binary sensor platform setup for a single device."""
     device = make_bucket(value)
     entry = SimpleNamespace(entry_id="test")
-    hass.data[DOMAIN] = {
-        entry.entry_id: SimpleNamespace(
-            devices={device.object_key: device},
-            areas={},
-            client=MagicMock(),
-            widget_tracks={},
-        )
-    }
+    entry.runtime_data = SimpleNamespace(
+        devices={device.object_key: device},
+        areas={},
+        client=MagicMock(),
+        widget_tracks={},
+    )
     add_entities = MagicMock()
 
     await async_setup_entry(hass, entry, add_entities)

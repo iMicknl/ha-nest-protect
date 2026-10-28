@@ -19,15 +19,18 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfTemperature,
 )
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
-from . import HomeAssistantNestProtectData
-from .const import DOMAIN
+from . import NestProtectConfigEntry
 from .entity import NestDescriptiveEntity, NestHomeEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
+
+PARALLEL_UPDATES = 0
 
 SMOKE_CO_STATUS_TO_STATE: dict[int, str] = {
     0: "ok",
@@ -150,6 +153,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=utc_secs_to_datetime,
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     NestProtectSensorDescription(
         key="latest_manual_test_end_utc_secs",
@@ -157,6 +161,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         value_fn=utc_secs_to_datetime,
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
     ),
     NestProtectSensorDescription(
         key="current_temperature",
@@ -213,10 +218,14 @@ HOME_SENSOR_DESCRIPTIONS: list[SensorEntityDescription] = [
 ]
 
 
-async def async_setup_entry(hass, entry, async_add_devices):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    async_add_devices: AddEntitiesCallback,
+) -> None:
     """Set up the Nest Protect sensors from a config entry."""
 
-    data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    data = entry.runtime_data
     entities: list[NestProtectSensor | NestHomeSensor] = []
 
     for device in data.devices.values():

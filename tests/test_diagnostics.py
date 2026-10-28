@@ -177,7 +177,7 @@ def _load(
     devices = {
         b.object_key: b for b in (_topaz("AAA", SERIAL_A), _topaz("BBB", SERIAL_B))
     }
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = HomeAssistantNestProtectData(
+    entry.runtime_data = HomeAssistantNestProtectData(
         devices=devices,
         areas={"where-1": "Kitchen"},
         client=client,
@@ -393,7 +393,7 @@ async def test_diagnostics_refresh_goes_through_session_manager(hass):
     ):
         result = await async_get_config_entry_diagnostics(hass, entry)
 
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     entry_data.session_manager._store.async_save.assert_awaited_once()
     assert client.nest_session is fresh_session
     assert entry.data[CONF_COOKIES] == "SID=rotated"

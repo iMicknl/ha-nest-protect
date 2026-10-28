@@ -84,17 +84,15 @@ async def test_setup_creates_connectivity_sensor_per_protect(hass):
     sensor = make_bucket("kryptonite.9999", {"current_temperature": 20})
     widget_track = make_bucket(WIDGET_TRACK_KEY, {"online": True})
     entry = SimpleNamespace(entry_id="test")
-    hass.data[DOMAIN] = {
-        entry.entry_id: SimpleNamespace(
-            devices={
-                bucket.object_key: bucket
-                for bucket in (protect, protect_without_track, sensor)
-            },
-            widget_tracks={WIDGET_TRACK_KEY: widget_track},
-            areas={},
-            client=MagicMock(),
-        )
-    }
+    entry.runtime_data = SimpleNamespace(
+        devices={
+            bucket.object_key: bucket
+            for bucket in (protect, protect_without_track, sensor)
+        },
+        widget_tracks={WIDGET_TRACK_KEY: widget_track},
+        areas={},
+        client=MagicMock(),
+    )
     add_entities = MagicMock()
 
     await async_setup_entry(hass, entry, add_entities)
@@ -165,7 +163,7 @@ async def test_connectivity_from_first_data_and_subscriber(
     assert hass.states.get(entity_id).state == STATE_ON
 
     entry = hass.config_entries.async_entries(DOMAIN)[0]
-    entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    entry_data: HomeAssistantNestProtectData = entry.runtime_data
     entry_data.client.nest_session = MagicMock()
     entry_data.client.subscribe_for_data = AsyncMock(
         return_value={

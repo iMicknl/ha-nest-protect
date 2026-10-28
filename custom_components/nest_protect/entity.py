@@ -127,7 +127,7 @@ class NestEntity(Entity):
         )
 
         if self._follows_stream_health:
-            entry_data = self.hass.data[DOMAIN][self.platform.config_entry.entry_id]
+            entry_data = self.platform.config_entry.runtime_data
             self._stream_health = entry_data.stream_health
             self.async_on_remove(
                 async_dispatcher_connect(
