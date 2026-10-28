@@ -40,7 +40,11 @@ async def async_run_entity_command[T](
         return await session_manager.async_run_command(command, auth_errors)
     except BadCredentialsException as err:
         # Google rejected the refresh, so only new credentials can help.
-        entity.platform.config_entry.async_start_reauth(entity.hass)
+        entry = entity.platform.config_entry
+        entry.runtime_data.stream_health.async_mark_unavailable(
+            "Re-authentication required"
+        )
+        entry.async_start_reauth(entity.hass)
         raise HomeAssistantError(f"{failure}: re-authentication required") from err
     except (
         ClientError,

@@ -45,11 +45,22 @@ class StreamHealth:
             self._cancel_stale_timer = None
 
     @callback
+    def async_mark_unavailable(self, reason: str) -> None:
+        """Mark the stream stale now instead of waiting for the deadline."""
+        self.async_stop()
+        self._async_set_unavailable(reason)
+
+    @callback
     def _async_mark_stale(self, _now: datetime) -> None:
         self._cancel_stale_timer = None
-        self.available = False
-        LOGGER.info(
-            "No updates from Nest for %d minutes; marking entities unavailable",
-            STREAM_STALE_AFTER_SECONDS // 60,
+        self._async_set_unavailable(
+            f"No updates from Nest for {STREAM_STALE_AFTER_SECONDS // 60} minutes"
         )
+
+    @callback
+    def _async_set_unavailable(self, reason: str) -> None:
+        if not self.available:
+            return
+        self.available = False
+        LOGGER.info("%s; marking entities unavailable", reason)
         async_dispatcher_send(self._hass, self.signal)

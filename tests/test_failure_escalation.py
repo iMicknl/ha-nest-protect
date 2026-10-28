@@ -196,3 +196,5 @@ async def test_lock_command_with_rejected_credentials_starts_reauth(hass):
         await entity.async_lock()
 
     entity.platform.config_entry.async_start_reauth.assert_called_once_with(hass)
+    health = entity.platform.config_entry.runtime_data.stream_health
+    health.async_mark_unavailable.assert_called_once()

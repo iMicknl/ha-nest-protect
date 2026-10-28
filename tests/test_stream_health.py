@@ -109,6 +109,29 @@ async def test_restored_once_after_outage(hass, freezer, health, caplog):
     assert caplog.text.count("entities are available again") == 1
 
 
+async def test_mark_unavailable_skips_grace_period(hass, freezer, health, caplog):
+    """A stream known to have stopped goes stale at once, until Nest answers."""
+    signals = []
+    async_dispatcher_connect(hass, health.signal, lambda: signals.append(True))
+
+    with caplog.at_level(logging.INFO):
+        health.async_mark_unavailable("Re-authentication required")
+        health.async_mark_unavailable("Re-authentication required")
+        # The cancelled deadline must not report the outage a second time.
+        await _advance(hass, freezer, STALE * 2)
+
+    assert not health.available
+    assert len(signals) == 1
+    assert caplog.text.count("marking entities unavailable") == 1
+    assert "Re-authentication required; marking entities unavailable" in caplog.text
+
+    health.async_record_response()
+    await hass.async_block_till_done()
+
+    assert health.available
+    assert len(signals) == 2
+
+
 async def test_stop_cancels_pending_check(hass, freezer):
     """Unloading must not leave the stale timer behind."""
     tracker = StreamHealth(hass, "entry")

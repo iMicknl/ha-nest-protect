@@ -916,6 +916,7 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
 
     assert sm.consecutive_auth_failures == MAX_AUTH_FAILURES
     mock_reauth.assert_called_once_with(hass)
+    entry.runtime_data.stream_health.async_mark_unavailable.assert_called_once()
 
 
 async def test_subscriber_success_resets_failure_counter(hass):
@@ -1029,7 +1030,7 @@ async def test_lock_batch_clears_auth_failures_only(hass):
     ],
 )
 async def test_auth_recovery_handles_refresh_errors(
-    hass, transport, refresh_error, reauth_expected
+    hass, caplog, transport, refresh_error, reauth_expected
 ):
     """A failed refresh must retry or request reauth without killing the task."""
     entry = MockConfigEntry(domain=DOMAIN, data={})
@@ -1064,6 +1065,35 @@ async def test_auth_recovery_handles_refresh_errors(
 
     assert reauth.call_count == int(reauth_expected)
     assert any(call.args[0] > 0 for call in sleep.call_args_list)
+    health = entry.runtime_data.stream_health
+    assert health.async_mark_unavailable.call_count == int(reauth_expected)
+    # The Google error is the only clue why updates stopped.
+    assert ("Google rejected the stored credentials (revoked)" in caplog.text) is (
+        reauth_expected
+    )
+
+
+async def test_subscriber_rejected_credentials_start_reauth(hass, caplog):
+    """Credentials Google rejects while subscribing stop updates until reauth."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    _, sm = _make_subscriber_entry_data(hass, entry)
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
+        patch.object(
+            sm,
+            "ensure_session",
+            side_effect=BadCredentialsException("USER_LOGGED_OUT"),
+        ),
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    reschedule.assert_not_called()
+    reauth.assert_called_once_with(hass)
+    entry.runtime_data.stream_health.async_mark_unavailable.assert_called_once()
+    assert "Google rejected the stored credentials (USER_LOGGED_OUT)" in caplog.text
 
 
 @pytest.mark.parametrize("transport", ["subscriber", "lock"])

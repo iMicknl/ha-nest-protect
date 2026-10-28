@@ -453,8 +453,13 @@ async def _async_recover_session(
     # Exceptions raised inside a transport's except block bypass its other handlers.
     try:
         await entry_data.session_manager.async_refresh_session()
-    except BadCredentialsException:
-        entry.async_start_reauth(hass)
+    except BadCredentialsException as err:
+        LOGGER.warning(
+            "Google rejected the stored credentials (%s). Please re-authenticate "
+            "the Nest Protect integration",
+            err,
+        )
+        _async_start_reauth(hass, entry, entry_data)
         return False
     except (
         TimeoutError,
@@ -469,6 +474,19 @@ async def _async_recover_session(
         LOGGER.exception("Unexpected error during session recovery; retrying later")
 
     return _is_loaded(entry)
+
+
+@callback
+def _async_start_reauth(
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    entry_data: HomeAssistantNestProtectData,
+) -> None:
+    """Start re-authentication and mark entities unavailable until it completes."""
+    # The entry stays loaded during reauth, so without this the last values keep
+    # passing for live ones until the stale deadline runs out.
+    entry_data.stream_health.async_mark_unavailable("Re-authentication required")
+    entry.async_start_reauth(hass)
 
 
 def _is_loaded(entry: NestProtectConfigEntry) -> bool:
@@ -700,7 +718,7 @@ async def _async_subscribe_for_data(
                 "Subscriber: %d consecutive auth failures, triggering re-authentication",
                 sm.consecutive_auth_failures,
             )
-            entry.async_start_reauth(hass)
+            _async_start_reauth(hass, entry, entry_data)
             return
 
         LOGGER.debug(
@@ -715,11 +733,13 @@ async def _async_subscribe_for_data(
 
         _register_subscribe_task(hass, entry, data)
 
-    except BadCredentialsException:
+    except BadCredentialsException as err:
         LOGGER.warning(
-            "Bad credentials detected. Please re-authenticate the Nest Protect integration."
+            "Google rejected the stored credentials (%s). Please re-authenticate "
+            "the Nest Protect integration",
+            err,
         )
-        entry.async_start_reauth(hass)
+        _async_start_reauth(hass, entry, entry_data)
         return
 
     except NestServiceException:
