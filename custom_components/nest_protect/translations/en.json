@@ -61,6 +61,9 @@
       "heat_status": {
         "name": "Heat status"
       },
+      "hushed_state": {
+        "name": "Alarm hushed"
+      },
       "component_speaker_test_passed": {
         "name": "Speaker test"
       },
@@ -90,6 +93,12 @@
       },
       "component_hum_test_passed": {
         "name": "Humidity test"
+      },
+      "component_als_test_passed": {
+        "name": "Ambient light sensor test"
+      },
+      "component_temp_test_passed": {
+        "name": "Temperature sensor test"
       },
       "removed_from_base": {
         "name": "Removed from base"
@@ -134,6 +143,9 @@
           "warning": "Warning",
           "emergency": "Emergency"
         }
+      },
+      "co_previous_peak": {
+        "name": "CO previous peak"
       }
     },
     "select": {
