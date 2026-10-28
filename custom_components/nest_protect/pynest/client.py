@@ -4,17 +4,27 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Collection
+from http.cookiejar import http2time
+from http.cookies import Morsel
 from random import randint
 from types import TracebackType
 from typing import Any, cast
 
-from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
+from aiohttp import (
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ContentTypeError,
+    FormData,
+)
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
     DEFAULT_NEST_ENVIRONMENT,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    SUBSCRIBE_CONNECT_TIMEOUT,
     SUBSCRIBE_TIMEOUT_SECONDS,
     TOKEN_URL,
     USER_AGENT,
@@ -36,20 +46,57 @@ from .models import (
     NestAuthResponse,
     NestEnvironment,
     NestResponse,
+    NestUrls,
 )
 
 _LOGGER = logging.getLogger(__package__)
 
+TRANSIENT_CLIENT_STATUSES = {408, 429}
 
-def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
+
+def raise_for_transient_status(response: ClientResponse, action: str) -> None:
+    """Raise a NestServiceException for statuses that are worth retrying.
+
+    Checked before the body is parsed: outages often return HTML or an error
+    body that would otherwise be mistaken for an auth failure.
+    """
+    status = response.status
+
+    if status == 502:
+        raise BadGatewayException(f"{status} error while {action}")
+    if status == 504:
+        raise GatewayTimeoutException(f"{status} error while {action}")
+    if status >= 500 or status in TRANSIENT_CLIENT_STATUSES:
+        raise NestServiceException(f"{status} error while {action}")
+
+
+def is_cookie_expired(morsel: Morsel[str]) -> bool:
+    """Return True if a Set-Cookie morsel tells the client to delete the cookie."""
+    # Max-Age takes precedence over Expires (RFC 6265 section 5.3).
+    if max_age := morsel["max-age"]:
+        try:
+            return int(max_age) <= 0
+        except ValueError:
+            pass
+
+    if expires := morsel["expires"]:
+        expires_at = http2time(expires)
+        return expires_at is not None and expires_at <= time.time()
+
+    return False
+
+
+def merge_cookies(
+    original: str, new_cookies: dict[str, str], expired: Collection[str] = ()
+) -> str:
     """Merge new cookie values into an existing cookie header string.
 
-    New values override existing cookies with the same name.
-    Preserves cookies not present in new_cookies.
+    New values override existing cookies with the same name, and cookies named
+    in expired are removed. Preserves all other cookies.
     We don't use aiohttp's cookie jar because the user-provided cookie string
     spans multiple Google domains/paths that the jar's scoping would break.
     """
-    if not new_cookies:
+    if not new_cookies and not expired:
         return original
 
     parsed: dict[str, str] = {}
@@ -60,6 +107,8 @@ def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
             parsed[name.strip()] = value.strip()
 
     parsed.update(new_cookies)
+    for name in expired:
+        parsed.pop(name, None)
 
     return "; ".join(f"{k}={v}" for k, v in parsed.items())
 
@@ -146,6 +195,7 @@ class NestClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         ) as response:
+            raise_for_transient_status(response, "refreshing Google access token")
             result = await response.json()
 
             if "error" in result:
@@ -183,25 +233,54 @@ class NestClient:
         ) as response:
             # Capture refreshed cookies from Google's response
             new_cookies: dict[str, str] = {}
+            expired_cookies: set[str] = set()
             for cookie in response.cookies.values():
-                new_cookies[cookie.key] = cookie.value
+                if is_cookie_expired(cookie):
+                    expired_cookies.add(cookie.key)
+                else:
+                    new_cookies[cookie.key] = cookie.value
 
-            if new_cookies:
-                self.refreshed_cookies = merge_cookies(cookies, new_cookies)
-                self.cookies = self.refreshed_cookies
+            signed_out = False
+            if new_cookies or expired_cookies:
+                merged = merge_cookies(cookies, new_cookies, expired_cookies)
+                # Keep the stored cookies rather than replacing them with an
+                # empty header that later refreshes would silently skip.
+                signed_out = not merged
+                if not signed_out:
+                    self.refreshed_cookies = merged
+                    self.cookies = merged
 
-            result = await response.json()
+            raise_for_transient_status(response, "retrieving Google access token")
 
+            try:
+                result = await response.json()
+            except (ContentTypeError, ValueError) as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                ) from exception
+
+            if not isinstance(result, dict):
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                )
+
+            # Any remaining Google error (USER_LOGGED_OUT, consent_required, ...)
+            # means the cookies or issue_token can no longer be used.
             if "error" in result:
-                # Cookie method
-                if result["error"] == "USER_LOGGED_OUT":
-                    raise BadCredentialsException(
-                        f"{result['error']} - {result['detail']}"
-                    )
+                detail = result.get("detail")
+                raise BadCredentialsException(
+                    f"{result['error']} - {detail}" if detail else result["error"]
+                )
 
-                raise Exception(result["error"])
+            if signed_out:
+                raise BadCredentialsException("Google expired all session cookies")
 
-            self.auth = GoogleAuthResponseForCookies(**result)
+            try:
+                self.auth = GoogleAuthResponseForCookies(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"Unexpected Google access token response fields: {list(result)}"
+                ) from exception
 
             return self.auth
 
@@ -224,8 +303,14 @@ class NestClient:
                 "Referer": self.environment.host,
             },
         ) as response:
+            raise_for_transient_status(response, "requesting Nest JWT")
             result = await response.json()
-            nest_auth = NestAuthResponse(**result)
+            try:
+                nest_auth = NestAuthResponse(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Nest JWT response"
+                ) from exception
 
         async with self.session.get(
             self.environment.host + "/session",
@@ -235,6 +320,7 @@ class NestClient:
                 + (nest_auth.jwt or ""),
             },
         ) as response:
+            raise_for_transient_status(response, "authenticating")
             try:
                 nest_response = await response.json()
             except ContentTypeError as exception:
@@ -272,6 +358,13 @@ class NestClient:
                 raise PynestException(
                     f"{response.status} error while authenticating - {nest_response}. Please create an issue on GitHub."
                 ) from exception
+
+            # The transport host can change between sessions.
+            urls = self.nest_session.urls
+            if isinstance(urls, NestUrls):
+                urls = vars(urls)
+            if urls and urls.get("transport_url"):
+                self.transport_url = urls["transport_url"]
 
             return self.nest_session
 
@@ -330,7 +423,9 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
-            timeout=ClientTimeout(total=SUBSCRIBE_TIMEOUT_SECONDS),
+            timeout=ClientTimeout(
+                total=SUBSCRIBE_TIMEOUT_SECONDS, connect=SUBSCRIBE_CONNECT_TIMEOUT
+            ),
             json={
                 "objects": objects,
                 # "timeout": SUBSCRIBE_TIMEOUT_SECONDS,

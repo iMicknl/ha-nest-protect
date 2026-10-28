@@ -11,6 +11,7 @@ from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
+from .pynest.exceptions import NotAuthenticatedException
 from .pynest.models import Bucket
 
 if TYPE_CHECKING:
@@ -157,6 +158,32 @@ class NestDescriptiveEntity(NestEntity):
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
 
 
+class NestHomeEntity(NestDescriptiveEntity):
+    """Entity that belongs to a Nest home (structure) instead of a device."""
+
+    def __init__(
+        self,
+        bucket: Bucket,
+        description: EntityDescription,
+        home_name: str | None,
+        client: NestClient,
+    ) -> None:
+        """Initialize the home entity."""
+        # Set before super().__init__(), which builds the device info.
+        self.home_name = home_name
+        super().__init__(bucket, description, {}, client)
+
+    def generate_device_info(self) -> DeviceInfo:
+        """Generate device info for the home."""
+        structure_id = self.bucket.object_key.split(".", 1)[1]
+
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"structure.{structure_id}")},
+            name=self.home_name or "Nest Home",
+            manufacturer="Google",
+        )
+
+
 class NestUpdatableEntity(NestDescriptiveEntity):
     """Entity that can push state updates to Nest with session management."""
 
@@ -174,10 +201,13 @@ class NestUpdatableEntity(NestDescriptiveEntity):
 
     async def _async_update_objects(self, objects: list[dict]) -> dict:
         """Update objects with automatic session refresh."""
-        await self.session_manager.ensure_session()
-        return await self.client.update_objects(
-            self.client.nest_session.access_token,
-            self.client.nest_session.userid,
-            self.client.transport_url,
-            objects,
+        return await self.session_manager.async_run_command(
+            # Re-read the session on each attempt to pick up a refreshed token.
+            lambda: self.client.update_objects(
+                self.client.nest_session.access_token,
+                self.client.nest_session.userid,
+                self.client.transport_url,
+                objects,
+            ),
+            NotAuthenticatedException,
         )
