@@ -54,6 +54,12 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         value_fn=lambda state: state != 0,
     ),
     NestProtectBinarySensorDescription(
+        key="hushed_state",
+        translation_key="hushed_state",
+        icon="mdi:bell-sleep",
+        value_fn=lambda state: state,
+    ),
+    NestProtectBinarySensorDescription(
         key="component_speaker_test_passed",
         translation_key="component_speaker_test_passed",
         device_class=BinarySensorDeviceClass.PROBLEM,
@@ -138,6 +144,24 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:water-percent",
+        value_fn=lambda state: not state,
+    ),
+    NestProtectBinarySensorDescription(
+        key="component_als_test_passed",
+        translation_key="component_als_test_passed",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        icon="mdi:brightness-6",
+        value_fn=lambda state: not state,
+    ),
+    NestProtectBinarySensorDescription(
+        key="component_temp_test_passed",
+        translation_key="component_temp_test_passed",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        icon="mdi:thermometer",
         value_fn=lambda state: not state,
     ),
     NestProtectBinarySensorDescription(
