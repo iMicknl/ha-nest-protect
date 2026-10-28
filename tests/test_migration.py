@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 from homeassistant.config_entries import ConfigEntryState
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.nest_protect.config_flow import ConfigFlow
 from custom_components.nest_protect.const import DOMAIN
