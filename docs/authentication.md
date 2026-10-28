@@ -186,7 +186,7 @@ but new ones can no longer be minted from a browser:
 
 For durable auth on new setups, use the **Master token method** instead.
 
-If an `issueToken` response ever includes a `refresh_token`, the integration persists it automatically. Users who already have a legacy `refresh_token` can still use the manual config-flow path.
+Users who already have a legacy `refresh_token` can still use the manual config-flow path.
 
 ---
 
@@ -205,8 +205,7 @@ This is what home.nest.com uses internally. Community integrations (homebridge-n
 ### Runtime refresh (automated within HA)
 
 - HA calls `issueToken` with stored cookies **only when the Nest session or Google access token needs renewal** (not on a fixed 15-minute timer).
-- On startup, one proactive `issueToken` call refreshes cookies before subscribing.
-- Google may return `Set-Cookie` headers; merged cookies, updated `issue_token` URLs, and any rare `refresh_token` values are persisted back to the config entry.
+- Google may return `Set-Cookie` headers; merged cookies are persisted back to the config entry as soon as they are received.
 - Google access token is exchanged for a Nest session via `issue_jwt`.
 - Nest session is used for `subscribe_for_data` (real-time Protect updates).
 
@@ -286,7 +285,7 @@ Only if user already possesses a token from before 2022 deprecation.
 | Cookie auth | `custom_components/nest_protect/pynest/client.py` → `get_access_token_from_cookies` |
 | Refresh token auth (legacy) | `get_access_token_from_refresh_token` |
 | Session tiers + persistence | `custom_components/nest_protect/session.py` |
-| Cookie persist to config | `custom_components/nest_protect/__init__.py` → `_persist_refreshed_auth` |
+| Cookie persist to config | `custom_components/nest_protect/__init__.py` → `_persist_refreshed_cookies` |
 | Chrome extension capture | `chrome_extension/background.js` |
 | Reauth flow | `custom_components/nest_protect/config_flow.py` → `async_step_reauth` |
 

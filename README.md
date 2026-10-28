@@ -10,6 +10,8 @@ Custom component for Home Assistant to interact with Nest Protect devices via an
 
 This integration will add the most important sensors of your Nest Protect device (CO, heat and smoke) and the occupancy if your device is wired (to main power). In addition, it will expose several diagnostic and configuration entities. All sensor values will be updated real-time.
 
+Nest x Yale locks on the same account are also supported. Each lock exposes a `lock` entity (with `lock` / `unlock` actions) and a `sensor` for battery percentage.
+
 > [!NOTE]
 > This integration will also add Nest Temperature Sensor pucks (T5000SF) if present on your account, exposing their temperature and battery. This is currently untested, so behavior may vary - please report any issues.
 
@@ -51,31 +53,55 @@ During setup you choose an authentication method:
    - Open Developer Tools (F12) → **Application** → **Cookies** → `https://accounts.google.com`, find the `oauth_token` cookie (value starts with `oauth2_4/`) and copy its value
    - Enter your Google email and paste the `oauth_token` value into Home Assistant
    - This only needs re-doing if you change your Google password.
-2. **Chrome Extension** - captures `issue_token` + cookies from a live Google session. Cookies expire every few hours (see limitations).
-3. **Manual** - paste `issue_token` and `cookies` yourself (see below). Cookies expire every few hours.
+2. **Nest Auth Helper extension** - captures `issue_token` + cookies from a live Google session (see [below](#nest-auth-helper-extension)). Cookies expire every few hours (see limitations).
+3. **Manual** - paste `issue_token` and `cookies` yourself (see [below](#manual-developer-tools)). Cookies expire every few hours.
 
-## Retrieving `issue_token` and `cookies` (manual / extension methods)
+The values of "issue_token" and "cookies" are specific to your Google Account. You only need to retrieve them once, as long as you stay logged into your Google Account.
+
+### Nest Auth Helper extension
+
+The easiest way to get your credentials is with the **Nest Auth Helper** browser extension, which works in Chrome, Edge and Firefox (121+):
+
+1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.5.0b1/nest-auth-helper.zip) from the v0.5.0b1 release and unzip it.
+1. Load the extension:
+   - **Chrome/Edge**: go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
+   - **Firefox**: go to `about:debugging` → **This Firefox** → **Load Temporary Add-on**, and select `manifest.json` in the unzipped folder.
+1. Sign in to [home.nest.com](https://home.nest.com).
+1. Click the extension icon → **Extract Credentials** → **Copy Code**.
+1. Paste the code into the Home Assistant configuration flow.
+
+Keep the extension installed — you may need it again if Home Assistant requests re-authentication.
+
+> [!TIP]
+> **Getting credentials that last.** Google can end a captured session within hours if the browser you captured it from keeps using the same Google sign-in. Users report the longest-lasting credentials when they:
+>
+> - capture in a **separate browser profile** that is only used for this (Firefox works well; Chrome/Edge captures have more often expired within hours),
+> - close that profile right after copying the code, **without signing out**, and don't use Google in it afterwards.
+>
+> If your cookie string contains `__Secure-1PSIDTS` or `__Secure-3PSIDTS`, the session may be bound to that browser and expire sooner.
+
+### Manual: Developer Tools
+
+If you prefer not to use the extension, you can extract the credentials manually using Chrome/Edge DevTools.
+
+> **Important:** Third-party cookies must be enabled for `home.nest.com`, otherwise the site will enter a redirect loop. Do **not** use an Incognito/Private window, as these block third-party cookies by default.
+>
+> - **Chrome**: Settings → Privacy and Security → Third-party cookies → Allow third-party cookies (or add `home.nest.com` to "Sites that can always use cookies").
+> - **Edge**: Settings → Cookies and site permissions → Manage and delete cookies and site data → Disable "Block third-party cookies."
+
+1. Open a Chrome/Edge browser tab (regular window, not incognito).
+1. Open Developer Tools (F12 or View → Developer → Developer Tools).
+1. Click on the **Network** tab. Make sure **Preserve Log** is checked.
+1. In the **Filter** box, enter `issueToken`.
+1. Go to [home.nest.com](https://home.nest.com), and click **Sign in with Google**. Log into your account.
+1. One network call (beginning with `iframerpc`) will appear in the Dev Tools window. Click on it.
+1. In the Headers tab, under General, copy the entire **Request URL** (beginning with `https://accounts.google.com`). This is your `issue_token`.
+1. In the **Filter** box, enter `oauth2/iframe`.
+1. Several network calls will appear in the Dev Tools window. Click on the last iframe call.
+1. In the **Headers** tab, under **Request Headers**, copy the entire **cookie** value (the whole string with many field/value pairs — do not include the `cookie:` name). This is your `cookies`.
+1. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
 
 (adapted from [homebridge-nest documentation](https://github.com/chrisjshull/homebridge-nest))
-
-The values of "issue_token" and "cookies" are specific to your Google Account. To get them, follow these steps (only needs to be done once, as long as you stay logged into your Google Account).
-
-1. Open a Chrome/Edge browser tab in Incognito Mode.
-1. Allow third-party cookies in your browser settings to prevent the Nest website from entering a redirect loop. Follow these steps:
-
-   - **In Chrome**: Go to Settings, select Privacy and Security -> Third-party cookies. Enable "Allow third-party cookies."
-   - **In Edge**: Go to Settings, select Cookies and site permissions -> Manage and delete cookies and site data. Disable "Block third-party cookies."
-
-1. Open Developer Tools (View/Developer/Developer Tools).
-1. Click on **Network** tab. Make sure 'Preserve Log' is checked.
-1. In the **Filter** box, enter `issueToken`
-1. Go to home.nest.com, and click **Sign in with Google**. Log into your account.
-1. One network call (beginning with iframerpc) will appear in the Dev Tools window. Click on it.
-1. In the Headers tab, under General, copy the entire Request URL (beginning with https://accounts.google.com). This is your _'issue_token'_ in the configuration form.
-1. In the **Filter** box, enter `oauth2/iframe`
-1. Several network calls will appear in the Dev Tools window. Click on the last iframe call.
-1. In the **Headers** tab, under **Request Headers**, copy the entire cookie (include the whole string which is several lines long and has many field/value pairs - do not include the cookie: name). This is your _'cookies'_ in the configuration form.
-1. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
 
 ## Advanced
 

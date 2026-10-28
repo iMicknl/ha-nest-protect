@@ -5,22 +5,29 @@ requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
-    "homeassistant>=2026.4.4",
-    "prek>=0.4.1",
-    "ruff>=0.15.15",
+    "homeassistant>=2026.10.2",
+    "prek>=0.5.7",
+    "ruff>=0.17.2",
 ]
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23.8",
-    "pytest-homeassistant-custom-component>=0.13.333",
-    "pytest-socket>=0.7",
+    "pytest-homeassistant-custom-component>=0.13.373",
+    "pytest-socket>=0.8.1",
     "pytest-timeout>=2.3",
+    "protobuf>=7.36.2",
+    "googleapis-common-protos>=1.76.0",
 ]
 
 [tool.pytest.ini_options]
 timeout = 10
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+extend-exclude = [
+    "custom_components/nest_protect/pynest/protobuf_gen",
+]
 
 [tool.ruff.lint]
 select = [
@@ -105,6 +112,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "SLF001", "PLR2004"]
+"scripts/generate_protos.py" = ["S603"]  # protoc argv is built from fixed paths
 "custom_components/nest_protect/__init__.py" = ["BLE001", "PLR0912", "PLR0915", "SIM102"]
 "custom_components/nest_protect/sensor.py" = ["ERA001", "PLR2004"]
 "custom_components/nest_protect/binary_sensor.py" = ["ERA001"]

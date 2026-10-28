@@ -1,6 +1,10 @@
 {
   "domain": "nest_protect",
   "name": "Nest Protect",
+  "categories": [
+    "security_safety.smoke_co_alarms",
+    "security_safety.locks_access"
+  ],
   "codeowners": [
     "@imicknl"
   ],
@@ -8,11 +12,24 @@
   "dhcp": [
     {
       "macaddress": "CCA7C1*"
+    },
+    {
+      "macaddress": "18B430*"
+    },
+    {
+      "macaddress": "641666*"
+    },
+    {
+      "macaddress": "D8EB46*"
     }
   ],
   "documentation": "https://github.com/imicknl/ha-nest-protect",
-  "iot_class": "cloud_polling",
+  "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/imicknl/ha-nest-protect/issues",
-  "requirements": ["gpsoauth>=1.1.0"],
-  "version": "1.0.0"
+  "requirements": [
+    "protobuf>=6.31.1",
+    "googleapis-common-protos>=1.56.0",
+    "gpsoauth>=1.1.0"
+  ],
+  "version": "0.5.0b1"
 }

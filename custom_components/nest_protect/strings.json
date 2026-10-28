@@ -37,8 +37,8 @@
         }
       },
       "account_link": {
-        "title": "Connect Your Nest Account",
-        "description": "Follow these steps to get your credentials:\n\n1. Open an **Incognito/Private** browser window\n2. Enable **third-party cookies** in browser settings\n3. Go to [home.nest.com]({nest_url}) and sign in with Google\n4. Open **Developer Tools** (F12) → **Network** tab → Check **Preserve Log**\n5. In the filter box, type `issueToken` and copy the full **Request URL**\n6. In the filter box, type `oauth2/iframe`, click the last request, and copy the entire **Cookie** header value\n\n⚠️ Do not log out of home.nest.com after copying credentials",
+        "title": "Connect Your Nest Account (Manual)",
+        "description": "Follow these steps to get your credentials:\n\n1. Open a **regular** Chrome/Edge browser window (not Incognito — third-party cookies must be enabled)\n2. Open **Developer Tools** (F12) → **Network** tab → Check **Preserve Log**\n3. In the filter box, type `issueToken`\n4. Go to [home.nest.com]({nest_url}) and sign in with Google\n5. Click the `iframerpc` request and copy the full **Request URL**\n6. In the filter box, type `oauth2/iframe`, click the last request, and copy the entire **Cookie** header value\n\n⚠️ Do not log out of home.nest.com after copying credentials.",
         "data": {
           "issue_token": "Issue Token URL",
           "cookies": "Cookies"
@@ -59,13 +59,7 @@
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
-      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
-    }
-  },
-  "issues": {
-    "cookie_auth_expired": {
-      "title": "Nest Protect authentication expired for {title}",
-      "description": "Your Nest credentials have expired or were revoked. Re-authenticate to restore updates. The **Master token** method is the most durable option (it only expires when you change your Google password); the cookie/extension methods expire every few hours. See docs/authentication.md for details."
+      "wrong_account": "The credentials belong to a different Nest account than the one configured. Sign in with the original account, or add the other account as a new entry."
     }
   },
   "entity": {
@@ -78,6 +72,9 @@
       },
       "heat_status": {
         "name": "Heat status"
+      },
+      "hushed_state": {
+        "name": "Alarm hushed"
       },
       "component_speaker_test_passed": {
         "name": "Speaker test"
@@ -109,6 +106,12 @@
       "component_hum_test_passed": {
         "name": "Humidity test"
       },
+      "component_als_test_passed": {
+        "name": "Ambient light sensor test"
+      },
+      "component_temp_test_passed": {
+        "name": "Temperature sensor test"
+      },
       "removed_from_base": {
         "name": "Removed from base"
       },
@@ -123,6 +126,9 @@
       "battery_level": {
         "name": "Battery level"
       },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
       "replace_by_date_utc_secs": {
         "name": "Replace by"
       },
@@ -134,6 +140,33 @@
       },
       "current_temperature": {
         "name": "Temperature"
+      },
+      "smoke_status_sensor": {
+        "name": "Smoke alarm state",
+        "state": {
+          "ok": "OK",
+          "testing": "Testing",
+          "warning": "Warning",
+          "emergency": "Emergency"
+        }
+      },
+      "co_status_sensor": {
+        "name": "CO alarm state",
+        "state": {
+          "ok": "OK",
+          "testing": "Testing",
+          "warning": "Warning",
+          "emergency": "Emergency"
+        }
+      },
+      "co_previous_peak": {
+        "name": "CO previous peak"
+      },
+      "total_critical_failures": {
+        "name": "Safety critical failures"
+      },
+      "total_warnings": {
+        "name": "Safety warnings"
       }
     },
     "select": {
