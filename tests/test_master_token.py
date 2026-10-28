@@ -58,6 +58,19 @@ async def test_exchange_master_token_failure() -> None:
     assert client.master_token is None
 
 
+async def test_exchange_master_token_transient_error() -> None:
+    """A Google error that doesn't reject the token isn't shown as invalid_auth."""
+    client = NestClient(session=MagicMock())
+
+    with (
+        patch(EXCHANGE, return_value={"Error": "ServiceUnavailable"}),
+        pytest.raises(NestServiceException, match="ServiceUnavailable"),
+    ):
+        await client.exchange_master_token(
+            "oauth2_4/once", "user@example.com", "abcdef0123456789"
+        )
+
+
 async def test_access_token_from_master_token() -> None:
     """The minted token and its expiry become the client's auth."""
     client = NestClient(session=MagicMock())
@@ -77,7 +90,11 @@ async def test_access_token_from_master_token() -> None:
 
 
 async def test_access_token_from_master_token_times_out() -> None:
-    """A hung gpsoauth call is abandoned instead of holding the refresh lock."""
+    """A hung gpsoauth call is a service error, so callers back off.
+
+    A plain TimeoutError would reach the subscriber's long-poll handler, which
+    resubscribes immediately.
+    """
     client = NestClient(session=MagicMock())
     client.master_token = "aas_et/master"
     client.google_email = "user@example.com"
@@ -90,11 +107,35 @@ async def test_access_token_from_master_token_times_out() -> None:
             "custom_components.nest_protect.pynest.client.REQUEST_TIMEOUT_SECONDS",
             0.01,
         ),
-        pytest.raises(TimeoutError),
+        pytest.raises(NestServiceException, match="didn't answer"),
     ):
         await client.get_access_token_from_master_token()
 
     release.set()
+
+
+async def test_gpsoauth_not_called_again_while_previous_call_hangs() -> None:
+    """Each hung call keeps an executor thread, so don't start another one."""
+    client = NestClient(session=MagicMock())
+    client.master_token = "aas_et/master"
+    client.google_email = "user@example.com"
+    client.android_id = "abcdef0123456789"
+    release = threading.Event()
+
+    with (
+        patch(PERFORM, side_effect=lambda *args: release.wait(5)) as perform,
+        patch(
+            "custom_components.nest_protect.pynest.client.REQUEST_TIMEOUT_SECONDS",
+            0.01,
+        ),
+    ):
+        with pytest.raises(NestServiceException):
+            await client.get_access_token_from_master_token()
+        with pytest.raises(NestServiceException, match="still"):
+            await client.get_access_token_from_master_token()
+
+    release.set()
+    assert perform.call_count == 1
 
 
 async def test_access_token_from_master_token_revoked() -> None:
@@ -143,11 +184,11 @@ async def test_access_token_from_master_token_network_error() -> None:
 
 
 async def test_access_token_from_master_token_incomplete() -> None:
-    """Missing email or android_id is a PynestException, not a Google call."""
+    """Missing email or android_id asks for reauth instead of retrying forever."""
     client = NestClient(session=MagicMock())
     client.master_token = "aas_et/master"
 
-    with patch(PERFORM) as perform, pytest.raises(PynestException):
+    with patch(PERFORM) as perform, pytest.raises(BadCredentialsException):
         await client.get_access_token_from_master_token()
 
     perform.assert_not_called()
@@ -402,3 +443,113 @@ async def test_master_token_step_network_error(hass: HomeAssistant) -> None:
         )
 
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def _start_master_token_flow(hass: HomeAssistant) -> str:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"account_type": "production"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"method": "master_token"}
+    )
+    return result["flow_id"]
+
+
+async def test_master_token_step_retry_reuses_master_token(
+    hass: HomeAssistant,
+) -> None:
+    """A retry after a later step failed doesn't spend the oauth_token again.
+
+    Google accepts each oauth_token once, so exchanging it again would fail with
+    invalid_auth and force a new EmbeddedSetup capture.
+    """
+    flow_id = await _start_master_token_flow(hass)
+    user_input = {"google_email": "user@example.com", "oauth_token": "oauth2_4/once"}
+
+    client = _flow_client()
+    client.authenticate.side_effect = [
+        NestServiceException("502 error while authenticating"),
+        client.authenticate.return_value,
+    ]
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient", return_value=client
+    ) as client_cls:
+        client_cls.generate_android_id.side_effect = [
+            "abcdef0123456789",
+            "fedcba9876543210",
+        ]
+        result = await hass.config_entries.flow.async_configure(flow_id, user_input)
+        assert result["errors"] == {"base": "cannot_connect"}
+
+        result = await hass.config_entries.flow.async_configure(flow_id, user_input)
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    client.exchange_master_token.assert_awaited_once()
+    client.get_access_token_from_master_token.assert_awaited_with(
+        "aas_et/master", "user@example.com", "abcdef0123456789"
+    )
+    assert result["data"]["android_id"] == "abcdef0123456789"
+
+
+async def test_master_token_step_new_oauth_token_is_exchanged(
+    hass: HomeAssistant,
+) -> None:
+    """A different oauth_token on retry is exchanged instead of reusing the old one."""
+    flow_id = await _start_master_token_flow(hass)
+
+    client = _flow_client()
+    client.authenticate.side_effect = [
+        NestServiceException("502 error while authenticating"),
+        client.authenticate.return_value,
+    ]
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient", return_value=client
+    ) as client_cls:
+        client_cls.generate_android_id.return_value = "abcdef0123456789"
+        for oauth_token in ("oauth2_4/first", "oauth2_4/second"):
+            result = await hass.config_entries.flow.async_configure(
+                flow_id,
+                {"google_email": "user@example.com", "oauth_token": oauth_token},
+            )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert client.exchange_master_token.await_count == 2
+
+
+async def test_master_token_step_logs_unexpected_pynest_error(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unexpected error on this experimental path leaves a trace in the log."""
+    flow_id = await _start_master_token_flow(hass)
+
+    client = _flow_client()
+    client.authenticate.side_effect = PynestException("unexpected Nest JWT response")
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient", return_value=client
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            flow_id,
+            {"google_email": "user@example.com", "oauth_token": "oauth2_4/once"},
+        )
+
+    assert result["errors"] == {"base": "unknown"}
+    assert "unexpected Nest JWT response" in caplog.text
+
+
+async def test_master_token_step_blank_field(hass: HomeAssistant) -> None:
+    """A blank field gets the generic auth error, not the extension's message."""
+    flow_id = await _start_master_token_flow(hass)
+
+    client = _flow_client()
+    with patch(
+        "custom_components.nest_protect.config_flow.NestClient", return_value=client
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            flow_id, {"google_email": "user@example.com", "oauth_token": "  "}
+        )
+
+    assert result["errors"] == {"base": "invalid_auth"}
+    client.exchange_master_token.assert_not_called()

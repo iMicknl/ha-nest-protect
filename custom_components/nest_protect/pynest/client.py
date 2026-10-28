@@ -135,6 +135,7 @@ class NestClient:
     master_token: str | None = None
     google_email: str | None = None
     android_id: str | None = None
+    _gpsoauth_call: asyncio.Future[dict] | None = None
     # Legacy Auth
     refresh_token: str | None = None
     # Cookie Auth
@@ -264,15 +265,33 @@ class NestClient:
                 f"Could not reach Google to mint a Nest access token: {exception}"
             ) from exception
 
-    @staticmethod
-    async def _run_gpsoauth(func: Callable[..., dict], *args: str) -> dict:
+    async def _run_gpsoauth(self, func: Callable[..., dict], *args: str) -> dict:
         """Run a blocking gpsoauth call in the executor.
 
         gpsoauth sets no request timeout, and a hung call would hold the session
-        refresh lock forever. The worker thread can't be cancelled, only abandoned.
+        refresh lock forever. The worker thread can't be cancelled, only abandoned,
+        and it keeps an executor thread shared with all of Home Assistant. So
+        no new call starts until an abandoned one finishes.
         """
-        async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-            return await asyncio.get_running_loop().run_in_executor(None, func, *args)
+        if self._gpsoauth_call and not self._gpsoauth_call.done():
+            raise NestServiceException(
+                "Google still hasn't answered the previous sign-in request"
+            )
+
+        self._gpsoauth_call = asyncio.get_running_loop().run_in_executor(
+            None, func, *args
+        )
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                # Shielded so the timeout leaves the call running, which marks the
+                # thread as still busy.
+                return await asyncio.shield(self._gpsoauth_call)
+        except TimeoutError as exception:
+            # A plain TimeoutError reads as an ended long-poll to the subscriber,
+            # which would retry without backing off.
+            raise NestServiceException(
+                f"Google didn't answer within {REQUEST_TIMEOUT_SECONDS}s"
+            ) from exception
 
     async def exchange_master_token(
         self, oauth_token: str, email: str, android_id: str
@@ -290,8 +309,12 @@ class NestClient:
 
         master_token = result.get("Token")
         if not master_token:
-            error = result.get("Error", list(result))
-            raise BadCredentialsException(f"Could not obtain master token: {error}")
+            error = result.get("Error")
+            if error in MASTER_TOKEN_CREDENTIAL_ERRORS:
+                raise BadCredentialsException(f"Could not obtain master token: {error}")
+            raise NestServiceException(
+                f"Google could not exchange the oauth_token: {error or list(result)}"
+            )
 
         self.master_token = master_token
         self.google_email = email
@@ -314,7 +337,7 @@ class NestClient:
             self.android_id = android_id
 
         if not (self.master_token and self.google_email and self.android_id):
-            raise PynestException("Master token credentials are incomplete")
+            raise BadCredentialsException("Master token credentials are incomplete")
 
         result = await self._run_gpsoauth(
             self._perform_oauth_sync,

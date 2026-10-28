@@ -33,19 +33,18 @@ from .const import (
     LOGGER,
 )
 from .pynest.client import NestClient
-from .pynest.const import NEST_ENVIRONMENTS
+from .pynest.const import EMBEDDED_SETUP_URL, NEST_ENVIRONMENTS
 from .pynest.enums import Environment
 from .pynest.exceptions import (
     BadCredentialsException,
     NestServiceException,
-    PynestException,
 )
 
 DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
     "issue_token_prefix": "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken",
     "accounts_url": "https://accounts.google.com/",
-    "embedded_setup_url": "https://accounts.google.com/EmbeddedSetup",
+    "embedded_setup_url": EMBEDDED_SETUP_URL,
     # Pinned to a specific release rather than "latest", which may resolve to a
     # pre-release that is incompatible with this version of the integration.
     "extension_download_url": "https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip",
@@ -58,6 +57,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 3
 
     _default_account_type: Environment = Environment.PRODUCTION
+    # Email, oauth_token, android_id and master_token of the last exchange.
+    _exchanged_master_token: tuple[str, str, str, str] | None = None
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -251,7 +252,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data = None
 
             if not email or not oauth_token:
-                errors["base"] = "invalid_code"
+                errors["base"] = "invalid_auth"
 
             if not errors:
                 session = async_create_clientsession(self.hass)
@@ -259,16 +260,30 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     session=session, environment=NEST_ENVIRONMENTS[environment]
                 )
                 try:
-                    await client.exchange_master_token(oauth_token, email, android_id)
-                    auth = await client.get_access_token_from_master_token()
+                    # Google accepts an oauth_token only once, so a retry after a
+                    # later step failed reuses the master token it was exchanged for.
+                    exchanged = self._exchanged_master_token
+                    if exchanged and exchanged[:2] == (email, oauth_token):
+                        *_, android_id, master_token = exchanged
+                    else:
+                        master_token = await client.exchange_master_token(
+                            oauth_token, email, android_id
+                        )
+                        self._exchanged_master_token = (
+                            email,
+                            oauth_token,
+                            android_id,
+                            master_token,
+                        )
+                    auth = await client.get_access_token_from_master_token(
+                        master_token, email, android_id
+                    )
                     nest = await client.authenticate(auth.access_token)
                     data = await client.get_first_data(nest.access_token, nest.userid)
                 except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
-                except PynestException:
-                    errors["base"] = "unknown"
                 except Exception as exception:  # pylint: disable=broad-except
                     errors["base"] = "unknown"
                     LOGGER.exception(exception)
@@ -282,7 +297,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(nest.user)
 
                 new_data = {
-                    CONF_MASTER_TOKEN: client.master_token,
+                    CONF_MASTER_TOKEN: master_token,
                     CONF_GOOGLE_EMAIL: email,
                     CONF_ANDROID_ID: android_id,
                     CONF_ACCOUNT_TYPE: environment,
