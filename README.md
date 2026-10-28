@@ -38,25 +38,9 @@ Copy the `custom_components/nest_protect` to your custom_components folder and r
 
 ## Authentication
 
-There are two ways to sign in. A **master token** is the same kind of long-lived login the mobile apps use. **Browser cookies** (`issue_token` and `cookies`) are captured from a signed-in browser, and Google can end them within hours.
+The values of "issue_token" and "cookies" are specific to your Google Account. You only need to retrieve them once, as long as you stay logged into your Google Account.
 
-### Recommended: Master token
-
-1. Open a private/incognito window on a desktop browser and go to [accounts.google.com/EmbeddedSetup](https://accounts.google.com/EmbeddedSetup).
-1. Sign in with the Google account that owns your Nest devices. 2-step verification and passkeys are fine.
-1. If asked **"Who will be using this device?"**, choose **I will be using this device**, then click **I agree**. The page may then show a spinner forever; that is expected.
-1. Open Developer Tools (F12) → **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://accounts.google.com`.
-1. Copy the value of the `oauth_token` cookie (it starts with `oauth2_4/`).
-1. In Home Assistant, choose **Master token**, then enter your Google email and paste the value.
-
-The `oauth_token` expires within minutes and works only once, so paste it right away. If setup fails, repeat the steps to get a new one.
-
-Home Assistant exchanges it for a master token and keeps you signed in with it. The login shows up as an Android device on your Google account. It stops working if you change your password, remove that device from your Google account, or Google signs it out for security reasons; Home Assistant then asks you to re-authenticate.
-
-> [!WARNING]
-> This uses an unofficial Google sign-in flow, which Google may change or block at any time. A master token gives access to your whole Google account, so treat it like your password.
-
-### Browser cookies: Nest Auth Helper extension
+### Recommended: Nest Auth Helper extension
 
 The easiest way to get your credentials is with the **Nest Auth Helper** browser extension, which works in Chrome, Edge and Firefox (121+):
 
@@ -68,7 +52,7 @@ The easiest way to get your credentials is with the **Nest Auth Helper** browser
 1. Click the extension icon → **Extract Credentials** → **Copy Code**.
 1. Paste the code into the Home Assistant configuration flow.
 
-The values are specific to your Google Account. Keep the extension installed — you may need it again if Home Assistant requests re-authentication.
+Keep the extension installed — you may need it again if Home Assistant requests re-authentication.
 
 > [!TIP]
 > **Getting credentials that last.** Google can end a captured session within hours if the browser you captured it from keeps using the same Google sign-in. Users report the longest-lasting credentials when they:
@@ -78,7 +62,7 @@ The values are specific to your Google Account. Keep the extension installed —
 >
 > If your cookie string contains `__Secure-1PSIDTS` or `__Secure-3PSIDTS`, the session may be bound to that browser and expire sooner.
 
-### Browser cookies: Developer Tools
+### Manual: Developer Tools
 
 If you prefer not to use the extension, you can extract the credentials manually using Chrome/Edge DevTools.
 
@@ -100,6 +84,24 @@ If you prefer not to use the extension, you can extract the credentials manually
 1. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
 
 (adapted from [homebridge-nest documentation](https://github.com/chrisjshull/homebridge-nest))
+
+### Experimental: Master token
+
+> [!WARNING]
+> **Experimental.** This uses an unofficial Google sign-in flow, which Google may change or block at any time. The master token gives lasting access to your whole Google account, not just Nest, and is stored in your Home Assistant configuration and backups. Treat it like your password and keep your backups safe.
+
+Instead of browser cookies, you can sign in with a master token, the same kind of long-lived login the mobile apps use:
+
+1. Open a private/incognito window on a desktop browser and go to [accounts.google.com/EmbeddedSetup](https://accounts.google.com/EmbeddedSetup).
+1. Sign in with the Google account that owns your Nest devices. 2-step verification and passkeys are fine.
+1. If asked **"Who will be using this device?"**, choose **I will be using this device**, then click **I agree**. The page may then show a spinner forever; that is expected.
+1. Open Developer Tools (F12) → **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://accounts.google.com`.
+1. Copy the value of the `oauth_token` cookie (it starts with `oauth2_4/`).
+1. In Home Assistant, choose **Master token (experimental)**, then enter your Google email and paste the value.
+
+The `oauth_token` expires within minutes and works only once, so paste it right away. If setup fails, repeat the steps to get a new one.
+
+Home Assistant exchanges it for a master token and keeps you signed in with it. It stops working if you change your Google password or Google signs it out for security reasons; Home Assistant then asks you to re-authenticate. To revoke it yourself, change your Google password.
 
 ## Advanced
 

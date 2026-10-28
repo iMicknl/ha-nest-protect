@@ -212,11 +212,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="auth_method",
             data_schema=vol.Schema(
                 {
-                    vol.Required("method", default="master_token"): vol.In(
+                    vol.Required("method", default="extension"): vol.In(
                         {
-                            "master_token": "Master token (stays logged in, recommended)",
-                            "extension": "Use the Chrome Extension",
+                            "extension": "Use the Chrome Extension (recommended)",
                             "manual": "Enter credentials manually",
+                            "master_token": "Master token (experimental)",
                         }
                     ),
                 }
@@ -241,8 +241,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             email = user_input[CONF_GOOGLE_EMAIL].strip()
             oauth_token = user_input[CONF_OAUTH_TOKEN].strip()
-            # Reusing the ID keeps every reauth from adding another Android
-            # device to the Google account.
+            # Keep presenting the same device to Google across reauths, as
+            # ha-google-home does.
             entry = self._entry_being_updated()
             android_id = (
                 entry and entry.data.get(CONF_ANDROID_ID)
