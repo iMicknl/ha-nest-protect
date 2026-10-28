@@ -16,7 +16,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientTimeout
+from aiohttp import ClientTimeout, SocketTimeoutError
 
 from .const import PROTOBUF_USER_AGENT
 from .exceptions import NestLockAuthException, NestLockCommandException
@@ -38,11 +38,19 @@ SEND_COMMAND_ENDPOINT = "/nestlabs.gateway.v1.ResourceApi/SendCommand"
 
 _NESTLABS_TYPE_URL_PREFIX = "type.nestlabs.com/"
 
-_SOCK_READ_TIMEOUT = 300  # seconds without data before treating the stream as dead
+# Seconds without data before the stream is treated as dead. The gateway sends
+# nothing while the locks are quiet, so this also sets how often an idle stream
+# is re-opened.
+_SOCK_READ_TIMEOUT = 900
 _CONNECT_TIMEOUT = 60
 _SEND_COMMAND_TIMEOUT = 30
+# gRPC status code the gateway uses to end an observe stream at its deadline.
+_GRPC_DEADLINE_EXCEEDED = 4
 _RECONNECT_INITIAL_DELAY = 1.0
 _RECONNECT_MAX_DELAY = 60.0
+# Every stream opens with the current state, so only one that stayed up this
+# long proves the gateway is healthy enough to reset the reconnect backoff.
+_STREAM_HEALTHY_SECONDS = 60.0
 
 # How long the observe stream must have been running, cumulatively across
 # reconnects, before an account is declared lock-less. The gateway sends its
@@ -417,7 +425,15 @@ class GrpcLockClient:
                     f"message={body.status.message!r}"
                 )
             if body.HasField("status") and body.status.code != 0:
-                _LOGGER.warning(
+                # The gateway ends every observe stream after about an hour with
+                # DEADLINE_EXCEEDED. That's the normal end of a long-lived stream,
+                # and the caller reconnects straight away.
+                log = (
+                    _LOGGER.debug
+                    if body.status.code == _GRPC_DEADLINE_EXCEEDED
+                    else _LOGGER.warning
+                )
+                log(
                     "Observe stream reported status code=%s message=%r",
                     body.status.code,
                     body.status.message,
@@ -479,9 +495,14 @@ class GrpcLockClient:
         """
         delay = _RECONNECT_INITIAL_DELAY
         while True:
+            started = asyncio.get_running_loop().time()
             try:
                 async for batch in self._observe_once():
-                    delay = _RECONNECT_INITIAL_DELAY
+                    if (
+                        asyncio.get_running_loop().time() - started
+                        >= _STREAM_HEALTHY_SECONDS
+                    ):
+                        delay = _RECONNECT_INITIAL_DELAY
                     yield batch
                 # Re-check on the way out too: a stream that ends right after
                 # the enumeration would otherwise need another connection
@@ -499,6 +520,15 @@ class GrpcLockClient:
                 raise
             except NestLockAuthException:
                 raise
+            except SocketTimeoutError:
+                # The connection was up but stayed silent for _SOCK_READ_TIMEOUT:
+                # the locks were simply quiet. Re-open without growing the backoff;
+                # the timeout itself already spaces these out.
+                _LOGGER.debug(
+                    "Lock observe stream idle for %ss; reconnecting", _SOCK_READ_TIMEOUT
+                )
+                delay = _RECONNECT_INITIAL_DELAY
+                await asyncio.sleep(delay)
             except Exception as err:  # noqa: BLE001
                 # Until a lock is known to exist, stream trouble isn't
                 # actionable for the user — most accounts have no lock, and

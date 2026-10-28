@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import datetime
 import logging
+from contextlib import nullcontext
 from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,6 +26,7 @@ from custom_components.nest_protect.const import (
     CONF_COOKIES,
     MAX_AUTH_FAILURES,
     RECONNECT_INTERVALS,
+    SUBSCRIBE_FAST_RESPONSE_WARNING,
     SUBSCRIBE_HEALTHY_SECONDS,
 )
 from custom_components.nest_protect.pynest.client import NestClient
@@ -1173,3 +1175,69 @@ async def test_unloaded_entry_does_not_resubscribe(hass):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
 
     create_task.assert_not_called()
+
+
+async def _run_data_subscribes(hass, count, *, fast=True):
+    """Run the subscriber `count` times with Nest answering data at once."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    client, sm = _make_subscriber_entry_data(hass, entry)
+    client.subscribe_for_data = AsyncMock(return_value={"objects": []})
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
+        patch.object(sm, "ensure_session", new_callable=AsyncMock),
+        patch(
+            "custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        # An interval of 0 makes every answer count as slow.
+        nullcontext()
+        if fast
+        else patch("custom_components.nest_protect.SUBSCRIBE_MIN_INTERVAL_SECONDS", 0),
+    ):
+        for _ in range(count):
+            await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    guard_sleeps = [c for c in sleep.await_args_list if c.args and c.args[0] == 2]
+    return entry.runtime_data, guard_sleeps, reschedule
+
+
+async def test_subscriber_single_fast_answer_resubscribes_at_once(hass):
+    """A burst of one fast answer is normal and isn't delayed."""
+    entry_data, guard_sleeps, reschedule = await _run_data_subscribes(hass, 1)
+
+    assert entry_data.fast_data_responses == 1
+    assert guard_sleeps == []
+    reschedule.assert_called_once()
+
+
+async def test_subscriber_spaces_out_a_run_of_fast_answers(hass):
+    """Repeated instant answers (stale revisions) are throttled, not looped."""
+    entry_data, guard_sleeps, reschedule = await _run_data_subscribes(hass, 5)
+
+    assert entry_data.fast_data_responses == 5
+    assert len(guard_sleeps) == 4
+    assert reschedule.call_count == 5
+
+
+async def test_subscriber_normal_answers_reset_the_guard(hass):
+    """Answers that took a normal amount of time never trigger the guard."""
+    entry_data, guard_sleeps, _ = await _run_data_subscribes(hass, 5, fast=False)
+
+    assert entry_data.fast_data_responses == 0
+    assert guard_sleeps == []
+
+
+async def test_subscriber_warns_once_about_a_fast_answer_loop(hass, caplog):
+    """The warning fires once when the run reaches the threshold."""
+    await _run_data_subscribes(hass, SUBSCRIBE_FAST_RESPONSE_WARNING + 3)
+
+    warnings = [r for r in caplog.records if "subscribes in a row" in r.getMessage()]
+    assert len(warnings) == 1

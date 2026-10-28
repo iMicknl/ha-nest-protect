@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientError
 from homeassistant.components.lock import LockEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -14,14 +13,14 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
-from .pynest.exceptions import NestLockAuthException, PynestException
+from .entity import async_run_entity_command
+from .pynest.exceptions import NestLockAuthException
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
 
@@ -203,26 +202,23 @@ class NestLockEntity(LockEntity):
         self.async_write_ha_state()
 
     async def _send_lock_command(self, lock: bool) -> None:
-        await self._session_manager.async_run_command(
+        await async_run_entity_command(
+            self,
+            self._session_manager,
             lambda: self._grpc_client.send_lock_command(
                 self._lock_state.resource_id, lock=lock
             ),
             NestLockAuthException,
+            "Failed to lock" if lock else "Failed to unlock",
         )
 
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the lock."""
-        try:
-            await self._send_lock_command(lock=True)
-        except (ClientError, TimeoutError, PynestException) as err:
-            raise HomeAssistantError(f"Failed to lock: {err}") from err
+        await self._send_lock_command(lock=True)
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the lock."""
-        try:
-            await self._send_lock_command(lock=False)
-        except (ClientError, TimeoutError, PynestException) as err:
-            raise HomeAssistantError(f"Failed to unlock: {err}") from err
+        await self._send_lock_command(lock=False)
 
 
 class NestLockBatterySensor(SensorEntity):

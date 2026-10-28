@@ -2,21 +2,53 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from aiohttp import ClientError
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
-from .pynest.exceptions import NotAuthenticatedException
+from .pynest.exceptions import (
+    BadCredentialsException,
+    NestServiceException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .pynest.models import Bucket
 
 if TYPE_CHECKING:
     from .session import NestSessionManager
     from .stream_health import StreamHealth
+
+
+async def async_run_entity_command[T](
+    entity: Entity,
+    session_manager: NestSessionManager,
+    command: Callable[[], Awaitable[T]],
+    auth_errors: type[Exception] | tuple[type[Exception], ...],
+    failure: str,
+) -> T:
+    """Run a Nest command for an entity, reporting failures as Home Assistant errors."""
+    try:
+        return await session_manager.async_run_command(command, auth_errors)
+    except BadCredentialsException as err:
+        # Google rejected the refresh, so only new credentials can help.
+        entity.platform.config_entry.async_start_reauth(entity.hass)
+        raise HomeAssistantError(f"{failure}: re-authentication required") from err
+    except (
+        ClientError,
+        TimeoutError,
+        NestServiceException,
+        NotAuthenticatedException,
+        PynestException,
+    ) as err:
+        raise HomeAssistantError(f"{failure}: {err}") from err
 
 
 class NestEntity(Entity):
@@ -201,7 +233,9 @@ class NestUpdatableEntity(NestDescriptiveEntity):
 
     async def _async_update_objects(self, objects: list[dict]) -> dict:
         """Update objects with automatic session refresh."""
-        return await self.session_manager.async_run_command(
+        return await async_run_entity_command(
+            self,
+            self.session_manager,
             # Re-read the session on each attempt to pick up a refreshed token.
             lambda: self.client.update_objects(
                 self.client.nest_session.access_token,
@@ -210,4 +244,5 @@ class NestUpdatableEntity(NestDescriptiveEntity):
                 objects,
             ),
             NotAuthenticatedException,
+            f"Failed to update {self.entity_id}",
         )

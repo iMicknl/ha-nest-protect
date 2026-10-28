@@ -163,10 +163,12 @@ class NestClient:
     async def get_access_token(self) -> GoogleAuthResponse:
         """Get a Nest access token."""
 
-        if self.refresh_token:
-            await self.get_access_token_from_refresh_token(self.refresh_token)
-        elif self.issue_token and self.cookies:
+        # Same order as setup: entries re-authenticated with cookies may still
+        # hold a revoked legacy refresh token.
+        if self.issue_token and self.cookies:
             await self.get_access_token_from_cookies(self.issue_token, self.cookies)
+        elif self.refresh_token:
+            await self.get_access_token_from_refresh_token(self.refresh_token)
 
         return self.auth
 

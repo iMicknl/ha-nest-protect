@@ -34,12 +34,18 @@ from .const import (
     CONF_ISSUE_TOKEN,
     CONF_REFRESH_TOKEN,
     DOMAIN,
+    LOCK_AUTH_SETTLE_SECONDS,
     LOGGER,
+    MAX_AUTH_FAILURES,
     PLATFORMS,
+    PYNEST_ERROR_MIN_SECONDS,
     RECONNECT_INTERVALS,
+    SERVICE_ERROR_MIN_SECONDS,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
+    SUBSCRIBE_FAST_RESPONSE_WARNING,
     SUBSCRIBE_HEALTHY_SECONDS,
+    SUBSCRIBE_MIN_INTERVAL_SECONDS,
 )
 from .lock import discovery_signal, lock_signal
 from .pynest.client import NestClient
@@ -81,6 +87,8 @@ class HomeAssistantNestProtectData:
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
     connection_failures: int = 0
+    # Consecutive subscribes Nest answered with data almost immediately.
+    fast_data_responses: int = 0
     widget_tracks: dict[str, Bucket] = field(default_factory=dict)
     safety_summaries: dict[str, Bucket] = field(default_factory=dict)
     structure_names: dict[str, str] = field(default_factory=dict)
@@ -310,12 +318,22 @@ async def _async_observe_locks_loop(
     cache = entry_data.lock_state_cache
     sm = entry_data.session_manager
 
+    # Every new stream starts by sending the current lock state, so a batch alone
+    # doesn't prove the session works: a stream rejected right after it would
+    # otherwise reset the streak and refresh the session forever.
+    auth_failures = 0
+    last_auth_failure = 0.0
+
     while True:
         try:
             async for batch in entry_data.grpc_lock_client.observe_locks():
-                # A working stream clears auth failures recorded by either
-                # transport; REST parse errors are the subscriber's own concern.
-                sm.record_auth_success()
+                if (
+                    not auth_failures
+                    or time.monotonic() - last_auth_failure >= LOCK_AUTH_SETTLE_SECONDS
+                ):
+                    auth_failures = 0
+                    # REST parse errors are the subscriber's own concern.
+                    sm.record_auth_success()
                 new_locks: dict[str, LockState] = {}
                 for resource_id, lock_state in batch.items():
                     previous = cache.get(resource_id)
@@ -333,20 +351,25 @@ async def _async_observe_locks_loop(
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
+            auth_failures += 1
+            last_auth_failure = time.monotonic()
             sm.record_auth_failure()
-            if sm.should_trigger_reauth:
+            if auth_failures >= MAX_AUTH_FAILURES or sm.should_trigger_reauth:
                 LOGGER.warning(
                     "Lock observer: %d consecutive auth failures, triggering "
                     "re-authentication",
-                    sm.consecutive_auth_failures,
+                    max(auth_failures, sm.consecutive_auth_failures),
                 )
                 entry.async_start_reauth(hass)
                 return
 
+            delay = BACKOFF_INTERVALS[min(auth_failures, len(BACKOFF_INTERVALS)) - 1]
             LOGGER.debug(
-                "Lock observer: credentials rejected (%r), refreshing session", err
+                "Lock observer: credentials rejected (%r), refreshing session in %ds",
+                err,
+                delay,
             )
-            await asyncio.sleep(sm.backoff_interval)
+            await asyncio.sleep(delay)
             if not await _async_recover_session(hass, entry, entry_data):
                 return
         except Exception:
@@ -475,6 +498,8 @@ async def _async_resubscribe(
     """
     if time.monotonic() - started >= SUBSCRIBE_HEALTHY_SECONDS:
         entry_data.connection_failures = 0
+        # A long-poll that ran its course breaks any run of instant answers.
+        entry_data.fast_data_responses = 0
     else:
         entry_data.connection_failures += 1
         idx = min(entry_data.connection_failures, len(RECONNECT_INTERVALS)) - 1
@@ -599,7 +624,23 @@ async def _async_subscribe_for_data(
             for bucket in objects
         ]
 
+        if time.monotonic() - started < SUBSCRIBE_MIN_INTERVAL_SECONDS:
+            entry_data.fast_data_responses += 1
+        else:
+            entry_data.fast_data_responses = 0
+
         sm.record_success()
+
+        if entry_data.fast_data_responses > 1:
+            if entry_data.fast_data_responses == SUBSCRIBE_FAST_RESPONSE_WARNING:
+                LOGGER.warning(
+                    "Subscriber: Nest answered %d subscribes in a row immediately; "
+                    "spacing re-subscribes %ds apart to protect the Nest API",
+                    entry_data.fast_data_responses,
+                    SUBSCRIBE_MIN_INTERVAL_SECONDS,
+                )
+            await asyncio.sleep(SUBSCRIBE_MIN_INTERVAL_SECONDS)
+
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
@@ -670,15 +711,22 @@ async def _async_subscribe_for_data(
         return
 
     except NestServiceException:
-        LOGGER.debug("Subscriber: Nest Service error. Updates paused for 2 minutes.")
-        await asyncio.sleep(60 * 2)
+        # Also raised when Google throttles the token refresh, so keep backing
+        # off rather than retrying at a fixed rate.
+        sm.record_error()
+        delay = max(SERVICE_ERROR_MIN_SECONDS, sm.error_backoff_interval)
+        LOGGER.debug("Subscriber: Nest Service error. Updates paused for %ds.", delay)
+        await asyncio.sleep(delay)
         _register_subscribe_task(hass, entry, data)
 
     except PynestException:
+        sm.record_error()
+        delay = max(PYNEST_ERROR_MIN_SECONDS, sm.error_backoff_interval)
         LOGGER.exception(
-            "Unknown pynest exception. Please create an issue on GitHub with your logfile. Updates paused for 1 minute."
+            "Unknown pynest exception. Please create an issue on GitHub with your logfile. Updates paused for %ds.",
+            delay,
         )
-        await asyncio.sleep(60)
+        await asyncio.sleep(delay)
         _register_subscribe_task(hass, entry, data)
 
     except asyncio.CancelledError:
