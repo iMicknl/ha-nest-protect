@@ -30,5 +30,5 @@
     "protobuf>=6.31.1",
     "googleapis-common-protos>=1.56.0"
   ],
-  "version": "0.5.0b1"
+  "version": "0.5.0"
 }
