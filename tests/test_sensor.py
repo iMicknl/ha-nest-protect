@@ -115,6 +115,8 @@ async def test_co_previous_peak_only_created_when_reported(
             areas=AREAS,
             client=MagicMock(),
             lock_state_cache={},
+            safety_summaries={},
+            structure_names={},
         )
     }
     add_entities = MagicMock()
