@@ -5,18 +5,18 @@ requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
-    "homeassistant>=2026.8.3",
-    "prek>=0.5.0",
-    "ruff>=0.16.5",
+    "homeassistant>=2026.10.2",
+    "prek>=0.5.7",
+    "ruff>=0.17.2",
 ]
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23.8",
-    "pytest-homeassistant-custom-component>=0.13.348",
-    "pytest-socket>=0.7",
+    "pytest-homeassistant-custom-component>=0.13.373",
+    "pytest-socket>=0.8.1",
     "pytest-timeout>=2.3",
-    "protobuf>=7.36.0",
-    "googleapis-common-protos>=1.75.2",
+    "protobuf>=7.36.2",
+    "googleapis-common-protos>=1.76.0",
 ]
 
 [tool.pytest.ini_options]
