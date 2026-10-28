@@ -99,7 +99,7 @@ class HomeAssistantNestProtectData:
 type NestProtectConfigEntry = ConfigEntry[HomeAssistantNestProtectData]
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> None:
     """Migrate old Config entries."""
     LOGGER.debug("Migrating from version %s", config_entry.version)
 
@@ -116,10 +116,8 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
 
     LOGGER.debug("Migration to version %s successful", config_entry.version)
 
-    return True
 
-
-async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
+async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry) -> None:
     """Set up Nest Protect from a config entry."""
     issue_token = entry.data.get(CONF_ISSUE_TOKEN)
     cookies = entry.data.get(CONF_COOKIES)
@@ -231,8 +229,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
         _async_observe_locks_loop(hass, entry),
         name=f"{DOMAIN}_lock_observe_{entry.entry_id}",
     )
-
-    return True
 
 
 def _listed_device_keys(value: Any) -> set[str] | None:
@@ -384,21 +380,20 @@ async def _async_observe_locks_loop(
 
 async def async_unload_entry(
     hass: HomeAssistant, entry: NestProtectConfigEntry
-) -> bool:
+) -> None:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Cancel background tasks only after successful platform unload
-        entry_data = entry.runtime_data
-        if entry_data.subscription_task:
-            entry_data.subscription_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await entry_data.subscription_task
-        if entry_data.lock_observe_task:
-            entry_data.lock_observe_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await entry_data.lock_observe_task
+    # Raises when a platform fails to unload, so the tasks keep running then.
+    await hass.config_entries.async_unload_platforms_or_raise(entry, PLATFORMS)
 
-    return unload_ok
+    entry_data = entry.runtime_data
+    if entry_data.subscription_task:
+        entry_data.subscription_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await entry_data.subscription_task
+    if entry_data.lock_observe_task:
+        entry_data.lock_observe_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await entry_data.lock_observe_task
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
