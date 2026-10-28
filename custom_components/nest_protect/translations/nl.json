@@ -1,8 +1,7 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Account is al geconfigureerd",
-      "reauth_successful": "Herauthenticatie geslaagd!"
+      "already_configured": "Account is al geconfigureerd"
     },
     "error": {
       "cannot_connect": "Kan niet verbinden",
