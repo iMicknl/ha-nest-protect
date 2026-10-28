@@ -9,15 +9,17 @@ discovery `lock.py` uses for Nest x Yale locks.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
 from .pynest.models import Bucket
+
+if TYPE_CHECKING:
+    from . import NestProtectConfigEntry
 
 THERMOSTAT_SIGNAL_PREFIX = "nest_protect_thermostat_"
 THERMOSTAT_BUCKET_PREFIX = "device."
@@ -69,7 +71,7 @@ def is_discoverable_thermostat(bucket: Bucket) -> bool:
 
 def subscribe_to_thermostat_discovery(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NestProtectConfigEntry,
     async_add_entities: AddEntitiesCallback,
     factory: Callable[[Bucket], Iterable[Entity]],
 ) -> None:
@@ -79,7 +81,7 @@ def subscribe_to_thermostat_discovery(
     Thermostats already discovered before this platform set up are replayed
     immediately.
     """
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     known: set[str] = set()
 
     @callback

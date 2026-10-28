@@ -52,6 +52,7 @@ def _entry_data(**kwargs) -> HomeAssistantNestProtectData:
         client=MagicMock(),
         session_manager=MagicMock(),
         grpc_lock_client=MagicMock(),
+        stream_health=MagicMock(),
         **kwargs,
     )
 
@@ -148,7 +149,7 @@ async def test_subscribe_replays_already_discovered_thermostats(hass):
         object_key="topaz.1234", object_revision=0, object_timestamp=0, value={}
     )
     entry_data = _entry_data(devices={THERMOSTAT_KEY: bucket, "topaz.1234": topaz})
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+    entry.runtime_data = entry_data
     added: list[Bucket] = []
 
     subscribe_to_thermostat_discovery(
@@ -182,7 +183,7 @@ async def test_discovery_creates_the_thermostat_sensors(hass):
     entry_data = _entry_data(
         devices={THERMOSTAT_KEY: bucket}, areas={"where.living-room": "Living Room"}
     )
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
+    entry.runtime_data = entry_data
     added: list[NestThermostatSensor] = []
 
     descriptions = [
@@ -360,6 +361,8 @@ async def test_active_sensor_name_resolves_when_the_sensor_traits_land(hass):
         {THERMOSTAT_KEY: thermostat, "kryptonite.18B430": kryptonite},
     )
     sensor.hass = hass
+    # Stands in for the platform NestEntity reads stream health from.
+    sensor.platform = MagicMock()
     writes: list[str | None] = []
     sensor.async_write_ha_state = lambda: writes.append(sensor.native_value)
 
@@ -393,6 +396,8 @@ async def test_active_sensor_stops_following_a_deselected_sensor(hass):
         {THERMOSTAT_KEY: thermostat},
     )
     sensor.hass = hass
+    # Stands in for the platform NestEntity reads stream health from.
+    sensor.platform = MagicMock()
     sensor.async_write_ha_state = MagicMock()
 
     await sensor.async_added_to_hass()

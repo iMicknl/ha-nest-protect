@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
-from aiohttp import ClientError, ClientResponseError
+from aiohttp import ClientError, ClientResponseError, SocketTimeoutError
 
 from custom_components.nest_protect.lock import _compose_lock_device_name
 from custom_components.nest_protect.pynest.const import PROTOBUF_USER_AGENT
@@ -14,6 +15,7 @@ from custom_components.nest_protect.pynest.exceptions import (
     NestLockCommandException,
 )
 from custom_components.nest_protect.pynest.grpc_client import (
+    _SOCK_READ_TIMEOUT,
     GrpcLockClient,
     _decode_varint,
     _extract_lock_state,
@@ -479,6 +481,25 @@ async def test_send_lock_command_raises_when_gateway_rejects_the_command():
         await client.send_lock_command("X", lock=True)
 
 
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        (16, "Request had invalid authentication credentials"),
+        (16, ""),
+        (7, "Authentication failed"),
+        (7, "authentication failed: token expired"),
+    ],
+)
+async def test_send_lock_command_classifies_auth_statuses(code, message):
+    resp = v1_pb2.SendCommandResponse()
+    resp.status.code = code
+    resp.status.message = message
+    client = _make_client(_FakeResponse(body=resp.SerializeToString()))
+
+    with pytest.raises(NestLockAuthException, match=f"code={code}"):
+        await client.send_lock_command("X", lock=True)
+
+
 # -- observe frame parsing ---------------------------------------------------
 
 
@@ -636,6 +657,33 @@ def test_parse_observe_buffer_surfaces_a_gateway_status_frame(caplog):
     assert "permission denied" in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("code", "message"), [(16, "unauthenticated"), (7, "Authentication failed")]
+)
+def test_parse_observe_buffer_raises_on_an_auth_status_frame(code, message):
+    body = streambody_pb2.StreamBody()
+    body.status.code = code
+    body.status.message = message
+    buffer = bytearray(body.SerializeToString())
+
+    with pytest.raises(NestLockAuthException, match=f"code={code}"):
+        _make_client()._parse_observe_buffer(buffer)
+
+
+async def test_observe_locks_propagates_an_auth_status_frame(recorded_sleeps):
+    # The gateway can accept the HTTP request and only reject the session in
+    # the stream body; that must reach the caller's session-refresh path.
+    body = streambody_pb2.StreamBody()
+    body.status.code = 16
+    client = _make_client(_FakeResponse(chunks=[body.SerializeToString()]))
+
+    with pytest.raises(NestLockAuthException):
+        async for _ in client.observe_locks():
+            pass
+
+    assert recorded_sleeps == []
+
+
 def test_parse_observe_buffer_ignores_a_zero_status_frame(caplog):
     body = streambody_pb2.StreamBody()
     body.status.code = 0
@@ -644,6 +692,21 @@ def test_parse_observe_buffer_ignores_a_zero_status_frame(caplog):
     client = _make_client()
     assert client._parse_observe_buffer(buffer) == []
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+def test_parse_observe_buffer_logs_the_hourly_deadline_at_debug(caplog):
+    # The gateway ends each observe stream after about an hour this way.
+    body = streambody_pb2.StreamBody()
+    body.status.code = 4
+    body.status.message = "context timed out"
+    buffer = bytearray(body.SerializeToString())
+
+    client = _make_client()
+    with caplog.at_level(logging.DEBUG):
+        assert client._parse_observe_buffer(buffer) == []
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert "code=4" in caplog.text
 
 
 def test_parse_observe_buffer_resets_on_unexpected_wire_type():
@@ -805,7 +868,7 @@ async def test_observe_once_uses_a_read_timeout_not_a_total_timeout():
     timeout = client._nest_client.session.calls[0]["timeout"]
     # A total timeout would tear down a healthy idle stream on a fixed cycle.
     assert timeout.total is None
-    assert timeout.sock_read == 300
+    assert timeout.sock_read == _SOCK_READ_TIMEOUT
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -939,6 +1002,25 @@ async def test_observe_locks_backs_off_on_errors(monkeypatch, recorded_sleeps):
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
 
 
+async def test_observe_locks_reconnects_an_idle_stream_without_backoff(
+    monkeypatch, recorded_sleeps, caplog
+):
+    # Quiet locks mean a silent stream; its read timeout is not an error.
+    async def _idle(_self):
+        raise SocketTimeoutError("Timeout on reading data from socket")
+
+    _observe_once_stub(monkeypatch, _idle)
+
+    client = _make_client()
+    client._locks_present = True
+    with pytest.raises(_StopLoop):
+        async for _ in client.observe_locks():
+            pass
+
+    assert recorded_sleeps == [1.0, 1.0, 1.0, 1.0]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
 async def test_observe_locks_caps_the_backoff(monkeypatch):
     sleeps: list[float] = []
 
@@ -1051,6 +1133,11 @@ async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
 async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
     monkeypatch, recorded_sleeps
 ):
+    # Treat every stream as having stayed up long enough to count as healthy.
+    monkeypatch.setattr(
+        "custom_components.nest_protect.pynest.grpc_client._STREAM_HEALTHY_SECONDS",
+        0.0,
+    )
     calls = {"n": 0}
 
     async def _stub(self):
@@ -1068,3 +1155,21 @@ async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
     # Attempts alternate yield / no-yield. Each yielding attempt resets the
     # delay to the initial 1.0s, so it never compounds past one doubling.
     assert recorded_sleeps == [1.0, 2.0, 1.0, 2.0]
+
+
+async def test_observe_locks_keeps_backing_off_when_streams_close_after_one_batch(
+    monkeypatch, recorded_sleeps
+):
+    # Every stream opens with the current state; one closed right after must not
+    # reconnect once a second forever.
+    async def _stub(self):
+        yield {"DEVICE_X": "state"}
+
+    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+
+    client = _make_client()
+    with pytest.raises(_StopLoop):
+        async for _ in client.observe_locks():
+            pass
+
+    assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]

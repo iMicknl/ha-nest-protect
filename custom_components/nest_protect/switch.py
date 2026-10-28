@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import HomeAssistantNestProtectData
+from . import NestProtectConfigEntry
 from .const import ATTRIBUTION, DOMAIN, LOGGER
-from .entity import NestUpdatableEntity
+from .entity import NestUpdatableEntity, async_run_entity_command
+from .pynest.exceptions import NotAuthenticatedException
 from .pynest.models import Bucket
+
+PARALLEL_UPDATES = 1
 
 
 @dataclass
@@ -65,10 +71,14 @@ SWITCH_DESCRIPTIONS: list[SwitchEntityDescription] = [
 ]
 
 
-async def async_setup_entry(hass, entry, async_add_devices):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    async_add_devices: AddEntitiesCallback,
+) -> None:
     """Set up the Nest Protect sensors from a config entry."""
 
-    data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    data = entry.runtime_data
     entities: list[SwitchEntity] = []
 
     supported_keys: dict[str, NestProtectSwitchDescription] = {
@@ -168,8 +178,9 @@ class NestStructureHomeAwaySwitch(SwitchEntity):
     def _generate_device_info(self) -> DeviceInfo:
         structure_id = self.bucket.object_key.split(".", 1)[1]
         name = self.bucket.value.get("name") or "Nest Home"
+        # Same identifier as NestHomeEntity, so the switch joins the home device.
         return DeviceInfo(
-            identifiers={(DOMAIN, structure_id)},
+            identifiers={(DOMAIN, f"structure.{structure_id}")},
             name=name,
             manufacturer="Google",
             configuration_url=f"https://home.nest.com/home/{structure_id}",
@@ -198,34 +209,48 @@ class NestStructureHomeAwaySwitch(SwitchEntity):
         await self._async_set_home(False)
 
     async def _async_set_home(self, home: bool) -> None:
-        await self.session_manager.ensure_session()
-
+        # Both commands read the session when called, so the retry after a
+        # session refresh uses the new token.
         if self.bucket.value.get("new_structure_id") and self.bucket.value.get(
             "user_id"
         ):
-            await self.client.send_structure_mode_command(
-                self.client.nest_session.access_token,
-                f"STRUCTURE_{self.bucket.value['new_structure_id']}",
-                self.bucket.value["user_id"],
-                home,
-            )
+            command = partial(self._async_send_structure_mode_command, home)
         else:
-            await self.client.update_objects(
-                self.client.nest_session.access_token,
-                self.client.nest_session.userid,
-                self.client.transport_url,
-                [
-                    {
-                        "object_key": self.bucket.object_key,
-                        "op": "MERGE",
-                        "value": {
-                            "away": not home,
-                            "away_timestamp": int(time.time()),
-                            "away_setter": 0,
-                        },
-                    }
-                ],
-            )
+            command = partial(self._async_update_away, home)
+
+        await async_run_entity_command(
+            self,
+            self.session_manager,
+            command,
+            NotAuthenticatedException,
+            f"Failed to update {self.entity_id}",
+        )
 
         self.bucket.value["away"] = not home
         self.async_write_ha_state()
+
+    async def _async_send_structure_mode_command(self, home: bool) -> bytes:
+        return await self.client.send_structure_mode_command(
+            self.client.nest_session.access_token,
+            f"STRUCTURE_{self.bucket.value['new_structure_id']}",
+            self.bucket.value["user_id"],
+            home,
+        )
+
+    async def _async_update_away(self, home: bool) -> dict:
+        return await self.client.update_objects(
+            self.client.nest_session.access_token,
+            self.client.nest_session.userid,
+            self.client.transport_url,
+            [
+                {
+                    "object_key": self.bucket.object_key,
+                    "op": "MERGE",
+                    "value": {
+                        "away": not home,
+                        "away_timestamp": int(time.time()),
+                        "away_setter": 0,
+                    },
+                }
+            ],
+        )

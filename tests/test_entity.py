@@ -1,14 +1,20 @@
 """Tests for the Nest Protect entity base class."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityDescription
 
 from custom_components.nest_protect.const import DOMAIN
-from custom_components.nest_protect.entity import NestEntity
+from custom_components.nest_protect.entity import NestEntity, NestUpdatableEntity
+from custom_components.nest_protect.pynest.exceptions import (
+    NotAuthenticatedException,
+    PynestException,
+)
 from custom_components.nest_protect.pynest.models import Bucket
+from custom_components.nest_protect.session import NestSessionManager
 
 AREAS = {"where.living-room": "Living Room"}
 
@@ -178,3 +184,55 @@ def test_incomplete_thermostat_falls_back_to_object_key():
     assert device_info["identifiers"] == {(DOMAIN, "device.09AB12")}
     assert device_info["name"] == "Nest Thermostat"
     assert device_info["model"] is None
+
+
+def build_updatable_entity(update_objects: AsyncMock) -> NestUpdatableEntity:
+    """Build an updatable entity whose session refresh issues a new token."""
+    client = MagicMock()
+    client.nest_session = MagicMock(access_token="stale-token", userid="user1")
+    client.transport_url = "https://transport.example.com"
+    client.update_objects = update_objects
+
+    session_manager = NestSessionManager(client=client, store=MagicMock())
+    session_manager.ensure_session = AsyncMock()
+
+    async def refresh() -> bool:
+        client.nest_session = MagicMock(access_token="fresh-token", userid="user1")
+        return True
+
+    session_manager.async_refresh_session = AsyncMock(side_effect=refresh)
+
+    return NestUpdatableEntity(
+        bucket=Bucket(
+            object_key="topaz.1234", object_revision=1, object_timestamp=1, value={}
+        ),
+        description=EntityDescription(key="test"),
+        areas=AREAS,
+        client=client,
+        session_manager=session_manager,
+    )
+
+
+async def test_update_objects_retries_with_a_refreshed_session():
+    """A 401 on a command refreshes the session and resends with the new token."""
+    update_objects = AsyncMock(side_effect=[NotAuthenticatedException("401"), {}])
+    entity = build_updatable_entity(update_objects)
+
+    assert await entity._async_update_objects([{"object_key": "topaz.1234"}]) == {}
+
+    entity.session_manager.async_refresh_session.assert_awaited_once()
+    tokens = [call.args[0] for call in update_objects.await_args_list]
+    assert tokens == ["stale-token", "fresh-token"]
+
+
+async def test_update_objects_does_not_retry_other_errors():
+    """Non-auth failures surface immediately without touching the session."""
+    update_objects = AsyncMock(side_effect=PynestException("500"))
+    entity = build_updatable_entity(update_objects)
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await entity._async_update_objects([{"object_key": "topaz.1234"}])
+
+    assert isinstance(exc_info.value.__cause__, PynestException)
+    entity.session_manager.async_refresh_session.assert_not_called()
+    update_objects.assert_awaited_once()
