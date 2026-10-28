@@ -143,6 +143,9 @@
           "warning": "Warning",
           "emergency": "Emergency"
         }
+      },
+      "co_previous_peak": {
+        "name": "CO previous peak"
       }
     },
     "select": {
