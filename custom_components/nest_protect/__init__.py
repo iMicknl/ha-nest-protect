@@ -6,8 +6,8 @@ import asyncio
 import contextlib
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from functools import partial
 from typing import Any
 
 from aiohttp import (
@@ -140,7 +140,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
     session_manager = NestSessionManager(
         client=client,
         store=store,
-        on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
+        on_cookies_refreshed=_cookie_persister(hass, entry),
     )
 
     try:
@@ -407,24 +407,38 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await store.async_remove()
 
 
-@callback
-def _persist_refreshed_cookies(
-    hass: HomeAssistant, entry: NestProtectConfigEntry, new_cookies: str
-) -> None:
-    """Persist Google-rotated cookies back to the config entry.
+def _cookie_persister(
+    hass: HomeAssistant, entry: NestProtectConfigEntry
+) -> Callable[[str], None]:
+    """Return a callback that persists Google-rotated cookies to the entry.
 
     Google may rotate OAuth cookies during ``get_access_token_from_cookies``.
     Without writing them back, a setup retry or HA restart would use stale
     cookies and eventually force re-authentication.
     """
-    if new_cookies == entry.data.get(CONF_COOKIES):
-        return
+    # Cookies this session manager loaded or last wrote. Anything else in the
+    # entry came from a reauth or reconfigure; the old manager must not write
+    # its own over them, e.g. from an exchange cancelled by the reload.
+    owned_cookies = entry.data.get(CONF_COOKIES)
 
-    LOGGER.debug("Persisting refreshed Nest cookies")
-    hass.config_entries.async_update_entry(
-        entry,
-        data={**entry.data, CONF_COOKIES: new_cookies},
-    )
+    @callback
+    def _persist(new_cookies: str) -> None:
+        nonlocal owned_cookies
+        current_cookies = entry.data.get(CONF_COOKIES)
+        if new_cookies == current_cookies:
+            return
+        if current_cookies != owned_cookies:
+            LOGGER.debug("Not persisting rotated cookies over replaced credentials")
+            return
+
+        LOGGER.debug("Persisting refreshed Nest cookies")
+        hass.config_entries.async_update_entry(
+            entry,
+            data={**entry.data, CONF_COOKIES: new_cookies},
+        )
+        owned_cookies = new_cookies
+
+    return _persist
 
 
 async def _async_recover_session(
