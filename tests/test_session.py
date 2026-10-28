@@ -11,6 +11,7 @@ import pytest
 from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
 from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
+    PynestException,
 )
 from custom_components.nest_protect.pynest.models import NestResponse
 from custom_components.nest_protect.session import NestSessionManager
@@ -633,3 +634,108 @@ async def test_record_success_resets_both_counters():
 
     assert manager.consecutive_auth_failures == 0
     assert manager.consecutive_errors == 0
+
+
+ROTATED_COOKIES = "SID=rotated; HSID=test"
+
+
+def _make_rotating_client() -> MagicMock:
+    """Create a client whose cookie exchange rotates cookies but Nest auth fails."""
+    client = MagicMock()
+    client.issue_token = "https://accounts.google.com/issue"
+    client.cookies = "SID=test; HSID=test"
+    client.refresh_token = None
+    client.nest_session = None
+    client.auth = None
+    client.refreshed_cookies = None
+
+    def rotate(*args):
+        client.refreshed_cookies = ROTATED_COOKIES
+        client.auth = MagicMock(access_token="google-token")
+        client.auth.is_expired = MagicMock(return_value=False)
+        return client.auth
+
+    client.get_access_token_from_cookies = AsyncMock(side_effect=rotate)
+    client.get_access_token = AsyncMock(side_effect=rotate)
+    client.authenticate = AsyncMock(side_effect=PynestException("session failed"))
+    return client
+
+
+@pytest.mark.asyncio
+async def test_setup_reports_rotated_cookies_when_nest_auth_fails():
+    """Rotated cookies are handed over even if the JWT/session exchange fails."""
+    client = _make_rotating_client()
+    store = MagicMock()
+    store.async_load = AsyncMock(return_value=None)
+    on_cookies_refreshed = MagicMock()
+
+    manager = NestSessionManager(
+        client=client, store=store, on_cookies_refreshed=on_cookies_refreshed
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    on_cookies_refreshed.assert_called_once_with(ROTATED_COOKIES)
+
+
+@pytest.mark.asyncio
+async def test_refresh_reports_rotated_cookies_when_nest_auth_fails():
+    """Background refresh hands over rotated cookies before Nest auth runs."""
+    client = _make_rotating_client()
+    on_cookies_refreshed = MagicMock()
+
+    manager = NestSessionManager(
+        client=client, store=MagicMock(), on_cookies_refreshed=on_cookies_refreshed
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_refresh_session()
+
+    on_cookies_refreshed.assert_called_once_with(ROTATED_COOKIES)
+
+
+@pytest.mark.asyncio
+async def test_reports_rotated_cookies_when_token_exchange_fails():
+    """Cookies rotated on a failed token exchange are still handed over."""
+    client = _make_rotating_client()
+
+    def rotate_then_fail(*args):
+        client.refreshed_cookies = ROTATED_COOKIES
+        raise PynestException("token exchange failed")
+
+    client.get_access_token_from_cookies.side_effect = rotate_then_fail
+    store = MagicMock()
+    store.async_load = AsyncMock(return_value=None)
+    on_cookies_refreshed = MagicMock()
+
+    manager = NestSessionManager(
+        client=client, store=store, on_cookies_refreshed=on_cookies_refreshed
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    on_cookies_refreshed.assert_called_once_with(ROTATED_COOKIES)
+
+
+@pytest.mark.asyncio
+async def test_no_report_without_rotated_cookies():
+    """Nothing is handed over when Google did not rotate cookies."""
+    client = _make_rotating_client()
+    client.get_access_token_from_cookies.side_effect = None
+    client.get_access_token_from_cookies.return_value = MagicMock(
+        access_token="google-token"
+    )
+    store = MagicMock()
+    store.async_load = AsyncMock(return_value=None)
+    on_cookies_refreshed = MagicMock()
+
+    manager = NestSessionManager(
+        client=client, store=store, on_cookies_refreshed=on_cookies_refreshed
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    on_cookies_refreshed.assert_not_called()

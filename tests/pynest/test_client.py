@@ -275,3 +275,81 @@ def test_merge_cookies_empty_new():
     original = "SID=old; HSID=val"
     result = merge_cookies(original, {})
     assert result == original
+
+
+def test_merge_cookies_drops_expired():
+    """Test that merge_cookies removes cookies the server expired."""
+    original = "SID=old; SIDCC=old-cc; HSID=keep"
+    result = merge_cookies(original, {"SID": "new"}, expired={"SIDCC"})
+    assert result == "SID=new; HSID=keep"
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_drops_expired_cookies(socket_enabled):
+    """Test that cookies expired via Max-Age=0 or a past Expires are removed."""
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+        response.set_cookie("SID", "new-sid", max_age=63072000)
+        response.set_cookie("SIDCC", "", max_age=0)
+        response.set_cookie("OSID", "EXPIRED", expires="Thu, 01-Jan-1970 00:00:01 GMT")
+        response.set_cookie("HSID", "new-hsid", expires="Fri, 01-Jan-2100 00:00:00 GMT")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        await nest_client.get_access_token_from_cookies(
+            str(url), "SID=old-sid; SIDCC=old-cc; OSID=old-osid; APISID=keep-me"
+        )
+        assert nest_client.refreshed_cookies == (
+            "SID=new-sid; APISID=keep-me; HSID=new-hsid"
+        )
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_all_expired(socket_enabled):
+    """Test that Google expiring every cookie is a sign-out, not an empty rotation."""
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+        response.set_cookie("SID", "", max_age=0)
+        response.set_cookie("HSID", "", expires="Thu, 01-Jan-1970 00:00:01 GMT")
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        with pytest.raises(BadCredentialsException):
+            await nest_client.get_access_token_from_cookies(
+                str(url), "SID=old-sid; HSID=old-hsid"
+            )
+        assert nest_client.refreshed_cookies is None
+        assert nest_client.cookies == "SID=old-sid; HSID=old-hsid"
+        assert nest_client.auth is None
