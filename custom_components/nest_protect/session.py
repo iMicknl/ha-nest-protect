@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,9 +13,11 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     AUTH_RETRY_DELAYS,
+    BACKOFF_INTERVALS,
     CONF_AUTH_GENERATION,
     CONF_PREVIOUS_AUTH_GENERATION,
     LOGGER,
+    MAX_AUTH_FAILURES,
     SESSION_EXPIRY_BUFFER_SECONDS,
 )
 from .credentials import (
@@ -34,7 +36,6 @@ from .pynest.exceptions import (
 )
 from .pynest.models import FirstDataAPIResponse, NestResponse
 
-ReauthenticationCallback = Callable[[], None]
 _AUTH_SCOPED_STORE_FIELDS = frozenset(
     {
         CONF_AUTH_GENERATION,
@@ -44,6 +45,13 @@ _AUTH_SCOPED_STORE_FIELDS = frozenset(
         "transport_url",
     }
 )
+
+
+def _backoff_for(consecutive: int) -> int:
+    """Return the backoff interval in seconds for a consecutive failure count."""
+    if consecutive == 0:
+        return BACKOFF_INTERVALS[0]
+    return BACKOFF_INTERVALS[min(consecutive - 1, len(BACKOFF_INTERVALS) - 1)]
 
 
 def build_reauthentication_state(
@@ -91,6 +99,7 @@ async def async_authenticate_with_providers_once(
             continue
 
         LOGGER.debug("Authenticating with %s credentials", provider.name)
+        session: NestResponse | None = None
         validated = False
         try:
             auth = await provider.async_get_access_token()
@@ -112,7 +121,8 @@ async def async_authenticate_with_providers_once(
             validated = True
             return ProviderAuthenticationResult(provider.name, session, data)
         finally:
-            if not validated:
+            # NestClient installs a new session before app_launch validates it.
+            if not validated and session is not None:
                 client.nest_session = None
 
     if last_transient_failure is not None:
@@ -144,12 +154,15 @@ class NestSessionManager:
         self._credential_generation = credential_generation
         self._credential_update_callback = credential_update_callback
         self._retry_delays = tuple(retry_delays)
-        self._session_lock = asyncio.Lock()
+        self._consecutive_auth_failures: int = 0
+        # Kept apart from auth failures so unrelated errors only slow polling
+        # down and never push the user toward re-authentication.
+        self._consecutive_errors: int = 0
+        self._refresh_lock = asyncio.Lock()
+        self._refresh_generation: int = 0
         self._stored_state: dict[str, Any] = {}
         self._state_loaded = False
         self._stored_credentials_applied = False
-        self._reauthentication_callback: ReauthenticationCallback | None = None
-        self._reauthentication_started = False
         self._retired = False
         self._credential_providers = tuple(
             credential_providers
@@ -163,21 +176,53 @@ class NestSessionManager:
             )
 
     @property
-    def current_session(self) -> NestResponse | None:
-        """Return the active Nest session object."""
-        return self._client.nest_session
+    def consecutive_auth_failures(self) -> int:
+        """Return the number of consecutive authentication failures."""
+        return self._consecutive_auth_failures
 
-    def set_reauthentication_callback(self, callback: ReauthenticationCallback) -> None:
-        """Attach the runtime action for confirmed credential rejection."""
-        self._reauthentication_callback = callback
+    @property
+    def consecutive_errors(self) -> int:
+        """Return the number of consecutive non-authentication errors."""
+        return self._consecutive_errors
 
-    def request_reauthentication(self) -> None:
-        """Request runtime reauthentication once."""
-        self._start_reauthentication()
+    @property
+    def should_trigger_reauth(self) -> bool:
+        """Return True if authentication failures exceed the threshold."""
+        return self._consecutive_auth_failures >= MAX_AUTH_FAILURES
+
+    @property
+    def backoff_interval(self) -> int:
+        """Return the backoff interval in seconds after an auth failure."""
+        return _backoff_for(self._consecutive_auth_failures)
+
+    @property
+    def error_backoff_interval(self) -> int:
+        """Return the backoff interval in seconds after a non-auth error."""
+        return _backoff_for(self._consecutive_errors)
+
+    def record_auth_failure(self) -> None:
+        """Record a consecutive authentication failure."""
+        self._consecutive_auth_failures += 1
+
+    def record_error(self) -> None:
+        """Record a consecutive non-authentication error."""
+        self._consecutive_errors += 1
+
+    def record_auth_success(self) -> None:
+        """Reset the auth failure counter once Nest accepts the session."""
+        self._consecutive_auth_failures = 0
+
+    def record_success(self) -> None:
+        """Reset both counters after a fully successful update."""
+        self._consecutive_auth_failures = 0
+        self._consecutive_errors = 0
 
     async def async_setup(self) -> FirstDataAPIResponse | None:
-        """Restore a validated session or create one from configured providers."""
-        async with self._session_lock:
+        """Restore a validated session or create one from configured providers.
+
+        Returns None when no credentials are configured.
+        """
+        async with self._refresh_lock:
             self._raise_if_retired()
             await self._async_prepare_state()
 
@@ -191,50 +236,66 @@ class NestSessionManager:
             _, data = result
             return data
 
+    def _has_valid_session(self) -> bool:
+        """Return True if the current Nest session is not (nearly) expired."""
+        return self._session_is_valid(self._client.nest_session)
+
     async def ensure_session(self) -> None:
-        """Ensure an unexpired Nest session exists."""
-        async with self._session_lock:
+        """Ensure a valid Nest session exists, refreshing if needed."""
+        if self._has_valid_session():
+            return
+
+        async with self._refresh_lock:
             self._raise_if_retired()
-            if self._session_is_valid(self._client.nest_session):
+            if self._has_valid_session():
                 return
 
             await self._async_prepare_state()
             await self._async_clear_persisted_session()
-            await self._async_refresh_session_locked()
+            await self._async_refresh_session()
 
-    async def async_refresh_session(
-        self, *, rejected_session: NestResponse | None = None
-    ) -> bool:
-        """Replace a rejected session, de-duplicating concurrent reports."""
-        async with self._session_lock:
+    async def async_run_command[T](
+        self,
+        command: Callable[[], Awaitable[T]],
+        auth_errors: type[Exception] | tuple[type[Exception], ...],
+    ) -> T:
+        """Run a command, refreshing the session and retrying once on auth errors.
+
+        A session can be revoked before its advertised expiry, so a valid-looking
+        session is no guarantee the command will be accepted.
+        """
+        await self.ensure_session()
+        try:
+            return await command()
+        except auth_errors:
+            LOGGER.debug("Command rejected by Nest, refreshing session and retrying")
+            if not await self.async_refresh_session():
+                raise
+        return await command()
+
+    async def async_refresh_session(self) -> bool:
+        """Force-refresh the Nest session via Google credentials.
+
+        Returns True when a fresh Nest session was obtained and persisted.
+        """
+        # Callers force a refresh because Nest rejected the current session, so
+        # expiry can't tell whether it is still stale. Session identity can't
+        # either: it is swapped before persisting, which may still fail. Only a
+        # refresh that fully completed while this one waited counts.
+        generation = self._refresh_generation
+
+        async with self._refresh_lock:
             self._raise_if_retired()
-            await self._async_prepare_state()
-            current = self._client.nest_session
-
-            if (
-                rejected_session is not None
-                and self._session_is_valid(current)
-                and current is not rejected_session
-            ):
+            if self._refresh_generation != generation:
                 return True
 
-            if rejected_session is not None:
-                self._client.auth = None
-            self._client.nest_session = None
-            await self._async_clear_persisted_session()
-            return await self._async_refresh_session_locked()
-
-    async def async_invalidate_session(self, *, rejected_session: NestResponse) -> None:
-        """Forget a replacement session rejected by its retrying consumer."""
-        async with self._session_lock:
-            self._raise_if_retired()
             await self._async_prepare_state()
-            if self._client.nest_session is not rejected_session:
-                return
-
+            # The cached Google token created the rejected session, so reusing
+            # it could hand back a session Nest rejects again.
             self._client.auth = None
             self._client.nest_session = None
             await self._async_clear_persisted_session()
+            return await self._async_refresh_session()
 
     async def async_stage_reauthentication(
         self,
@@ -242,7 +303,7 @@ class NestSessionManager:
         credentials: Mapping[str, Any],
     ) -> None:
         """Retire this manager after durably staging replacement credentials."""
-        async with self._session_lock:
+        async with self._refresh_lock:
             await self._async_load_state()
             previous_generation = self._credential_generation
             staged_state = build_reauthentication_state(
@@ -261,10 +322,11 @@ class NestSessionManager:
             self._state_loaded = True
             self._stored_credentials_applied = True
 
-    async def _async_refresh_session_locked(self) -> bool:
-        """Refresh the Nest session while holding the session lock."""
+    async def _async_refresh_session(self) -> bool:
+        """Refresh the Nest session; the caller must hold the refresh lock."""
         auth = self._client.auth
         if auth and not auth.is_expired():
+            session: NestResponse | None = None
             validated = False
             try:
                 session = await self._client.authenticate(auth.access_token)
@@ -275,15 +337,16 @@ class NestSessionManager:
                 validated = True
                 self._client.nest_session = session
                 await self._async_persist_session(session)
+                self._refresh_generation += 1
                 return True
             finally:
-                if not validated:
+                if not validated and session is not None:
                     self._client.nest_session = None
 
         result = await self._async_authenticate_with_providers()
         if result is None:
-            self._start_reauthentication()
-            raise BadCredentialsException("No credentials available")
+            return False
+        self._refresh_generation += 1
         return True
 
     async def _async_authenticate_with_providers(
@@ -318,13 +381,14 @@ class NestSessionManager:
                 )
                 await asyncio.sleep(delay)
 
+        # Google accepted the credentials if Nest got far enough to reject the
+        # session, so that must not be reported as bad credentials.
         if last_session_rejection is not None:
             raise last_session_rejection
 
         if last_bad_credentials is None:
             raise RuntimeError("Authentication attempts ended without a result")
 
-        self._start_reauthentication()
         raise last_bad_credentials
 
     async def _async_try_persisted_session(
@@ -337,6 +401,7 @@ class NestSessionManager:
 
         restored_session = NestResponse.from_dict(persisted_session)
         if restored_session is None or not self._session_is_valid(restored_session):
+            LOGGER.debug("Persisted session expired, falling through to credentials")
             await self._async_clear_persisted_session()
             return None
 
@@ -347,6 +412,8 @@ class NestSessionManager:
         self._client.nest_session = restored_session
         self._client.transport_url = self._stored_state.get("transport_url")
 
+        # Only an explicit rejection falls through: a transient failure would
+        # hit the credentials too and must not count against them.
         validated = False
         try:
             data = await self._client.get_first_data(
@@ -439,7 +506,11 @@ class NestSessionManager:
         self._state_loaded = True
 
     async def _async_save_credentials(self, updates: Mapping[str, Any]) -> None:
-        """Durably save provider changes before dependent requests continue."""
+        """Durably save provider changes before dependent requests continue.
+
+        Google may already have invalidated the previous cookies, so they must be
+        stored before any later auth step gets a chance to fail.
+        """
         await self._async_load_state()
         credentials = dict(self._stored_state.get("credentials", {}))
         changed = any(
@@ -471,13 +542,6 @@ class NestSessionManager:
         removed = self._stored_state.pop("transport_url", None) is not None or removed
         if removed:
             await self._store.async_save(self._stored_state)
-
-    def _start_reauthentication(self) -> None:
-        """Start runtime reauthentication at most once."""
-        if self._reauthentication_started or not self._reauthentication_callback:
-            return
-        self._reauthentication_started = True
-        self._reauthentication_callback()
 
     def _with_credential_generation(self, updates: Mapping[str, Any]) -> dict[str, Any]:
         """Tag config-entry updates so a replaced manager cannot overwrite them."""

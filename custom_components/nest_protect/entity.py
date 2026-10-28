@@ -2,20 +2,54 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from aiohttp import ClientError
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
+from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
-from .pynest.exceptions import NotAuthenticatedException
+from .pynest.exceptions import (
+    BadCredentialsException,
+    NestServiceException,
+    NotAuthenticatedException,
+    PynestException,
+)
 from .pynest.models import Bucket
 
 if TYPE_CHECKING:
     from .session import NestSessionManager
+    from .stream_health import StreamHealth
+
+
+async def async_run_entity_command[T](
+    entity: Entity,
+    session_manager: NestSessionManager,
+    command: Callable[[], Awaitable[T]],
+    auth_errors: type[Exception] | tuple[type[Exception], ...],
+    failure: str,
+) -> T:
+    """Run a Nest command for an entity, reporting failures as Home Assistant errors."""
+    try:
+        return await session_manager.async_run_command(command, auth_errors)
+    except BadCredentialsException as err:
+        # Google rejected the refresh, so only new credentials can help.
+        entity.platform.config_entry.async_start_reauth(entity.hass)
+        raise HomeAssistantError(f"{failure}: re-authentication required") from err
+    except (
+        ClientError,
+        TimeoutError,
+        NestServiceException,
+        NotAuthenticatedException,
+        PynestException,
+    ) as err:
+        raise HomeAssistantError(f"{failure}: {err}") from err
 
 
 class NestEntity(Entity):
@@ -23,6 +57,10 @@ class NestEntity(Entity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    # Entities reporting the device's own connectivity set this to False, so
+    # that state stays visible while other values are considered stale.
+    _follows_stream_health = True
+    _stream_health: StreamHealth | None = None
 
     def __init__(
         self,
@@ -106,6 +144,13 @@ class NestEntity(Entity):
 
         return None
 
+    @property
+    def available(self) -> bool:
+        """Return False when updates from Nest have stopped arriving."""
+        if self._stream_health is not None and not self._stream_health.available:
+            return False
+        return super().available
+
     async def async_added_to_hass(self) -> None:
         """Run when entity is added to register update signal handler."""
         self.async_on_remove(
@@ -113,6 +158,25 @@ class NestEntity(Entity):
                 self.hass, self.bucket.object_key, self.update_callback
             )
         )
+
+        if self._follows_stream_health:
+            entry_data = self.platform.config_entry.runtime_data
+            self._stream_health = entry_data.stream_health
+            self.async_on_remove(
+                async_dispatcher_connect(
+                    self.hass, self._stream_health.signal, self.async_write_ha_state
+                )
+            )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes.
+
+        Signals are keyed on Nest buckets, not on the entity_id, so nothing
+        needs to be subscribed again. Without this hook HA removes and re-adds
+        the entity instead.
+        """
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def update_callback(self, bucket: Bucket):
@@ -137,6 +201,32 @@ class NestDescriptiveEntity(NestEntity):
         self._attr_unique_id = f"{super().unique_id}-{self.entity_description.key}"
 
 
+class NestHomeEntity(NestDescriptiveEntity):
+    """Entity that belongs to a Nest home (structure) instead of a device."""
+
+    def __init__(
+        self,
+        bucket: Bucket,
+        description: EntityDescription,
+        home_name: str | None,
+        client: NestClient,
+    ) -> None:
+        """Initialize the home entity."""
+        # Set before super().__init__(), which builds the device info.
+        self.home_name = home_name
+        super().__init__(bucket, description, {}, client)
+
+    def generate_device_info(self) -> DeviceInfo:
+        """Generate device info for the home."""
+        structure_id = self.bucket.object_key.split(".", 1)[1]
+
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"structure.{structure_id}")},
+            name=self.home_name or "Nest Home",
+            manufacturer="Google",
+        )
+
+
 class NestUpdatableEntity(NestDescriptiveEntity):
     """Entity that can push state updates to Nest with session management."""
 
@@ -154,34 +244,16 @@ class NestUpdatableEntity(NestDescriptiveEntity):
 
     async def _async_update_objects(self, objects: list[dict]) -> dict:
         """Update objects with automatic session refresh."""
-        await self.session_manager.ensure_session()
-        session = self.client.nest_session
-        if session is None:
-            raise NotAuthenticatedException("No active Nest session")
-
-        try:
-            return await self.client.update_objects(
-                session.access_token,
-                session.userid,
+        return await async_run_entity_command(
+            self,
+            self.session_manager,
+            # Re-read the session on each attempt to pick up a refreshed token.
+            lambda: self.client.update_objects(
+                self.client.nest_session.access_token,
+                self.client.nest_session.userid,
                 self.client.transport_url,
                 objects,
-            )
-        except NotAuthenticatedException:
-            await self.session_manager.async_refresh_session(rejected_session=session)
-
-        session = self.client.nest_session
-        if session is None:
-            raise NotAuthenticatedException("Nest session recovery failed")
-
-        try:
-            return await self.client.update_objects(
-                session.access_token,
-                session.userid,
-                self.client.transport_url,
-                objects,
-            )
-        except NotAuthenticatedException:
-            await self.session_manager.async_invalidate_session(
-                rejected_session=session
-            )
-            raise
+            ),
+            NotAuthenticatedException,
+            f"Failed to update {self.entity_id}",
+        )

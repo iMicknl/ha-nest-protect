@@ -5,15 +5,20 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 import voluptuous as vol
 from aiohttp import ClientError
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import (
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    ConfigEntry,
+)
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.storage import Store
@@ -38,7 +43,7 @@ from .credentials import (
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import Environment
-from .pynest.exceptions import BadCredentialsException
+from .pynest.exceptions import BadCredentialsException, NestServiceException
 from .session import (
     async_authenticate_with_providers_once,
     build_reauthentication_state,
@@ -68,21 +73,26 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 3
 
-    _config_entry: ConfigEntry | None = None
     _default_account_type: Environment = Environment.PRODUCTION
     _pending_credential_source_fingerprint: str | None = None
     _pending_credential_updates: dict[str, Any] | None = None
 
+    def _existing_entry(self) -> ConfigEntry | None:
+        """Return the entry whose credentials this flow replaces, if any."""
+        if self.source == SOURCE_REAUTH:
+            return self._get_reauth_entry()
+        if self.source == SOURCE_RECONFIGURE:
+            return self._get_reconfigure_entry()
+        return None
+
     def _pending_reauthentication_store(self) -> Store | None:
-        """Return durable scratch storage while reauthentication is validated."""
-        if self._config_entry is None:
+        """Return durable scratch storage while new credentials are validated."""
+        if (entry := self._existing_entry()) is None:
             return None
         return Store(
             self.hass,
             STORAGE_VERSION,
-            STORAGE_PENDING_REAUTH_KEY_FORMAT.format(
-                entry_id=self._config_entry.entry_id
-            ),
+            STORAGE_PENDING_REAUTH_KEY_FORMAT.format(entry_id=entry.entry_id),
         )
 
     @staticmethod
@@ -133,6 +143,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         google_auth_markers = ("APISID=", "SAPISID=", "HSID=", "SSID=", "SID=")
         return any(marker in cookies for marker in google_auth_markers)
 
+    @staticmethod
+    def _normalize_cookies(cookies: str) -> str:
+        """Normalize a pasted cookie header.
+
+        Long header values copied from browser developer tools can contain line
+        wraps, and some browsers include the header name in the copied text.
+        """
+        cookies = "".join(line.strip() for line in cookies.splitlines())
+        cookies = re.sub(r"^cookie:\s*", "", cookies, flags=re.IGNORECASE)
+        return "; ".join(part.strip() for part in cookies.split(";") if part.strip())
+
     async def async_validate_input(
         self, user_input: dict[str, Any]
     ) -> ConfigFlowValidationResult:
@@ -143,9 +164,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         client = NestClient(session=session, environment=NEST_ENVIRONMENTS[environment])
 
         pending_store = self._pending_reauthentication_store()
+        existing_entry = self._existing_entry()
         entry_generation = (
-            self._config_entry.data.get(CONF_AUTH_GENERATION)
-            if self._config_entry is not None
+            existing_entry.data.get(CONF_AUTH_GENERATION)
+            if existing_entry is not None
             else None
         )
         pending_updates: dict[str, Any] = {}
@@ -178,6 +200,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             credential_inputs,
             entry_generation,
         )
+        # Google may rotate cookies before a later Nest step fails, so a retry
+        # with the same submission must continue from the rotated cookies.
         if credential_source_fingerprint != self._pending_credential_source_fingerprint:
             self._pending_credential_source_fingerprint = credential_source_fingerprint
             self._pending_credential_updates = {}
@@ -219,21 +243,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return ConfigFlowValidationResult(credentials, fields, email)
 
-    async def _async_finish_reauthentication(
+    async def _async_stage_credentials(
         self,
+        entry: ConfigEntry,
         data: dict[str, Any],
         credential_fields: frozenset[str],
-    ) -> FlowResult:
-        """Replace credentials without restoring state from the old login."""
-        if self._config_entry is None:
-            raise RuntimeError("Reauthentication entry is not available")
+    ) -> dict[str, Any]:
+        """Durably hand replacement credentials to the entry's session Store.
 
-        previous_generation = self._config_entry.data.get(CONF_AUTH_GENERATION)
+        Returns the new entry data. Fields owned by credential providers are
+        replaced as a whole, so a superseded credential (e.g. a legacy refresh
+        token) can't be silently tried again.
+        """
+        previous_generation = entry.data.get(CONF_AUTH_GENERATION)
         credential_generation = uuid.uuid4().hex
         updated_data = {
             **{
                 key: value
-                for key, value in self._config_entry.data.items()
+                for key, value in entry.data.items()
                 if key not in credential_fields
             },
             **data,
@@ -243,7 +270,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             key: updated_data[key] for key in credential_fields if key in updated_data
         }
 
-        entry_data = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id)
+        entry_data = getattr(entry, "runtime_data", None)
         session_manager = getattr(entry_data, "session_manager", None)
         if session_manager is not None:
             await session_manager.async_stage_reauthentication(
@@ -254,7 +281,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             store = Store(
                 self.hass,
                 STORAGE_VERSION,
-                STORAGE_KEY_FORMAT.format(entry_id=self._config_entry.entry_id),
+                STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id),
             )
             current_state = await store.async_load()
             await store.async_save(
@@ -266,20 +293,49 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             )
 
-        self.hass.config_entries.async_update_entry(
-            self._config_entry,
-            data=updated_data,
-        )
-        self.hass.async_create_task(
-            self.hass.config_entries.async_reload(self._config_entry.entry_id)
-        )
         pending_store = self._pending_reauthentication_store()
         if pending_store is not None:
             try:
                 await pending_store.async_remove()
             except OSError:
                 LOGGER.warning("Could not remove pending reauthentication data")
-        return self.async_abort(reason="reauth_successful")
+
+        return updated_data
+
+    async def _async_create_or_update_entry(
+        self, validated: ConfigFlowValidationResult
+    ) -> FlowResult:
+        """Create a new entry, or update the entry being reauthenticated/reconfigured."""
+        data = {
+            **validated.credentials,
+            CONF_ACCOUNT_TYPE: self._default_account_type,
+        }
+        if (entry := self._existing_entry()) is None:
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=f"Nest Protect ({validated.email})", data=data
+            )
+
+        # Entries created before v0.4.0 are keyed by their refresh token instead
+        # of the Nest user ID, so the account can't be compared. Adopt the account
+        # that was just authenticated, unless another entry already owns it.
+        if not entry.unique_id or not entry.unique_id.startswith("user."):
+            if self.hass.config_entries.async_entry_for_domain_unique_id(
+                DOMAIN, self.unique_id
+            ):
+                return self.async_abort(reason="already_configured")
+            data = await self._async_stage_credentials(
+                entry, data, validated.credential_fields
+            )
+            return self.async_update_reload_and_abort(
+                entry, unique_id=self.unique_id, data=data
+            )
+
+        self._abort_if_unique_id_mismatch(reason="wrong_account")
+        data = await self._async_stage_credentials(
+            entry, data, validated.credential_fields
+        )
+        return self.async_update_reload_and_abort(entry, data=data)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -362,7 +418,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
                 try:
                     validated = await self.async_validate_input(validation_input)
-                except TimeoutError, ClientError:
+                except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
@@ -371,20 +427,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     LOGGER.exception(exception)
 
             if not errors:
-                data = {
-                    **validated.credentials,
-                    CONF_ACCOUNT_TYPE: self._default_account_type,
-                }
-
-                if self._config_entry:
-                    return await self._async_finish_reauthentication(
-                        data, validated.credential_fields
-                    )
-
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=f"Nest Protect ({validated.email})", data=data
-                )
+                return await self._async_create_or_update_entry(validated)
 
         return self.async_show_form(
             step_id="extension",
@@ -406,7 +449,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input:
             user_input[CONF_ACCOUNT_TYPE] = self._default_account_type
             issue_token = user_input.get(CONF_ISSUE_TOKEN, "").strip()
-            cookies = user_input.get(CONF_COOKIES, "").strip()
+            cookies = self._normalize_cookies(user_input.get(CONF_COOKIES, ""))
             # Store stripped values back so downstream validation and API calls
             # use the normalized credentials
             user_input[CONF_ISSUE_TOKEN] = issue_token
@@ -421,7 +464,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 try:
                     validated = await self.async_validate_input(user_input)
-                except TimeoutError, ClientError:
+                except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
@@ -430,20 +473,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     LOGGER.exception(exception)
 
             if not errors:
-                data = {
-                    **validated.credentials,
-                    CONF_ACCOUNT_TYPE: self._default_account_type,
-                }
-                if self._config_entry:
-                    return await self._async_finish_reauthentication(
-                        data, validated.credential_fields
-                    )
-
-                self._abort_if_unique_id_configured()
-
-                return self.async_create_entry(
-                    title=f"Nest Protect ({validated.email})", data=data
-                )
+                return await self._async_create_or_update_entry(validated)
 
         return self.async_show_form(
             step_id="account_link",
@@ -462,11 +492,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle reauth."""
-        self._config_entry = cast(
-            ConfigEntry,
-            self.hass.config_entries.async_get_entry(self.context["entry_id"]),
-        )
+        self._default_account_type = self._get_reauth_entry().data[CONF_ACCOUNT_TYPE]
 
-        self._default_account_type = self._config_entry.data[CONF_ACCOUNT_TYPE]
+        return await self.async_step_auth_method()
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle updating the credentials of an existing entry."""
+        self._default_account_type = self._get_reconfigure_entry().data[
+            CONF_ACCOUNT_TYPE
+        ]
 
         return await self.async_step_auth_method()

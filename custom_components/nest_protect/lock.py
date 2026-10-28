@@ -5,35 +5,31 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientError
 from homeassistant.components.lock import LockEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import UnitOfRatio
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, Entity, EntityCategory
+from homeassistant.helpers.entity import Entity, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ATTRIBUTION, DOMAIN
-from .pynest.exceptions import (
-    BadCredentialsException,
-    NestLockAuthException,
-    NestServiceException,
-    NotAuthenticatedException,
-    PynestException,
-)
+from .entity import async_run_entity_command
+from .pynest.exceptions import NestLockAuthException
 from .pynest.grpc_client import GrpcLockClient
 from .pynest.lock_models import LockBoltState, LockState
 
 if TYPE_CHECKING:
+    from . import NestProtectConfigEntry
     from .session import NestSessionManager
+
+PARALLEL_UPDATES = 1
 
 LOCK_SIGNAL_PREFIX = "nest_protect_lock_"
 
@@ -66,7 +62,7 @@ def discovery_signal(entry_id: str) -> str:
 
 def subscribe_to_lock_discovery(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NestProtectConfigEntry,
     async_add_entities: AddEntitiesCallback,
     factory: Callable[[LockState], Entity],
 ) -> None:
@@ -76,7 +72,7 @@ def subscribe_to_lock_discovery(
     already cached on the config entry (from observe events that arrived before
     this platform set up) are replayed immediately.
     """
-    entry_data = hass.data[DOMAIN][entry.entry_id]
+    entry_data = entry.runtime_data
     known: set[str] = set()
 
     @callback
@@ -102,17 +98,18 @@ def subscribe_to_lock_discovery(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: NestProtectConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up lock entities. Discovery is event-driven via dispatcher."""
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    grpc_client = entry_data.grpc_lock_client
+    entry_data = entry.runtime_data
     subscribe_to_lock_discovery(
         hass,
         entry,
         async_add_entities,
-        lambda state: NestLockEntity(grpc_client, state, entry_data.session_manager),
+        lambda state: NestLockEntity(
+            entry_data.grpc_lock_client, entry_data.session_manager, state
+        ),
     )
 
 
@@ -126,13 +123,13 @@ class NestLockEntity(LockEntity):
     def __init__(
         self,
         grpc_client: GrpcLockClient,
-        lock_state: LockState,
         session_manager: NestSessionManager,
+        lock_state: LockState,
     ) -> None:
         """Initialize."""
         self._grpc_client = grpc_client
-        self._lock_state = lock_state
         self._session_manager = session_manager
+        self._lock_state = lock_state
         self._attr_unique_id = f"lock_{lock_state.resource_id}"
         self._attr_attribution = ATTRIBUTION
         self._attr_device_info = self._build_device_info()
@@ -186,6 +183,11 @@ class NestLockEntity(LockEntity):
         )
 
     @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
+
+    @callback
     def _handle_update(self, lock_state: LockState) -> None:
         """Receive a new LockState from the observe loop."""
         previous = self._lock_state
@@ -205,62 +207,24 @@ class NestLockEntity(LockEntity):
             )
         self.async_write_ha_state()
 
+    async def _send_lock_command(self, lock: bool) -> None:
+        await async_run_entity_command(
+            self,
+            self._session_manager,
+            lambda: self._grpc_client.send_lock_command(
+                self._lock_state.resource_id, lock=lock
+            ),
+            NestLockAuthException,
+            "Failed to lock" if lock else "Failed to unlock",
+        )
+
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the lock."""
-        try:
-            await self._async_send_command(lock=True)
-        except (
-            ClientError,
-            TimeoutError,
-            BadCredentialsException,
-            NestServiceException,
-            NotAuthenticatedException,
-            PynestException,
-        ) as err:
-            raise HomeAssistantError(f"Failed to lock: {err}") from err
+        await self._send_lock_command(lock=True)
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the lock."""
-        try:
-            await self._async_send_command(lock=False)
-        except (
-            ClientError,
-            TimeoutError,
-            BadCredentialsException,
-            NestServiceException,
-            NotAuthenticatedException,
-            PynestException,
-        ) as err:
-            raise HomeAssistantError(f"Failed to unlock: {err}") from err
-
-    async def _async_send_command(self, *, lock: bool) -> None:
-        """Send a command and retry once after coordinated session recovery."""
-        await self._session_manager.ensure_session()
-        rejected_session = self._session_manager.current_session
-
-        try:
-            await self._grpc_client.send_lock_command(
-                self._lock_state.resource_id,
-                lock=lock,
-                nest_session=rejected_session,
-            )
-        except NestLockAuthException:
-            await self._session_manager.async_refresh_session(
-                rejected_session=rejected_session
-            )
-            replacement_session = self._session_manager.current_session
-            try:
-                await self._grpc_client.send_lock_command(
-                    self._lock_state.resource_id,
-                    lock=lock,
-                    nest_session=replacement_session,
-                )
-            except NestLockAuthException:
-                if replacement_session is not None:
-                    await self._session_manager.async_invalidate_session(
-                        rejected_session=replacement_session
-                    )
-                raise
+        await self._send_lock_command(lock=False)
 
 
 class NestLockBatterySensor(SensorEntity):
@@ -271,7 +235,7 @@ class NestLockBatterySensor(SensorEntity):
     # No _attr_name / translation key: with has_entity_name and the BATTERY
     # device class, HA names this entity "Battery" on its own.
     _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_native_unit_of_measurement = UnitOfRatio.PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -300,6 +264,11 @@ class NestLockBatterySensor(SensorEntity):
                 self._handle_update,
             )
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def _handle_update(self, lock_state: LockState) -> None:

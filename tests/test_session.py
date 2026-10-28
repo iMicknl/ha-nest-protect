@@ -12,9 +12,11 @@ from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
 
 from custom_components.nest_protect.const import (
+    BACKOFF_INTERVALS,
     CONF_AUTH_GENERATION,
     CONF_PREVIOUS_AUTH_GENERATION,
     CONF_REFRESH_TOKEN,
+    MAX_AUTH_FAILURES,
 )
 from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
@@ -372,13 +374,10 @@ async def test_mixed_bad_and_transient_provider_failures_do_not_start_reauth():
         "temporary token endpoint failure"
     )
     manager = NestSessionManager(client, _MemoryStore(), retry_delays=(0, 0))
-    start_reauth = MagicMock()
-    manager.set_reauthentication_callback(start_reauth)
 
+    # Callers only start reauthentication on BadCredentialsException.
     with pytest.raises(PynestException, match="temporary"):
         await manager.async_setup()
-
-    start_reauth.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -394,15 +393,12 @@ async def test_reauthentication_requires_every_provider_to_reject_every_attempt(
     )
     store = _MemoryStore()
     manager = NestSessionManager(client, store, retry_delays=(0, 0))
-    start_reauth = MagicMock()
-    manager.set_reauthentication_callback(start_reauth)
 
     with pytest.raises(BadCredentialsException):
         await manager.async_setup()
 
     assert client.get_access_token_from_cookies.await_count == 3
     assert client.get_access_token_from_refresh_token.await_count == 3
-    start_reauth.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -436,14 +432,11 @@ async def test_nest_token_rejection_does_not_start_reauthentication():
     )
     client.authenticate.side_effect = NotAuthenticatedException("401")
     manager = NestSessionManager(client, _MemoryStore(), retry_delays=(0,))
-    start_reauth = MagicMock()
-    manager.set_reauthentication_callback(start_reauth)
 
     with pytest.raises(NotAuthenticatedException):
         await manager.async_setup()
 
     assert client.get_access_token_from_cookies.await_count == 2
-    start_reauth.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -457,13 +450,9 @@ async def test_mixed_nest_and_credential_rejections_do_not_start_reauth():
     ]
     client.authenticate.side_effect = NotAuthenticatedException("401")
     manager = NestSessionManager(client, _MemoryStore(), retry_delays=(0, 0))
-    start_reauth = MagicMock()
-    manager.set_reauthentication_callback(start_reauth)
 
     with pytest.raises(NotAuthenticatedException):
         await manager.async_setup()
-
-    start_reauth.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -515,45 +504,16 @@ async def test_concurrent_ensure_session_calls_share_one_refresh():
 
 
 @pytest.mark.asyncio
-async def test_ensure_session_without_credentials_requests_reauthentication():
-    """Runtime recovery without any provider must fail explicitly."""
+async def test_refresh_without_credentials_reports_no_new_session():
+    """Runtime recovery without any provider must not report a fresh session."""
     client = _make_cookie_client()
     client.issue_token = None
     client.cookies = None
     client.refresh_token = None
     manager = NestSessionManager(client, _MemoryStore(), retry_delays=())
-    start_reauth = MagicMock()
-    manager.set_reauthentication_callback(start_reauth)
 
-    with pytest.raises(BadCredentialsException, match="No credentials"):
-        await manager.ensure_session()
-
-    start_reauth.assert_called_once_with()
-
-
-@pytest.mark.asyncio
-async def test_concurrent_rejections_of_same_session_share_one_refresh():
-    """A second report about an already-replaced session reuses its replacement."""
-    client = _make_cookie_client()
-    old_session = _make_nest_response()
-    old_session.access_token = "same-nest-token"
-    client.nest_session = old_session
-    client.get_access_token_from_cookies.return_value = MagicMock(
-        access_token="google-token"
-    )
-    new_session = _make_nest_response()
-    new_session.access_token = "same-nest-token"
-    client.authenticate.return_value = new_session
-    manager = NestSessionManager(client, _MemoryStore(), retry_delays=())
-
-    await asyncio.gather(
-        manager.async_refresh_session(rejected_session=old_session),
-        manager.async_refresh_session(rejected_session=old_session),
-    )
-
-    client.get_access_token_from_cookies.assert_awaited_once()
-    client.authenticate.assert_awaited_once()
-    assert client.nest_session is new_session
+    assert await manager.async_refresh_session() is False
+    assert client.nest_session is None
 
 
 @pytest.mark.asyncio
@@ -571,7 +531,7 @@ async def test_rejected_session_skips_the_google_token_that_created_it():
     client.authenticate.return_value = replacement
     manager = NestSessionManager(client, _MemoryStore(), retry_delays=())
 
-    await manager.async_refresh_session(rejected_session=rejected_session)
+    await manager.async_refresh_session()
 
     client.authenticate.assert_awaited_once_with("fresh-google-token")
     assert client.nest_session is replacement
@@ -598,7 +558,7 @@ async def test_runtime_refresh_does_not_persist_an_unvalidated_session():
     manager = NestSessionManager(client, store, retry_delays=())
 
     with pytest.raises(NotAuthenticatedException):
-        await manager.async_refresh_session(rejected_session=rejected_session)
+        await manager.async_refresh_session()
 
     assert client.nest_session is None
     assert "nest_session" not in store.data
@@ -622,8 +582,7 @@ async def test_cached_auth_rejection_clears_the_clients_candidate_session():
     client.get_first_data.side_effect = NotAuthenticatedException("401")
     manager = NestSessionManager(client, _MemoryStore(), retry_delays=())
 
-    with pytest.raises(BadCredentialsException, match="No credentials"):
-        await manager.ensure_session()
+    await manager.ensure_session()
 
     assert client.nest_session is None
 
@@ -649,64 +608,6 @@ async def test_transient_validation_failure_clears_the_clients_candidate_session
         await manager.ensure_session()
 
     assert client.nest_session is None
-
-
-@pytest.mark.asyncio
-async def test_rejected_replacement_can_be_invalidated_without_another_refresh():
-    """A consumer's second 401 must remove the unusable durable session."""
-    rejected_session = _make_nest_response()
-    store = _MemoryStore(
-        {
-            "nest_session": rejected_session.to_dict(),
-            "transport_url": "https://transport.example.com",
-        }
-    )
-    client = _make_cookie_client()
-    client.nest_session = rejected_session
-    manager = NestSessionManager(client, store, retry_delays=())
-
-    await manager.async_invalidate_session(rejected_session=rejected_session)
-
-    assert client.nest_session is None
-    assert client.auth is None
-    assert "nest_session" not in store.data
-    assert "transport_url" not in store.data
-
-
-@pytest.mark.asyncio
-async def test_ensure_session_waits_for_refresh_in_progress():
-    """A valid-looking rejected session must not escape during replacement."""
-    load_started = asyncio.Event()
-    release_load = asyncio.Event()
-
-    class BlockingStore(_MemoryStore):
-        async def async_load(self):
-            load_started.set()
-            await release_load.wait()
-            return await super().async_load()
-
-    client = _make_cookie_client()
-    rejected_session = _make_nest_response()
-    client.nest_session = rejected_session
-    client.get_access_token_from_cookies.return_value = MagicMock(
-        access_token="google-token"
-    )
-    replacement = _make_nest_response()
-    client.authenticate.return_value = replacement
-    manager = NestSessionManager(client, BlockingStore(), retry_delays=())
-
-    refresh = asyncio.create_task(
-        manager.async_refresh_session(rejected_session=rejected_session)
-    )
-    await load_started.wait()
-    ensure = asyncio.create_task(manager.ensure_session())
-    await asyncio.sleep(0)
-
-    assert not ensure.done()
-
-    release_load.set()
-    await asyncio.gather(refresh, ensure)
-    assert client.nest_session is replacement
 
 
 @pytest.mark.asyncio
@@ -897,7 +798,7 @@ async def test_failed_reauthentication_stage_keeps_the_old_manager_active():
         )
 
     await manager.ensure_session()
-    assert manager.current_session is old_session
+    assert client.nest_session is old_session
 
 
 @pytest.mark.asyncio
@@ -932,7 +833,7 @@ async def test_cancelled_reauthentication_stage_keeps_the_old_manager_active():
         await staging
 
     await manager.ensure_session()
-    assert manager.current_session is old_session
+    assert client.nest_session is old_session
 
 
 @pytest.mark.asyncio
@@ -1157,7 +1058,7 @@ async def test_ensure_session_valid():
     client.nest_session = valid_session
     client.auth = None
     client.refresh_token = "test-refresh-token"
-    client.get_access_token = AsyncMock()
+    client.get_access_token_from_refresh_token = AsyncMock()
     client.authenticate = AsyncMock()
 
     store = MagicMock()
@@ -1169,7 +1070,7 @@ async def test_ensure_session_valid():
     await manager.ensure_session()
 
     # Should NOT have refreshed anything
-    client.get_access_token.assert_not_called()
+    client.get_access_token_from_refresh_token.assert_not_called()
     client.authenticate.assert_not_called()
     store.async_save.assert_not_called()
 
@@ -1241,3 +1142,529 @@ async def test_ensure_session_none_refreshes():
     assert store.async_save.await_args.args[0]["nest_session"] == new_session.to_dict()
     # Should have set the new session on the client
     assert client.nest_session == new_session
+
+
+@pytest.mark.asyncio
+async def test_record_auth_failure_increments_counter():
+    """record_auth_failure increments the consecutive auth failure counter."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    assert manager.consecutive_auth_failures == 0
+    manager.record_auth_failure()
+    assert manager.consecutive_auth_failures == 1
+    manager.record_auth_failure()
+    assert manager.consecutive_auth_failures == 2
+
+
+@pytest.mark.asyncio
+async def test_record_success_resets_counter():
+    """record_success resets the auth failure counter."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    manager.record_auth_failure()
+    manager.record_auth_failure()
+    assert manager.consecutive_auth_failures == 2
+
+    manager.record_success()
+    assert manager.consecutive_auth_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_should_reauth_after_max_failures():
+    """should_trigger_reauth returns True after MAX_AUTH_FAILURES."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    # Should be False initially
+    assert manager.should_trigger_reauth is False
+
+    # Record failures up to threshold
+    for _ in range(MAX_AUTH_FAILURES - 1):
+        manager.record_auth_failure()
+    assert manager.should_trigger_reauth is False
+
+    # One more failure should trigger reauth
+    manager.record_auth_failure()
+    assert manager.should_trigger_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_backoff_interval_increases():
+    """backoff_interval returns increasing values."""
+    client = MagicMock()
+    store = MagicMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    # At 0 failures, should return the first interval
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+    # Each failure should increase the backoff
+    manager.record_auth_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+    manager.record_auth_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[1]
+
+    manager.record_auth_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[2]
+
+    # Should cap at the last interval
+    for _ in range(10):
+        manager.record_auth_failure()
+    assert manager.backoff_interval == BACKOFF_INTERVALS[-1]
+
+
+class _CountingStore(_MemoryStore):
+    """Count the saves that persisted a Nest session."""
+
+    def __init__(self, data=None) -> None:
+        super().__init__(data)
+        self.session_saves = 0
+
+    async def async_save(self, data) -> None:
+        """Replace stored state and count persisted sessions."""
+        if data.get("nest_session"):
+            self.session_saves += 1
+        await super().async_save(data)
+
+
+def _make_refresh_client(
+    nest_session: NestResponse | None, *new_sessions: NestResponse
+) -> tuple[MagicMock, asyncio.Event]:
+    """Create a client whose Google token fetch blocks until the event is set."""
+    client = _make_cookie_client()
+    client.nest_session = nest_session
+    client.transport_url = "https://transport.example.com"
+    release = asyncio.Event()
+
+    async def get_access_token(*_):
+        await release.wait()
+        return MagicMock(access_token="new-google-token")
+
+    client.get_access_token_from_cookies.side_effect = get_access_token
+    client.authenticate.side_effect = list(new_sessions)
+    return client, release
+
+
+async def _run_concurrently(release: asyncio.Event, *coros) -> list:
+    """Start all coroutines, let them reach the lock, then unblock the refresh."""
+    tasks = [asyncio.create_task(coro) for coro in coros]
+    await asyncio.sleep(0)
+    release.set()
+    return await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_forced_refresh_refreshes_once():
+    """Concurrent forced refreshes of the same rejected session share one refresh."""
+    new_session = _make_nest_response(expired=False)
+    client, release = _make_refresh_client(
+        _make_nest_response(expired=False), new_session
+    )
+    store = _CountingStore()
+    manager = NestSessionManager(client=client, store=store, retry_delays=())
+
+    results = await _run_concurrently(
+        release,
+        manager.async_refresh_session(),
+        manager.async_refresh_session(),
+        manager.ensure_session(),
+    )
+
+    assert results[:2] == [True, True]
+    client.get_access_token_from_cookies.assert_awaited_once()
+    client.authenticate.assert_called_once_with("new-google-token")
+    assert store.session_saves == 1
+    assert client.nest_session is new_session
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_ignores_unexpired_session():
+    """A forced refresh after a 401 still refreshes an unexpired session."""
+    first_session = _make_nest_response(expired=False)
+    second_session = _make_nest_response(expired=False)
+    client, release = _make_refresh_client(
+        _make_nest_response(expired=False), first_session, second_session
+    )
+    release.set()
+    manager = NestSessionManager(client=client, store=_MemoryStore(), retry_delays=())
+
+    assert await manager.async_refresh_session() is True
+    assert await manager.async_refresh_session() is True
+
+    assert client.authenticate.call_count == 2
+    assert client.nest_session is second_session
+
+
+@pytest.mark.asyncio
+async def test_waiter_refreshes_when_inflight_refresh_fails():
+    """A waiter performs its own refresh if the one it waited for failed."""
+    new_session = _make_nest_response(expired=False)
+    client, release = _make_refresh_client(
+        _make_nest_response(expired=True),
+        NotAuthenticatedException("401"),
+        new_session,
+    )
+    manager = NestSessionManager(client=client, store=_MemoryStore(), retry_delays=())
+
+    tasks = [asyncio.create_task(manager.ensure_session()) for _ in range(2)]
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert isinstance(results[0], NotAuthenticatedException)
+    assert results[1] is None
+    assert client.authenticate.call_count == 2
+    assert client.nest_session is new_session
+
+
+def _make_persisting_client(
+    nest_session: NestResponse, *new_sessions: NestResponse
+) -> MagicMock:
+    """Create a client whose authenticate() replaces nest_session, like NestClient."""
+    client = _make_cookie_client()
+    client.nest_session = nest_session
+    client.transport_url = "https://transport.example.com"
+    client.get_access_token_from_cookies.return_value = MagicMock(
+        access_token="google-token"
+    )
+    sessions = iter(new_sessions)
+
+    async def authenticate(access_token):
+        # Yield like the real request, so a concurrent caller sees the old session.
+        await asyncio.sleep(0)
+        client.nest_session = next(sessions)
+        return client.nest_session
+
+    client.authenticate.side_effect = authenticate
+    return client
+
+
+def _make_blocking_store(
+    *outcomes: Exception | None,
+) -> tuple[MagicMock, asyncio.Event, asyncio.Event]:
+    """Create a store whose first async_save blocks until released."""
+    store = MagicMock()
+    # Matching the manager's generation keeps setup saves out of the sequence.
+    store.async_load = AsyncMock(return_value={CONF_AUTH_GENERATION: "generation"})
+    saving = asyncio.Event()
+    release = asyncio.Event()
+    results = iter(outcomes)
+
+    async def async_save(data):
+        if not saving.is_set():
+            saving.set()
+            await release.wait()
+        if (error := next(results)) is not None:
+            raise error
+
+    store.async_save = AsyncMock(side_effect=async_save)
+    return store, saving, release
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_during_persist_shares_refresh():
+    """A forced refresh that starts while the session is persisted reuses it."""
+    new_session = _make_nest_response(expired=False)
+    client = _make_persisting_client(
+        _make_nest_response(expired=False), new_session, _make_nest_response()
+    )
+    store, saving, release = _make_blocking_store(None, None)
+    manager = NestSessionManager(
+        client=client, store=store, credential_generation="generation"
+    )
+
+    first = asyncio.create_task(manager.async_refresh_session())
+    await saving.wait()
+    second = asyncio.create_task(manager.async_refresh_session())
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await asyncio.gather(first, second) == [True, True]
+    client.authenticate.assert_called_once()
+    assert client.nest_session is new_session
+
+
+@pytest.mark.asyncio
+async def test_waiter_refreshes_when_inflight_persist_fails():
+    """A waiter must not report success when the refresh it waited for failed."""
+    second_session = _make_nest_response(expired=False)
+    client = _make_persisting_client(
+        _make_nest_response(expired=False), _make_nest_response(), second_session
+    )
+    # The waiter also clears the session the failed refresh left in memory.
+    store, saving, release = _make_blocking_store(OSError("disk full"), None, None)
+    manager = NestSessionManager(
+        client=client, store=store, credential_generation="generation"
+    )
+
+    first = asyncio.create_task(manager.async_refresh_session())
+    second = asyncio.create_task(manager.async_refresh_session())
+    await saving.wait()
+    release.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert isinstance(results[0], OSError)
+    assert results[1] is True
+    assert client.authenticate.call_count == 2
+    assert store.async_save.await_args.args[0]["nest_session"] == (
+        second_session.to_dict()
+    )
+    assert client.nest_session is second_session
+
+
+@pytest.mark.asyncio
+async def test_record_error_does_not_count_toward_reauth():
+    """Non-auth errors must never push the session toward reauth."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+
+    for _ in range(MAX_AUTH_FAILURES + 1):
+        manager.record_error()
+
+    assert manager.consecutive_errors == MAX_AUTH_FAILURES + 1
+    assert manager.consecutive_auth_failures == 0
+    assert manager.should_trigger_reauth is False
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+
+@pytest.mark.asyncio
+async def test_error_backoff_interval_increases():
+    """error_backoff_interval escalates with consecutive non-auth errors."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[0]
+
+    manager.record_error()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[0]
+
+    manager.record_error()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[1]
+
+    for _ in range(10):
+        manager.record_error()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[-1]
+
+    manager.record_auth_failure()
+    assert manager.error_backoff_interval == BACKOFF_INTERVALS[-1]
+    assert manager.backoff_interval == BACKOFF_INTERVALS[0]
+
+
+@pytest.mark.asyncio
+async def test_record_auth_success_keeps_error_counter():
+    """An accepted session clears auth failures but not unrelated errors."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    manager.record_auth_failure()
+    manager.record_error()
+
+    manager.record_auth_success()
+
+    assert manager.consecutive_auth_failures == 0
+    assert manager.consecutive_errors == 1
+
+
+@pytest.mark.asyncio
+async def test_record_success_resets_both_counters():
+    """A fully successful cycle clears auth failures and errors."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    manager.record_auth_failure()
+    manager.record_error()
+
+    manager.record_success()
+
+    assert manager.consecutive_auth_failures == 0
+    assert manager.consecutive_errors == 0
+
+
+ROTATED_COOKIES = "SID=rotated; HSID=test"
+
+
+def _make_rotating_client() -> MagicMock:
+    """Create a client whose cookie exchange rotates cookies but Nest auth fails."""
+    client = _make_cookie_client("SID=test; HSID=test")
+
+    def rotate(*args):
+        client.refreshed_cookies = ROTATED_COOKIES
+        client.cookies = ROTATED_COOKIES
+        return MagicMock(access_token="google-token")
+
+    client.get_access_token_from_cookies.side_effect = rotate
+    client.authenticate.side_effect = PynestException("session failed")
+    return client
+
+
+def _reported_cookies(update_entry: AsyncMock) -> list[str]:
+    """Return the cookies handed to the config entry callback, in order."""
+    return [
+        call.args[0]["cookies"]
+        for call in update_entry.await_args_list
+        if "cookies" in call.args[0]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_setup_reports_rotated_cookies_when_nest_auth_fails():
+    """Rotated cookies are handed over even if the JWT/session exchange fails."""
+    client = _make_rotating_client()
+    update_entry = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=_MemoryStore(),
+        credential_update_callback=update_entry,
+        retry_delays=(),
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    assert _reported_cookies(update_entry) == [ROTATED_COOKIES]
+
+
+@pytest.mark.asyncio
+async def test_refresh_reports_rotated_cookies_when_nest_auth_fails():
+    """Background refresh hands over rotated cookies before Nest auth runs."""
+    client = _make_rotating_client()
+    update_entry = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=_MemoryStore(),
+        credential_update_callback=update_entry,
+        retry_delays=(),
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_refresh_session()
+
+    assert _reported_cookies(update_entry) == [ROTATED_COOKIES]
+
+
+@pytest.mark.asyncio
+async def test_reports_rotated_cookies_when_token_exchange_fails():
+    """Cookies rotated on a failed token exchange are still handed over."""
+    client = _make_rotating_client()
+
+    def rotate_then_fail(*args):
+        client.refreshed_cookies = ROTATED_COOKIES
+        raise PynestException("token exchange failed")
+
+    client.get_access_token_from_cookies.side_effect = rotate_then_fail
+    update_entry = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=_MemoryStore(),
+        credential_update_callback=update_entry,
+        retry_delays=(),
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    assert _reported_cookies(update_entry) == [ROTATED_COOKIES]
+
+
+@pytest.mark.asyncio
+async def test_no_report_without_rotated_cookies():
+    """Nothing is handed over when Google did not rotate cookies."""
+    client = _make_rotating_client()
+    client.get_access_token_from_cookies.side_effect = None
+    client.get_access_token_from_cookies.return_value = MagicMock(
+        access_token="google-token"
+    )
+    update_entry = AsyncMock()
+
+    manager = NestSessionManager(
+        client=client,
+        store=_MemoryStore(),
+        credential_update_callback=update_entry,
+        retry_delays=(),
+    )
+
+    with pytest.raises(PynestException):
+        await manager.async_setup()
+
+    assert _reported_cookies(update_entry) == []
+
+
+def _make_command_manager() -> NestSessionManager:
+    """Create a manager whose session is valid and whose refresh succeeds."""
+    manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    manager.ensure_session = AsyncMock()
+    manager.async_refresh_session = AsyncMock(return_value=True)
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_command_runs_once_with_a_valid_session():
+    """A successful command is neither refreshed nor retried."""
+    manager = _make_command_manager()
+    command = AsyncMock(return_value="ok")
+
+    result = await manager.async_run_command(command, NotAuthenticatedException)
+
+    assert result == "ok"
+    manager.ensure_session.assert_awaited_once()
+    manager.async_refresh_session.assert_not_called()
+    command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_command_refreshes_and_retries_once_on_auth_error():
+    """An auth rejection force-refreshes the session and retries the command."""
+    manager = _make_command_manager()
+    command = AsyncMock(side_effect=[NotAuthenticatedException("401"), "ok"])
+
+    result = await manager.async_run_command(command, NotAuthenticatedException)
+
+    assert result == "ok"
+    manager.async_refresh_session.assert_awaited_once()
+    assert command.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_command_retries_only_once():
+    """A command still rejected after a refresh fails instead of looping."""
+    manager = _make_command_manager()
+    command = AsyncMock(side_effect=NotAuthenticatedException("401"))
+
+    with pytest.raises(NotAuthenticatedException):
+        await manager.async_run_command(command, NotAuthenticatedException)
+
+    manager.async_refresh_session.assert_awaited_once()
+    assert command.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_command_is_not_retried_on_other_errors():
+    """Only auth errors justify a session refresh."""
+    manager = _make_command_manager()
+    command = AsyncMock(side_effect=PynestException("500"))
+
+    with pytest.raises(PynestException):
+        await manager.async_run_command(command, NotAuthenticatedException)
+
+    manager.async_refresh_session.assert_not_called()
+    command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_command_is_not_retried_without_a_new_session():
+    """Retrying with the session that was just rejected cannot succeed."""
+    manager = _make_command_manager()
+    manager.async_refresh_session.return_value = False
+    command = AsyncMock(side_effect=NotAuthenticatedException("401"))
+
+    with pytest.raises(NotAuthenticatedException):
+        await manager.async_run_command(command, NotAuthenticatedException)
+
+    command.assert_awaited_once()
