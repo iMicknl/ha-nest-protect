@@ -5,15 +5,12 @@ requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
-    "homeassistant>=2026.10.2",
+    "homeassistant>=2026.11.0b0",
     "prek>=0.5.7",
     "ruff>=0.17.2",
 ]
 test = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23.8",
-    "pytest-homeassistant-custom-component>=0.13.373",
-    "pytest-socket>=0.8.1",
+    "pytest-home-assistant",
     "pytest-timeout>=2.3",
     "protobuf>=7.36.2",
     "googleapis-common-protos>=1.76.0",
@@ -23,6 +20,12 @@ test = [
 timeout = 10
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Let Home Assistant install its httpx alias before respx is imported.
+addopts = "-p no:respx"
+
+[tool.uv.sources]
+# Not on PyPI before HA 2026.11.0; switch to the PyPI release once it is out.
+pytest-home-assistant = { git = "https://github.com/home-assistant/core", tag = "2026.11.0b0", subdirectory = "packages/pytest-home-assistant" }
 
 [tool.ruff]
 extend-exclude = [

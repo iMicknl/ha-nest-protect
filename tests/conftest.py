@@ -7,7 +7,7 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.nest_protect.const import DOMAIN
 
@@ -22,12 +22,6 @@ ISSUE_TOKEN = (
     "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&fake=true"
 )
 COOKIES = "SID=test-sid; HSID=test-hsid; APISID=test-apisid; SAPISID=test-sapisid; SSID=test-ssid"
-
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations) -> None:
-    """Enable custom integration."""
-    return
 
 
 @pytest.fixture

@@ -16,6 +16,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     UnitOfElectricPotential,
+    UnitOfRatio,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
@@ -28,14 +29,6 @@ from . import NestProtectConfigEntry
 from .entity import NestDescriptiveEntity, NestHomeEntity
 from .lock import NestLockBatterySensor, subscribe_to_lock_discovery
 from .pynest.enums import BucketType
-
-try:
-    from homeassistant.const import UnitOfRatio
-
-    PARTS_PER_MILLION = UnitOfRatio.PARTS_PER_MILLION
-except ImportError:
-    # UnitOfRatio arrived in HA 2026.7; the old constant goes away in 2027.8.
-    from homeassistant.const import CONCENTRATION_PARTS_PER_MILLION as PARTS_PER_MILLION
 
 PARALLEL_UPDATES = 0
 
@@ -199,7 +192,7 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         key="co_previous_peak",
         translation_key="co_previous_peak",
         device_class=SensorDeviceClass.CO,
-        native_unit_of_measurement=PARTS_PER_MILLION,
+        native_unit_of_measurement=UnitOfRatio.PARTS_PER_MILLION,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # TODO Add Color Status (gray, green, yellow, red)
