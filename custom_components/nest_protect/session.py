@@ -283,7 +283,11 @@ class NestSessionManager:
         self._schedule_keep_warm()
 
     def _keep_warm_due(self) -> bool:
-        if self._keep_warm_disabled:
+        # Only cookies go stale between uses. Refresh tokens and master tokens
+        # would just add an hourly Google call for nothing.
+        if self._keep_warm_disabled or not (
+            self._client.issue_token and self._client.cookies
+        ):
             return False
         now = time.time()
         if now < self._google_refreshed_at:

@@ -1325,6 +1325,11 @@ def _keep_warm_manager(get_access_token):
     client.nest_session = _make_nest_response(expired=False)
     client.auth = None
     client.transport_url = None
+    client.issue_token = (
+        "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken"
+    )
+    client.cookies = "SID=sid"
+    client.refresh_token = None
     client.refreshed_cookies = None
     client.get_access_token = get_access_token
     client.authenticate = AsyncMock()
@@ -1395,6 +1400,19 @@ async def test_keep_warm_runs_even_while_token_is_valid():
     await manager.ensure_session()
 
     client.get_access_token.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_keep_warm_skips_credentials_without_cookies():
+    """Only cookies go stale, so other credentials aren't exercised hourly."""
+    manager, client, _store = _keep_warm_manager(AsyncMock())
+    client.issue_token = None
+    client.cookies = None
+    client.refresh_token = "legacy-refresh-token"
+
+    await manager.ensure_session()
+
+    client.get_access_token.assert_not_called()
 
 
 @pytest.mark.asyncio
