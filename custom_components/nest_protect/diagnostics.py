@@ -87,6 +87,7 @@ async def async_get_config_entry_diagnostics(
     data |= {
         # Captured after the fetch, which may have replaced the session.
         "session": _session_info(entry_data),
+        "google_refresh": entry_data.session_manager.google_refresh_diagnostics,
         "devices": {
             key: dataclasses.asdict(bucket)
             for key, bucket in entry_data.devices.items()

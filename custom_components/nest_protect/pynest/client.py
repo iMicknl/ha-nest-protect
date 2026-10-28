@@ -41,6 +41,7 @@ from .exceptions import (
     BadGatewayException,
     EmptyResponseException,
     GatewayTimeoutException,
+    GoogleThrottledException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
@@ -79,6 +80,15 @@ def raise_for_transient_status(response: ClientResponse, action: str) -> None:
         raise NestServiceException(f"{status} error while {action}")
 
 
+def raise_for_google_throttling(response: ClientResponse, action: str) -> None:
+    """Raise GoogleThrottledException, carrying Retry-After, on a 429."""
+    if response.status == 429:
+        raise GoogleThrottledException(
+            f"429 error while {action}",
+            retry_after=parse_retry_after(response.headers.get("Retry-After")),
+        )
+
+
 def is_cookie_expired(morsel: Morsel[str]) -> bool:
     """Return True if a Set-Cookie morsel tells the client to delete the cookie."""
     # Max-Age takes precedence over Expires (RFC 6265 section 5.3).
@@ -93,6 +103,18 @@ def is_cookie_expired(morsel: Morsel[str]) -> bool:
         return expires_at is not None and expires_at <= time.time()
 
     return False
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header (seconds or HTTP date) into seconds."""
+    if not value:
+        return None
+    if value.strip().isdigit():
+        return float(value.strip())
+    retry_at = http2time(value)
+    if retry_at is None:
+        return None
+    return max(retry_at - time.time(), 0.0)
 
 
 def merge_cookies(
@@ -160,6 +182,16 @@ class NestClient:
         # self.issue_token = issue_token
         # self.cookies = cookies
         self.environment = environment
+
+    def _drop_expired_cookies(self, cookies: str, expired: Collection[str]) -> None:
+        """Remove the cookies Google expired, once its response proved usable."""
+        merged = merge_cookies(self.refreshed_cookies or cookies, {}, expired)
+        # Keep the stored cookies rather than replacing them with an empty
+        # header that later refreshes would silently skip.
+        if not merged:
+            raise BadCredentialsException("Google expired all session cookies")
+        self.refreshed_cookies = merged
+        self.cookies = merged
 
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
@@ -406,21 +438,26 @@ class NestClient:
                 else:
                     new_cookies[cookie.key] = cookie.value
 
-            signed_out = False
-            if new_cookies or expired_cookies:
-                merged = merge_cookies(cookies, new_cookies, expired_cookies)
-                # Keep the stored cookies rather than replacing them with an
-                # empty header that later refreshes would silently skip.
-                signed_out = not merged
-                if not signed_out:
-                    self.refreshed_cookies = merged
-                    self.cookies = merged
+            # Rotated values apply at once: the superseded set stops working
+            # even if this request then fails. Deletions wait for a successful
+            # response, so an error or throttled answer can't tear down
+            # cookies that still work.
+            if new_cookies:
+                self.refreshed_cookies = merge_cookies(cookies, new_cookies)
+                self.cookies = self.refreshed_cookies
 
+            raise_for_google_throttling(response, "retrieving Google access token")
             raise_for_transient_status(response, "retrieving Google access token")
 
             try:
                 result = await response.json()
-            except (ContentTypeError, ValueError) as exception:
+            except ContentTypeError as exception:
+                # Google answers with an HTML page instead of JSON when it is
+                # rate limiting or showing an "unusual traffic" interstitial.
+                raise GoogleThrottledException(
+                    f"{response.status} non-JSON Google access token response"
+                ) from exception
+            except ValueError as exception:
                 raise PynestException(
                     f"{response.status} unexpected Google access token response"
                 ) from exception
@@ -438,16 +475,17 @@ class NestClient:
                     f"{result['error']} - {detail}" if detail else result["error"]
                 )
 
-            if signed_out:
-                raise BadCredentialsException("Google expired all session cookies")
-
             try:
-                self.auth = GoogleAuthResponseForCookies(**result)
+                auth = GoogleAuthResponseForCookies(**result)
             except TypeError as exception:
                 raise PynestException(
                     f"Unexpected Google access token response fields: {list(result)}"
                 ) from exception
 
+            if expired_cookies:
+                self._drop_expired_cookies(cookies, expired_cookies)
+
+            self.auth = auth
             return self.auth
 
     async def authenticate(self, access_token: str) -> NestResponse:

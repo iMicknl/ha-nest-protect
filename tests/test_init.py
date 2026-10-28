@@ -5,7 +5,6 @@ import contextlib
 import datetime
 import logging
 from contextlib import nullcontext
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -18,7 +17,7 @@ from custom_components.nest_protect import (
     HomeAssistantNestProtectData,
     _async_observe_locks_loop,
     _async_subscribe_for_data,
-    _persist_refreshed_cookies,
+    _cookie_persister,
     _register_subscribe_task,
 )
 from custom_components.nest_protect.const import (
@@ -534,6 +533,54 @@ async def test_command_refresh_persists_rotated_cookies(
     assert config_entry_with_cookies.data[CONF_COOKIES] == rotated_cookies
 
 
+def _cookie_entry(hass) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "issue_token": ISSUE_TOKEN,
+            "cookies": COOKIES,
+            "account_type": "production",
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_cookie_persister_keeps_saving_rotations(hass):
+    """Each rotation is saved, not only the first."""
+    entry = _cookie_entry(hass)
+    persist = _cookie_persister(hass, entry)
+
+    persist("rotated-1")
+    persist("rotated-2")
+
+    assert entry.data[CONF_COOKIES] == "rotated-2"
+
+
+async def test_old_session_manager_keeps_reauth_cookies(hass):
+    """Cookies from a reauth survive a late exchange by the replaced manager."""
+    entry = _cookie_entry(hass)
+    client = MagicMock()
+    sm = NestSessionManager(
+        client, MagicMock(), on_cookies_refreshed=_cookie_persister(hass, entry)
+    )
+    client.refreshed_cookies = "rotated"
+    client.auth = None
+    client.get_access_token = AsyncMock()
+    await sm.async_refresh_session()
+    assert entry.data[CONF_COOKIES] == "rotated"
+
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_COOKIES: "reauth"}
+    )
+    # Rotated cookies are reported even when the exchange fails or is cancelled.
+    client.get_access_token = AsyncMock(side_effect=asyncio.CancelledError)
+    with pytest.raises(asyncio.CancelledError):
+        await sm.async_refresh_session()
+
+    assert entry.data[CONF_COOKIES] == "reauth"
+
+
 def _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0):
     """Build minimal HomeAssistantNestProtectData for subscriber tests."""
     client = MagicMock()
@@ -545,7 +592,7 @@ def _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0):
     sm = NestSessionManager(
         client,
         store,
-        on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
+        on_cookies_refreshed=_cookie_persister(hass, entry),
     )
     sm._consecutive_auth_failures = consecutive_auth_failures
 
@@ -869,6 +916,7 @@ async def test_subscriber_401_repeated_failures_triggers_reauth(hass):
 
     assert sm.consecutive_auth_failures == MAX_AUTH_FAILURES
     mock_reauth.assert_called_once_with(hass)
+    entry.runtime_data.stream_health.async_mark_unavailable.assert_called_once()
 
 
 async def test_subscriber_success_resets_failure_counter(hass):
@@ -982,7 +1030,7 @@ async def test_lock_batch_clears_auth_failures_only(hass):
     ],
 )
 async def test_auth_recovery_handles_refresh_errors(
-    hass, transport, refresh_error, reauth_expected
+    hass, caplog, transport, refresh_error, reauth_expected
 ):
     """A failed refresh must retry or request reauth without killing the task."""
     entry = MockConfigEntry(domain=DOMAIN, data={})
@@ -1017,6 +1065,35 @@ async def test_auth_recovery_handles_refresh_errors(
 
     assert reauth.call_count == int(reauth_expected)
     assert any(call.args[0] > 0 for call in sleep.call_args_list)
+    health = entry.runtime_data.stream_health
+    assert health.async_mark_unavailable.call_count == int(reauth_expected)
+    # The Google error is the only clue why updates stopped.
+    assert ("Google rejected the stored credentials (revoked)" in caplog.text) is (
+        reauth_expected
+    )
+
+
+async def test_subscriber_rejected_credentials_start_reauth(hass, caplog):
+    """Credentials Google rejects while subscribing stop updates until reauth."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    _, sm = _make_subscriber_entry_data(hass, entry)
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
+        patch.object(
+            sm,
+            "ensure_session",
+            side_effect=BadCredentialsException("USER_LOGGED_OUT"),
+        ),
+        patch.object(entry, "async_start_reauth") as reauth,
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    reschedule.assert_not_called()
+    reauth.assert_called_once_with(hass)
+    entry.runtime_data.stream_health.async_mark_unavailable.assert_called_once()
+    assert "Google rejected the stored credentials (USER_LOGGED_OUT)" in caplog.text
 
 
 @pytest.mark.parametrize("transport", ["subscriber", "lock"])

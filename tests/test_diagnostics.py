@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import json
 from contextlib import ExitStack, contextmanager
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.helpers import device_registry as dr
@@ -13,7 +12,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect import (
     HomeAssistantNestProtectData,
-    _persist_refreshed_cookies,
+    _cookie_persister,
 )
 from custom_components.nest_protect.const import CONF_COOKIES, DOMAIN
 from custom_components.nest_protect.diagnostics import (
@@ -174,6 +173,12 @@ def _load(
     store = MagicMock()
     store.async_save = AsyncMock()
 
+    session_manager = NestSessionManager(
+        client,
+        store,
+        on_cookies_refreshed=_cookie_persister(hass, entry),
+    )
+
     devices = {
         b.object_key: b for b in (_topaz("AAA", SERIAL_A), _topaz("BBB", SERIAL_B))
     }
@@ -181,11 +186,7 @@ def _load(
         devices=devices,
         areas={"where-1": "Kitchen"},
         client=client,
-        session_manager=NestSessionManager(
-            client,
-            store,
-            on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
-        ),
+        session_manager=session_manager,
         grpc_lock_client=MagicMock(),
         stream_health=MagicMock(),
         lock_state_cache=locks or {},
@@ -250,6 +251,19 @@ async def test_config_entry_diagnostics_keeps_live_session(hass):
     assert result["app_launch_error"] is None
     assert result["session"]["expired"] is False
     assert set(result["devices"]) == {"topaz.AAA", "topaz.BBB"}
+
+
+async def test_diagnostics_report_google_refresh_stats(hass):
+    """Diagnostics show the Google refresh stats, so testers can share the call rate."""
+    entry = _entry(hass)
+    _load(hass, entry, nest_session=_nest_session())
+    entry.runtime_data.session_manager._google_stats["attempts"] = 3
+
+    with _patched_client():
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert result["google_refresh"]["attempts"] == 3
+    assert result["google_refresh"]["throttled_until"] is None
 
 
 async def test_diagnostics_redact_secrets_and_identifiers(hass):
