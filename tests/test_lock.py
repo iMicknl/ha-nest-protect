@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect.const import DOMAIN
 from custom_components.nest_protect.lock import NestLockEntity
+from custom_components.nest_protect.pynest.exceptions import (
+    NestLockAuthException,
+    NestLockCommandException,
+)
 from custom_components.nest_protect.pynest.lock_models import LockBoltState, LockState
+from custom_components.nest_protect.session import NestSessionManager
 
 SERIAL = "ABC123"
 
@@ -45,7 +51,7 @@ async def added_lock(hass):
     entry.add_to_hass(hass)
 
     initial = _lock_state()
-    entity = NestLockEntity(MagicMock(), initial)
+    entity = NestLockEntity(MagicMock(), MagicMock(), initial)
 
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -111,3 +117,60 @@ async def test_update_without_a_device_entry_is_a_no_op(hass, added_lock):
         entity._handle_update(_lock_state(location="Front Door"))
 
     assert entity._lock_state.location == "Front Door"
+
+
+def _commandable_lock(
+    send_lock_command: AsyncMock,
+) -> tuple[NestLockEntity, NestSessionManager]:
+    grpc_client = MagicMock()
+    grpc_client.send_lock_command = send_lock_command
+    session_manager = NestSessionManager(client=MagicMock(), store=MagicMock())
+    session_manager.ensure_session = AsyncMock()
+    session_manager.async_refresh_session = AsyncMock(return_value=True)
+    return NestLockEntity(grpc_client, session_manager, _lock_state()), session_manager
+
+
+@pytest.mark.parametrize(
+    ("method", "lock"), [("async_lock", True), ("async_unlock", False)]
+)
+async def test_command_ensures_a_valid_session_first(method, lock):
+    send = AsyncMock()
+    entity, session_manager = _commandable_lock(send)
+
+    await getattr(entity, method)()
+
+    session_manager.ensure_session.assert_awaited_once()
+    send.assert_awaited_once_with("DEVICE_X", lock=lock)
+
+
+@pytest.mark.parametrize("method", ["async_lock", "async_unlock"])
+async def test_command_retries_once_after_an_auth_rejection(method):
+    send = AsyncMock(side_effect=[NestLockAuthException("UNAUTHENTICATED"), None])
+    entity, session_manager = _commandable_lock(send)
+
+    await getattr(entity, method)()
+
+    session_manager.async_refresh_session.assert_awaited_once()
+    assert send.await_count == 2
+
+
+async def test_command_surfaces_a_persistent_auth_rejection():
+    send = AsyncMock(side_effect=NestLockAuthException("UNAUTHENTICATED"))
+    entity, session_manager = _commandable_lock(send)
+
+    with pytest.raises(HomeAssistantError, match="Failed to lock"):
+        await entity.async_lock()
+
+    session_manager.async_refresh_session.assert_awaited_once()
+    assert send.await_count == 2
+
+
+async def test_command_does_not_retry_a_rejected_command():
+    send = AsyncMock(side_effect=NestLockCommandException("code=9"))
+    entity, session_manager = _commandable_lock(send)
+
+    with pytest.raises(HomeAssistantError, match="Failed to unlock"):
+        await entity.async_unlock()
+
+    session_manager.async_refresh_session.assert_not_called()
+    send.assert_awaited_once()

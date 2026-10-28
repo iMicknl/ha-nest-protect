@@ -4,12 +4,17 @@ import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect.const import DOMAIN
-from custom_components.nest_protect.pynest.exceptions import BadCredentialsException
+from custom_components.nest_protect.pynest.exceptions import (
+    BadCredentialsException,
+    BadGatewayException,
+    NestServiceException,
+)
 
 
 async def test_step_user_leads_to_auth_method(hass: HomeAssistant) -> None:
@@ -278,6 +283,67 @@ async def test_reauth_shows_auth_method(hass: HomeAssistant) -> None:
     result = await entry.start_reauth_flow(hass)
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "auth_method"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [NestServiceException("503 error"), BadGatewayException("502 error")],
+)
+@pytest.mark.parametrize("source", ["user", "reauth"])
+@pytest.mark.parametrize("method", ["extension", "manual"])
+async def test_transient_service_error_shows_cannot_connect(
+    hass: HomeAssistant, error: Exception, source: str, method: str
+) -> None:
+    """Test a temporary Nest outage is reported as cannot_connect."""
+    issue_token = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"
+    cookies = "SID=abc123456789012345678901234567890; HSID=def1234567890; SSID=ghi1234567890; APISID=jkl1234567890; SAPISID=mno1234567890"
+
+    if source == "reauth":
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                "issue_token": issue_token,
+                "cookies": cookies,
+                "account_type": "production",
+            },
+        )
+        entry.add_to_hass(hass)
+        result = await entry.start_reauth_flow(hass)
+    else:
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "user"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={"account_type": "production"},
+        )
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={"method": method},
+    )
+
+    if method == "extension":
+        user_input = {
+            "auth_code": base64.b64encode(
+                json.dumps({"issue_token": issue_token, "cookies": cookies}).encode()
+            ).decode()
+        }
+    else:
+        user_input = {"issue_token": issue_token, "cookies": cookies}
+
+    with patch(
+        "custom_components.nest_protect.config_flow.ConfigFlow.async_validate_input",
+        new_callable=AsyncMock,
+        side_effect=error,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input=user_input,
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == "cannot_connect"
 
 
 VALID_ISSUE_TOKEN = "https://accounts.google.com/o/oauth2/iframerpc?action=issueToken&response_type=token%20id_token&login_hint=hint123&client_id=733249279899-44tchle2kaa9afr5v9ov7jbuojfr9lrq.apps.googleusercontent.com&origin=https%3A%2F%2Fhome.nest.com&scope=openid+profile+email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fnest-account&ss_domain=https%3A%2F%2Fhome.nest.com"

@@ -26,7 +26,7 @@ from .const import (
 from .pynest.client import NestClient
 from .pynest.const import NEST_ENVIRONMENTS
 from .pynest.enums import Environment
-from .pynest.exceptions import BadCredentialsException
+from .pynest.exceptions import BadCredentialsException, NestServiceException
 
 DESCRIPTION_PLACEHOLDERS = {
     "nest_url": "https://home.nest.com",
@@ -231,7 +231,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     [issue_token, cookies, email] = await self.async_validate_input(
                         validation_input
                     )
-                except TimeoutError, ClientError:
+                except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
@@ -286,7 +286,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     user_input[CONF_ISSUE_TOKEN] = issue_token
                     user_input[CONF_COOKIES] = cookies
-                except TimeoutError, ClientError:
+                except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
                     errors["base"] = "invalid_auth"
