@@ -59,7 +59,7 @@ from .pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
-from .pynest.grpc_client import GrpcLockClient
+from .pynest.grpc_client import GrpcClient
 from .pynest.lock_models import LockState
 from .pynest.models import (
     Bucket,
@@ -81,10 +81,10 @@ class HomeAssistantNestProtectData:
     areas: dict[str, str]
     client: NestClient
     session_manager: NestSessionManager
-    grpc_lock_client: GrpcLockClient
+    grpc_client: GrpcClient
     stream_health: StreamHealth
     subscription_task: asyncio.Task | None = None
-    lock_observe_task: asyncio.Task | None = None
+    observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
     connection_failures: int = 0
     # Consecutive subscribes Nest answered with data almost immediately.
@@ -208,7 +208,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
         areas=areas,
         client=client,
         session_manager=session_manager,
-        grpc_lock_client=GrpcLockClient(client),
+        grpc_client=GrpcClient(client),
         widget_tracks=widget_tracks,
         safety_summaries=safety_summaries,
         structure_names=structure_names,
@@ -226,10 +226,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
 
     _register_subscribe_task(hass, entry, data)
 
-    entry_data.lock_observe_task = entry.async_create_background_task(
+    entry_data.observe_task = entry.async_create_background_task(
         hass,
-        _async_observe_locks_loop(hass, entry),
-        name=f"{DOMAIN}_lock_observe_{entry.entry_id}",
+        _async_observe_loop(hass, entry),
+        name=f"{DOMAIN}_observe_{entry.entry_id}",
     )
 
     return True
@@ -298,7 +298,7 @@ def _async_remove_stale_devices(
         device_registry.async_remove_device(device.id)
 
 
-async def _async_observe_locks_loop(
+async def _async_observe_loop(
     hass: HomeAssistant, entry: NestProtectConfigEntry
 ) -> None:
     """Consume the gRPC observe stream and dispatch lock updates.
@@ -324,7 +324,7 @@ async def _async_observe_locks_loop(
 
     while True:
         try:
-            async for batch in entry_data.grpc_lock_client.observe_locks():
+            async for batch in entry_data.grpc_client.observe():
                 if (
                     not auth_failures
                     or time.monotonic() - last_auth_failure >= LOCK_AUTH_SETTLE_SECONDS
@@ -374,7 +374,7 @@ async def _async_observe_locks_loop(
             LOGGER.exception("Lock observe loop failed unexpectedly")
             return
         else:
-            # observe_locks() only ends the iteration when it has concluded
+            # observe() only ends the iteration when it has concluded
             # there is nothing to watch on this account.
             LOGGER.debug("Lock observer: no locks on this account, stopping")
             return
@@ -391,10 +391,10 @@ async def async_unload_entry(
             entry_data.subscription_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await entry_data.subscription_task
-        if entry_data.lock_observe_task:
-            entry_data.lock_observe_task.cancel()
+        if entry_data.observe_task:
+            entry_data.observe_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await entry_data.lock_observe_task
+                await entry_data.observe_task
 
     return unload_ok
 

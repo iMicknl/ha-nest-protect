@@ -22,7 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import ATTRIBUTION, DOMAIN
 from .entity import async_run_entity_command
 from .pynest.exceptions import NestLockAuthException
-from .pynest.grpc_client import GrpcLockClient
+from .pynest.grpc_client import GrpcClient
 from .pynest.lock_models import LockBoltState, LockState
 
 if TYPE_CHECKING:
@@ -108,7 +108,7 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         lambda state: NestLockEntity(
-            entry_data.grpc_lock_client, entry_data.session_manager, state
+            entry_data.grpc_client, entry_data.session_manager, state
         ),
     )
 
@@ -122,7 +122,7 @@ class NestLockEntity(LockEntity):
 
     def __init__(
         self,
-        grpc_client: GrpcLockClient,
+        grpc_client: GrpcClient,
         session_manager: NestSessionManager,
         lock_state: LockState,
     ) -> None:

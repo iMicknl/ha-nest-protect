@@ -183,7 +183,7 @@ async def _setup(hass, entry, data: FirstDataAPIResponse) -> None:
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.nest_protect._async_observe_locks_loop",
+            "custom_components.nest_protect._async_observe_loop",
             new_callable=AsyncMock,
         ),
     ):

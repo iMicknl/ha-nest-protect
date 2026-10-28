@@ -16,7 +16,7 @@ from custom_components.nest_protect.pynest.exceptions import (
 )
 from custom_components.nest_protect.pynest.grpc_client import (
     _SOCK_READ_TIMEOUT,
-    GrpcLockClient,
+    GrpcClient,
     _decode_varint,
     _extract_lock_state,
     _resolve_lock_location,
@@ -359,8 +359,8 @@ class _FakeNestClient:
         self.environment = _FakeEnv()
 
 
-def _make_client(response: _FakeResponse | None = None) -> GrpcLockClient:
-    return GrpcLockClient(_FakeNestClient(response))  # type: ignore[arg-type]
+def _make_client(response: _FakeResponse | None = None) -> GrpcClient:
+    return GrpcClient(_FakeNestClient(response))  # type: ignore[arg-type]
 
 
 # -- headers -----------------------------------------------------------------
@@ -387,7 +387,7 @@ def test_headers_without_a_session_raise_auth_exception():
         client._headers()
 
 
-# -- GrpcLockClient.send_lock_command ----------------------------------------
+# -- GrpcClient.send_lock_command ----------------------------------------
 
 
 def _ok_send_command_response() -> bytes:
@@ -401,7 +401,7 @@ def _decode_send_command(body: bytes) -> v1_pb2.SendCommandRequest:
     return req
 
 
-async def _send(resource_id: str, lock: bool) -> tuple[GrpcLockClient, dict]:
+async def _send(resource_id: str, lock: bool) -> tuple[GrpcClient, dict]:
     """Run the real send_lock_command and return the client plus its POST call."""
     client = _make_client(_FakeResponse(body=_ok_send_command_response()))
     await client.send_lock_command(resource_id, lock=lock)
@@ -670,7 +670,7 @@ def test_parse_observe_buffer_raises_on_an_auth_status_frame(code, message):
         _make_client()._parse_observe_buffer(buffer)
 
 
-async def test_observe_locks_propagates_an_auth_status_frame(recorded_sleeps):
+async def test_observe_propagates_an_auth_status_frame(recorded_sleeps):
     # The gateway can accept the HTTP request and only reject the session in
     # the stream body; that must reach the caller's session-refresh path.
     body = streambody_pb2.StreamBody()
@@ -678,7 +678,7 @@ async def test_observe_locks_propagates_an_auth_status_frame(recorded_sleeps):
     client = _make_client(_FakeResponse(chunks=[body.SerializeToString()]))
 
     with pytest.raises(NestLockAuthException):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == []
@@ -937,13 +937,13 @@ async def test_observe_once_never_concludes_no_locks_when_a_lock_exists():
     assert client._locks_present is True
 
 
-# -- observe_locks reconnect loop --------------------------------------------
+# -- observe reconnect loop --------------------------------------------
 
 
 class _StopLoop(BaseException):
     """Sentinel used to break out of the endless reconnect loop under test.
 
-    Deliberately a BaseException so `observe_locks`'s broad `except Exception`
+    Deliberately a BaseException so `observe`'s broad `except Exception`
     cannot swallow it.
     """
 
@@ -968,10 +968,10 @@ def _observe_once_stub(monkeypatch, behaviour):
         return
         yield  # pragma: no cover - makes this an async generator
 
-    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+    monkeypatch.setattr(GrpcClient, "_observe_once", _stub)
 
 
-async def test_observe_locks_backs_off_when_the_stream_ends_cleanly(
+async def test_observe_backs_off_when_the_stream_ends_cleanly(
     monkeypatch, recorded_sleeps
 ):
     # A stream that ends immediately must not reconnect once a second forever.
@@ -982,13 +982,13 @@ async def test_observe_locks_backs_off_when_the_stream_ends_cleanly(
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
 
 
-async def test_observe_locks_backs_off_on_errors(monkeypatch, recorded_sleeps):
+async def test_observe_backs_off_on_errors(monkeypatch, recorded_sleeps):
     async def _boom(_self):
         raise ClientError("connection reset")
 
@@ -996,13 +996,13 @@ async def test_observe_locks_backs_off_on_errors(monkeypatch, recorded_sleeps):
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
 
 
-async def test_observe_locks_reconnects_an_idle_stream_without_backoff(
+async def test_observe_reconnects_an_idle_stream_without_backoff(
     monkeypatch, recorded_sleeps, caplog
 ):
     # Quiet locks mean a silent stream; its read timeout is not an error.
@@ -1014,14 +1014,14 @@ async def test_observe_locks_reconnects_an_idle_stream_without_backoff(
     client = _make_client()
     client._locks_present = True
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 1.0, 1.0, 1.0]
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
-async def test_observe_locks_caps_the_backoff(monkeypatch):
+async def test_observe_caps_the_backoff(monkeypatch):
     sleeps: list[float] = []
 
     async def _fake_sleep(delay: float) -> None:
@@ -1038,14 +1038,14 @@ async def test_observe_locks_caps_the_backoff(monkeypatch):
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert max(sleeps) == 60.0
     assert sleeps[-1] == 60.0
 
 
-async def test_observe_locks_propagates_auth_failures_instead_of_retrying(
+async def test_observe_propagates_auth_failures_instead_of_retrying(
     monkeypatch, recorded_sleeps
 ):
     async def _rejected(_self):
@@ -1055,14 +1055,14 @@ async def test_observe_locks_propagates_auth_failures_instead_of_retrying(
 
     client = _make_client()
     with pytest.raises(NestLockAuthException):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     # Retrying a rejected token never recovers, so it must not back off at all.
     assert recorded_sleeps == []
 
 
-async def test_observe_locks_stops_when_the_account_has_no_locks(
+async def test_observe_stops_when_the_account_has_no_locks(
     monkeypatch, recorded_sleeps
 ):
     async def _no_locks(client):
@@ -1071,11 +1071,11 @@ async def test_observe_locks_stops_when_the_account_has_no_locks(
     _observe_once_stub(monkeypatch, _no_locks)
 
     client = _make_client()
-    assert [batch async for batch in client.observe_locks()] == []
+    assert [batch async for batch in client.observe()] == []
     assert recorded_sleeps == []
 
 
-async def test_observe_locks_reaches_the_verdict_after_the_stream_ends(
+async def test_observe_reaches_the_verdict_after_the_stream_ends(
     monkeypatch, recorded_sleeps
 ):
     # The stream ends right after the enumeration, so the per-chunk check never
@@ -1088,12 +1088,12 @@ async def test_observe_locks_reaches_the_verdict_after_the_stream_ends(
     _observe_once_stub(monkeypatch, _enumerated_then_ended)
 
     client = _make_client()
-    assert [batch async for batch in client.observe_locks()] == []
+    assert [batch async for batch in client.observe()] == []
     assert client._locks_present is False
     assert recorded_sleeps == []
 
 
-async def test_observe_locks_stays_quiet_about_errors_until_a_lock_is_known(
+async def test_observe_stays_quiet_about_errors_until_a_lock_is_known(
     monkeypatch, recorded_sleeps, caplog
 ):
     async def _boom(_self):
@@ -1103,14 +1103,14 @@ async def test_observe_locks_stays_quiet_about_errors_until_a_lock_is_known(
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     # Most accounts have no lock; their stream errors must not warn.
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
-async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
+async def test_observe_warns_about_errors_once_a_lock_is_known(
     monkeypatch, recorded_sleeps, caplog
 ):
     async def _boom(client):
@@ -1121,7 +1121,7 @@ async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
@@ -1130,7 +1130,7 @@ async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
     assert "ClientError" in warnings[0].getMessage()
 
 
-async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
+async def test_observe_resets_the_backoff_after_a_successful_batch(
     monkeypatch, recorded_sleeps
 ):
     # Treat every stream as having stayed up long enough to count as healthy.
@@ -1145,11 +1145,11 @@ async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
         if calls["n"] % 2:
             yield {"DEVICE_X": "state"}  # a batch arrived: backoff resets
 
-    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+    monkeypatch.setattr(GrpcClient, "_observe_once", _stub)
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     # Attempts alternate yield / no-yield. Each yielding attempt resets the
@@ -1157,7 +1157,7 @@ async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
     assert recorded_sleeps == [1.0, 2.0, 1.0, 2.0]
 
 
-async def test_observe_locks_keeps_backing_off_when_streams_close_after_one_batch(
+async def test_observe_keeps_backing_off_when_streams_close_after_one_batch(
     monkeypatch, recorded_sleeps
 ):
     # Every stream opens with the current state; one closed right after must not
@@ -1165,11 +1165,11 @@ async def test_observe_locks_keeps_backing_off_when_streams_close_after_one_batc
     async def _stub(self):
         yield {"DEVICE_X": "state"}
 
-    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+    monkeypatch.setattr(GrpcClient, "_observe_once", _stub)
 
     client = _make_client()
     with pytest.raises(_StopLoop):
-        async for _ in client.observe_locks():
+        async for _ in client.observe():
             pass
 
     assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]

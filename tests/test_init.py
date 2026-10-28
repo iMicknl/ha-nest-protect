@@ -15,7 +15,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.nest_protect import (
     DOMAIN,
     HomeAssistantNestProtectData,
-    _async_observe_locks_loop,
+    _async_observe_loop,
     _async_subscribe_for_data,
     _cookie_persister,
     _register_subscribe_task,
@@ -434,7 +434,7 @@ async def test_subscriber_runs_as_entry_background_task(
             side_effect=subscribe_forever,
         ),
         patch(
-            "custom_components.nest_protect._async_observe_locks_loop",
+            "custom_components.nest_protect._async_observe_loop",
             new=AsyncMock(),
         ),
     ):
@@ -499,7 +499,7 @@ async def test_command_refresh_persists_rotated_cookies(
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.nest_protect._async_observe_locks_loop",
+            "custom_components.nest_protect._async_observe_loop",
             new_callable=AsyncMock,
         ),
     ):
@@ -601,7 +601,7 @@ def _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=0):
         areas={},
         client=client,
         session_manager=sm,
-        grpc_lock_client=MagicMock(),
+        grpc_client=MagicMock(),
         stream_health=MagicMock(),
     )
     return client, sm
@@ -1003,11 +1003,11 @@ async def test_lock_batch_clears_auth_failures_only(hass):
     _, sm = _make_subscriber_entry_data(hass, entry, consecutive_auth_failures=2)
     sm._consecutive_errors = 2
 
-    async def observe_locks():
+    async def observe():
         yield {}
 
-    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
-    await _async_observe_locks_loop(hass, entry)
+    entry.runtime_data.grpc_client.observe = observe
+    await _async_observe_loop(hass, entry)
 
     assert sm.consecutive_auth_failures == 0
     assert sm.consecutive_errors == 2
@@ -1039,13 +1039,13 @@ async def test_auth_recovery_handles_refresh_errors(
 
     attempts = []
 
-    async def observe_locks():
+    async def observe():
         attempts.append(True)
         if len(attempts) == 1:
             raise NestLockAuthException("rejected")
         yield {}
 
-    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_client.observe = observe
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as reschedule,
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
@@ -1059,7 +1059,7 @@ async def test_auth_recovery_handles_refresh_errors(
             await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
             assert reschedule.call_count == (0 if reauth_expected else 1)
         else:
-            await _async_observe_locks_loop(hass, entry)
+            await _async_observe_loop(hass, entry)
             assert len(attempts) == (1 if reauth_expected else 2)
 
     assert reauth.call_count == int(reauth_expected)
@@ -1074,15 +1074,15 @@ async def test_auth_recovery_cancellation_does_not_restart(hass, transport):
     client, sm = _make_subscriber_entry_data(hass, entry)
     client.subscribe_for_data = AsyncMock(side_effect=NotAuthenticatedException())
 
-    async def observe_locks():
+    async def observe():
         yield {}
         raise NestLockAuthException("rejected")
 
-    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
+    entry.runtime_data.grpc_client.observe = observe
     operation = (
         _async_subscribe_for_data(hass, entry, _make_subscribe_data())
         if transport == "subscriber"
-        else _async_observe_locks_loop(hass, entry)
+        else _async_observe_loop(hass, entry)
     )
     with (
         patch("custom_components.nest_protect._register_subscribe_task") as reschedule,

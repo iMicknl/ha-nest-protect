@@ -81,7 +81,7 @@ async def _setup(hass: HomeAssistant, buckets: list[dict]) -> MockConfigEntry:
             new_callable=AsyncMock,
         ),
         patch(
-            "custom_components.nest_protect._async_observe_locks_loop",
+            "custom_components.nest_protect._async_observe_loop",
             new_callable=AsyncMock,
         ),
     ):
@@ -189,7 +189,7 @@ async def test_subscription_updates_safety_summary(hass: HomeAssistant):
         areas={},
         client=client,
         session_manager=sm,
-        grpc_lock_client=MagicMock(),
+        grpc_client=MagicMock(),
         safety_summaries={initial.object_key: initial},
         stream_health=MagicMock(),
     )

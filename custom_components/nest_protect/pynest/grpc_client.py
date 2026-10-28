@@ -1,11 +1,11 @@
-"""gRPC-web client for Nest x Yale lock state and commands.
+"""gRPC-web client for the Nest gateway.
 
 Talks to nestlabs.gateway.v2.GatewayService/Observe (streaming state) and
-nestlabs.gateway.v1.ResourceApi/SendCommand (lock/unlock), both at
+nestlabs.gateway.v1.ResourceApi/SendCommand (commands), both at
 grpc-web.production.nest.com. Reuses the ha-nest-protect session's
 Basic access_token verbatim — no separate JWT issuance is required.
 
-This is a focused port of the lock-relevant slice of tronikos/nest_legacy.
+This is a focused port of slices of tronikos/nest_legacy.
 """
 
 from __future__ import annotations
@@ -233,8 +233,8 @@ def _extract_lock_state(
     )
 
 
-class GrpcLockClient:
-    """gRPC-web client scoped to Nest x Yale lock observe + command."""
+class GrpcClient:
+    """gRPC-web client for the gateway's observe stream and commands."""
 
     def __init__(
         self, nest_client: NestClient, grpc_host: str = "grpc-web.production.nest.com"
@@ -482,7 +482,7 @@ class GrpcLockClient:
             return
         self._locks_present = False
 
-    async def observe_locks(self) -> AsyncIterator[dict[str, LockState]]:
+    async def observe(self) -> AsyncIterator[dict[str, LockState]]:
         """Long-lived observer. Yields `{resource_id: LockState}` per update batch.
 
         Reconnects on transient errors with exponential backoff. Ends the
