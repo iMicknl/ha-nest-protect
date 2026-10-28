@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import EntityDescription
 
@@ -177,8 +178,9 @@ async def test_update_objects_does_not_retry_other_errors():
     update_objects = AsyncMock(side_effect=PynestException("500"))
     entity = build_updatable_entity(update_objects)
 
-    with pytest.raises(PynestException):
+    with pytest.raises(HomeAssistantError) as exc_info:
         await entity._async_update_objects([{"object_key": "topaz.1234"}])
 
+    assert isinstance(exc_info.value.__cause__, PynestException)
     entity.session_manager.async_refresh_session.assert_not_called()
     update_objects.assert_awaited_once()

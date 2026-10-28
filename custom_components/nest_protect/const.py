@@ -33,6 +33,12 @@ STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
 MAX_AUTH_FAILURES: Final = 3
 BACKOFF_INTERVALS: Final = (30, 60, 120, 300, 600)  # seconds, capped at 10 min
+# Floors for the subscriber's error backoff, which escalates from there.
+SERVICE_ERROR_MIN_SECONDS: Final = 120
+PYNEST_ERROR_MIN_SECONDS: Final = 60
+# A lock stream rejected sooner than this after its last auth failure counts
+# as the same failure streak, even if it delivered data in between.
+LOCK_AUTH_SETTLE_SECONDS: Final = 300
 RECONNECT_INTERVALS: Final = (5, 15, 30, 60, 120, 300)  # seconds, capped at 5 min
 # A subscribe attempt that fails sooner than this counts as a connection failure;
 # one that lasted longer ended a normal long-poll cycle.

@@ -48,6 +48,9 @@ _SEND_COMMAND_TIMEOUT = 30
 _GRPC_DEADLINE_EXCEEDED = 4
 _RECONNECT_INITIAL_DELAY = 1.0
 _RECONNECT_MAX_DELAY = 60.0
+# Every stream opens with the current state, so only one that stayed up this
+# long proves the gateway is healthy enough to reset the reconnect backoff.
+_STREAM_HEALTHY_SECONDS = 60.0
 
 # How long the observe stream must have been running, cumulatively across
 # reconnects, before an account is declared lock-less. The gateway sends its
@@ -492,9 +495,14 @@ class GrpcLockClient:
         """
         delay = _RECONNECT_INITIAL_DELAY
         while True:
+            started = asyncio.get_running_loop().time()
             try:
                 async for batch in self._observe_once():
-                    delay = _RECONNECT_INITIAL_DELAY
+                    if (
+                        asyncio.get_running_loop().time() - started
+                        >= _STREAM_HEALTHY_SECONDS
+                    ):
+                        delay = _RECONNECT_INITIAL_DELAY
                     yield batch
                 # Re-check on the way out too: a stream that ends right after
                 # the enumeration would otherwise need another connection

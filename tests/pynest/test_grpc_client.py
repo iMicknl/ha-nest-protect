@@ -1133,6 +1133,11 @@ async def test_observe_locks_warns_about_errors_once_a_lock_is_known(
 async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
     monkeypatch, recorded_sleeps
 ):
+    # Treat every stream as having stayed up long enough to count as healthy.
+    monkeypatch.setattr(
+        "custom_components.nest_protect.pynest.grpc_client._STREAM_HEALTHY_SECONDS",
+        0.0,
+    )
     calls = {"n": 0}
 
     async def _stub(self):
@@ -1150,3 +1155,21 @@ async def test_observe_locks_resets_the_backoff_after_a_successful_batch(
     # Attempts alternate yield / no-yield. Each yielding attempt resets the
     # delay to the initial 1.0s, so it never compounds past one doubling.
     assert recorded_sleeps == [1.0, 2.0, 1.0, 2.0]
+
+
+async def test_observe_locks_keeps_backing_off_when_streams_close_after_one_batch(
+    monkeypatch, recorded_sleeps
+):
+    # Every stream opens with the current state; one closed right after must not
+    # reconnect once a second forever.
+    async def _stub(self):
+        yield {"DEVICE_X": "state"}
+
+    monkeypatch.setattr(GrpcLockClient, "_observe_once", _stub)
+
+    client = _make_client()
+    with pytest.raises(_StopLoop):
+        async for _ in client.observe_locks():
+            pass
+
+    assert recorded_sleeps == [1.0, 2.0, 4.0, 8.0]
