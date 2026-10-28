@@ -309,6 +309,11 @@ class NestProtectConnectivitySensor(NestProtectBinarySensor):
         )
 
     @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes; signals don't use the entity_id."""
+        super().async_entity_id_changed(old_entity_id)
+
+    @callback
     def widget_track_callback(self, bucket: Bucket) -> None:
         """Update the connectivity state."""
         self.widget_track = bucket

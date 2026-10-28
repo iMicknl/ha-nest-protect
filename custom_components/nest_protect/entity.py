@@ -9,8 +9,9 @@ from aiohttp import ClientError
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
+from homeassistant.helpers.entity import Entity, EntityDescription
 
 from .const import ATTRIBUTION, DOMAIN
 from .pynest.client import NestClient
@@ -166,6 +167,16 @@ class NestEntity(Entity):
                     self.hass, self._stream_health.signal, self.async_write_ha_state
                 )
             )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes.
+
+        Signals are keyed on Nest buckets, not on the entity_id, so nothing
+        needs to be subscribed again. Without this hook HA removes and re-adds
+        the entity instead.
+        """
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def update_callback(self, bucket: Bucket):
