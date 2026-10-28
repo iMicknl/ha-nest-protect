@@ -304,9 +304,7 @@ def _async_remove_stale_devices(
             continue
 
         LOGGER.debug("Removing device %s that is no longer on the account", device.id)
-        device_registry.async_update_device(
-            device.id, remove_config_entry_id=entry.entry_id
-        )
+        device_registry.async_remove_device(device.id)
 
 
 async def _async_observe_locks_loop(
