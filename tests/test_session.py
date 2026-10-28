@@ -571,6 +571,8 @@ async def test_waiter_refreshes_when_inflight_persist_fails():
     assert client.authenticate.call_count == 2
     assert store.async_save.call_count == 2
     assert client.nest_session is second_session
+
+
 @pytest.mark.asyncio
 async def test_record_error_does_not_count_toward_reauth():
     """Non-auth errors must never push the session toward reauth."""
