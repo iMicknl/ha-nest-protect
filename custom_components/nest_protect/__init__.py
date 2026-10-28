@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
+import time
 from dataclasses import dataclass, field
 
 from aiohttp import (
@@ -28,8 +30,10 @@ from .const import (
     DOMAIN,
     LOGGER,
     PLATFORMS,
+    RECONNECT_INTERVALS,
     STORAGE_KEY_FORMAT,
     STORAGE_VERSION,
+    SUBSCRIBE_HEALTHY_SECONDS,
 )
 from .lock import discovery_signal, lock_signal
 from .pynest.client import NestClient
@@ -66,6 +70,7 @@ class HomeAssistantNestProtectData:
     subscription_task: asyncio.Task | None = None
     lock_observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
+    connection_failures: int = 0
     widget_tracks: dict[str, Bucket] = field(default_factory=dict)
 
 
@@ -303,6 +308,9 @@ async def _async_recover_session(
         PynestException,
     ) as err:
         LOGGER.debug("Session recovery failed; retrying background updates: %s", err)
+    except Exception:
+        # Escaping here would end the background task with nothing to restart it.
+        LOGGER.exception("Unexpected error during session recovery; retrying later")
 
     if entry.entry_id not in hass.data.get(DOMAIN, {}):
         return False
@@ -327,6 +335,38 @@ def _register_subscribe_task(
     return task
 
 
+async def _async_resubscribe(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    entry_data: HomeAssistantNestProtectData,
+    data: FirstDataAPIResponse,
+    started: float,
+) -> None:
+    """Re-subscribe after a connection error, backing off when errors come fast.
+
+    A long-poll ending in a timeout or disconnect is the normal cycle and
+    re-subscribes straight away. An attempt that fails quickly (offline, DNS,
+    connection reset, a failing Google refresh) would otherwise retry in a
+    tight loop, spinning the CPU and hammering Google or Nest.
+    """
+    if time.monotonic() - started >= SUBSCRIBE_HEALTHY_SECONDS:
+        entry_data.connection_failures = 0
+    else:
+        entry_data.connection_failures += 1
+        idx = min(entry_data.connection_failures, len(RECONNECT_INTERVALS)) - 1
+        # Jitter keeps installs that lost connectivity together from
+        # reconnecting in lockstep.
+        delay = RECONNECT_INTERVALS[idx] * random.uniform(0.8, 1.2)  # noqa: S311
+        LOGGER.debug(
+            "Subscriber: connection failing, retrying in %.0fs (attempt %d)",
+            delay,
+            entry_data.connection_failures,
+        )
+        await asyncio.sleep(delay)
+
+    _register_subscribe_task(hass, entry, data)
+
+
 async def _async_subscribe_for_data(
     hass: HomeAssistant, entry: ConfigEntry, data: FirstDataAPIResponse
 ):
@@ -336,6 +376,7 @@ async def _async_subscribe_for_data(
 
     entry_data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
     sm = entry_data.session_manager
+    started = time.monotonic()
 
     try:
         await asyncio.sleep(0)
@@ -351,6 +392,7 @@ async def _async_subscribe_for_data(
         )
 
         sm.record_success()
+        entry_data.connection_failures = 0
 
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
@@ -407,24 +449,24 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
     except ServerDisconnectedError:
         LOGGER.debug("Subscriber: server disconnected.")
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except asyncio.exceptions.TimeoutError:
         LOGGER.debug("Subscriber: session timed out.")
         sm.record_success()
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except ClientConnectorError:
         LOGGER.debug("Subscriber: cannot connect to host.")
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except ClientOSError:
         LOGGER.debug("Subscriber: connection reset.")
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except EmptyResponseException:
         LOGGER.debug("Subscriber: Nest Service sent empty response.")
-        _register_subscribe_task(hass, entry, data)
+        await _async_resubscribe(hass, entry, entry_data, data, started)
 
     except NotAuthenticatedException:
         LOGGER.debug("Subscriber: 401 exception.")
