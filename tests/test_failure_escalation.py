@@ -1,7 +1,6 @@
 """Failure paths must escalate their backoff or end in re-authentication."""
 
 import asyncio
-from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +12,7 @@ from custom_components.nest_protect import (
     HomeAssistantNestProtectData,
     _async_observe_locks_loop,
     _async_subscribe_for_data,
-    _persist_refreshed_cookies,
+    _cookie_persister,
 )
 from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
 from custom_components.nest_protect.lock import NestLockEntity
@@ -40,7 +39,7 @@ def _entry_data(hass, entry):
     sm = NestSessionManager(
         client,
         store,
-        on_cookies_refreshed=partial(_persist_refreshed_cookies, hass, entry),
+        on_cookies_refreshed=_cookie_persister(hass, entry),
     )
     entry.runtime_data = HomeAssistantNestProtectData(
         devices={},
