@@ -199,6 +199,8 @@ async def test_subscriber_records_response(hass, outcome):
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task"),
+        # Fast failures back off before re-subscribing; skip the real wait.
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
     ):
         await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
@@ -225,6 +227,8 @@ async def test_subscriber_failure_does_not_record_response(hass, error):
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task"),
+        # Fast failures back off before re-subscribing; skip the real wait.
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
         patch.object(sm, "ensure_session", new_callable=AsyncMock),
         patch.object(sm, "async_refresh_session", new_callable=AsyncMock),
         patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
@@ -244,6 +248,8 @@ async def test_session_refresh_timeout_does_not_record_response(hass):
 
     with (
         patch("custom_components.nest_protect._register_subscribe_task"),
+        # Fast failures back off before re-subscribing; skip the real wait.
+        patch("custom_components.nest_protect.asyncio.sleep", new_callable=AsyncMock),
         patch.object(
             sm, "ensure_session", new_callable=AsyncMock, side_effect=TimeoutError()
         ),
