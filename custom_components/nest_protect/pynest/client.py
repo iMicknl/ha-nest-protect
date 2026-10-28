@@ -174,19 +174,20 @@ class NestClient:
         """__aexit__."""
         await self.session.close()
 
-    async def get_access_token(self) -> GoogleAuthResponse:
-        """Get a Nest access token."""
+    async def get_access_token(self) -> GoogleAuthResponse | None:
+        """Get a Google access token, or None without credentials."""
 
         if self.master_token:
-            await self.get_access_token_from_master_token()
-        # Same order as setup: entries re-authenticated with cookies may still
-        # hold a revoked legacy refresh token.
-        elif self.issue_token and self.cookies:
-            await self.get_access_token_from_cookies(self.issue_token, self.cookies)
-        elif self.refresh_token:
-            await self.get_access_token_from_refresh_token(self.refresh_token)
-
-        return self.auth
+            return await self.get_access_token_from_master_token()
+        # Entries re-authenticated with cookies may still hold a revoked legacy
+        # refresh token.
+        if self.issue_token and self.cookies:
+            return await self.get_access_token_from_cookies(
+                self.issue_token, self.cookies
+            )
+        if self.refresh_token:
+            return await self.get_access_token_from_refresh_token(self.refresh_token)
+        return None
 
     async def get_access_token_from_refresh_token(
         self, refresh_token: str | None = None

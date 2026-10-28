@@ -59,6 +59,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     _default_account_type: Environment = Environment.PRODUCTION
     # Email, oauth_token, android_id and master_token of the last exchange.
     _exchanged_master_token: tuple[str, str, str, str] | None = None
+    _master_token_client: NestClient | None = None
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -117,22 +118,29 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         elif refresh_token:
             auth = await client.get_access_token_from_refresh_token(refresh_token)
 
-        nest = await client.authenticate(auth.access_token)
-        data = await client.get_first_data(nest.access_token, nest.userid)
+        user_id, email = await self._async_fetch_account(client, auth.access_token)
 
         if client.refreshed_cookies:
             cookies = client.refreshed_cookies
 
-        email = ""
-        for bucket in data.updated_buckets:
-            key = bucket.object_key
-            if key.startswith("user."):
-                email = bucket.value["email"]
-
-        # Set unique id to user_id (object.key: user.xxxx)
-        await self.async_set_unique_id(nest.user)
+        await self.async_set_unique_id(user_id)
 
         return [issue_token, cookies, email]
+
+    @staticmethod
+    async def _async_fetch_account(
+        client: NestClient, access_token: str
+    ) -> tuple[str, str]:
+        """Sign in to Nest and return the Nest user ID (user.xxxx) and email."""
+        nest = await client.authenticate(access_token)
+        data = await client.get_first_data(nest.access_token, nest.userid)
+
+        email = ""
+        for bucket in data.updated_buckets:
+            if bucket.object_key.startswith("user."):
+                email = bucket.value.get("email", "")
+
+        return nest.user, email
 
     def _entry_being_updated(self) -> ConfigEntry | None:
         """Return the entry being reauthenticated or reconfigured, if any."""
@@ -248,17 +256,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             android_id = (
                 entry and entry.data.get(CONF_ANDROID_ID)
             ) or NestClient.generate_android_id()
-            nest = None
-            data = None
+            user_id = None
 
             if not email or not oauth_token:
                 errors["base"] = "invalid_auth"
 
             if not errors:
-                session = async_create_clientsession(self.hass)
-                client = NestClient(
-                    session=session, environment=NEST_ENVIRONMENTS[environment]
-                )
+                # Kept across retries, so a gpsoauth call still hanging from the
+                # last attempt blocks a new one instead of abandoning another thread.
+                if self._master_token_client is None:
+                    self._master_token_client = NestClient(
+                        session=async_create_clientsession(self.hass),
+                        environment=NEST_ENVIRONMENTS[environment],
+                    )
+                client = self._master_token_client
                 try:
                     # Google accepts an oauth_token only once, so a retry after a
                     # later step failed reuses the master token it was exchanged for.
@@ -278,8 +289,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     auth = await client.get_access_token_from_master_token(
                         master_token, email, android_id
                     )
-                    nest = await client.authenticate(auth.access_token)
-                    data = await client.get_first_data(nest.access_token, nest.userid)
+                    user_id, account_email = await self._async_fetch_account(
+                        client, auth.access_token
+                    )
                 except TimeoutError, ClientError, NestServiceException:
                     errors["base"] = "cannot_connect"
                 except BadCredentialsException:
@@ -288,13 +300,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "unknown"
                     LOGGER.exception(exception)
 
-            if not errors and nest is not None and data is not None:
-                account_email = email
-                for bucket in data.updated_buckets:
-                    if bucket.object_key.startswith("user."):
-                        account_email = bucket.value.get("email", email)
-
-                await self.async_set_unique_id(nest.user)
+            if not errors and user_id is not None:
+                await self.async_set_unique_id(user_id)
 
                 new_data = {
                     CONF_MASTER_TOKEN: master_token,
@@ -303,7 +310,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ACCOUNT_TYPE: environment,
                 }
 
-                return self._async_create_or_update_entry(new_data, account_email)
+                return self._async_create_or_update_entry(
+                    new_data, account_email or email
+                )
 
         return self.async_show_form(
             step_id="master_token",

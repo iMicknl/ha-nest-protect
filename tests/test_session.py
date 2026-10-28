@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from custom_components.nest_protect.const import BACKOFF_INTERVALS, MAX_AUTH_FAILURES
+from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
@@ -95,7 +96,7 @@ async def test_restore_expired_session_falls_through():
 
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
@@ -136,7 +137,7 @@ async def test_restore_rejected_session_falls_through():
 
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
@@ -177,7 +178,7 @@ async def test_no_persisted_session_uses_cookies():
     """Test that no stored data triggers cookie auth."""
     new_nest_session = _make_nest_response(expired=False)
 
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
     client.refresh_token = None
@@ -643,9 +644,9 @@ async def test_record_success_resets_both_counters():
 ROTATED_COOKIES = "SID=rotated; HSID=test"
 
 
-def _make_rotating_client() -> MagicMock:
+def _make_rotating_client() -> NestClient:
     """Create a client whose cookie exchange rotates cookies but Nest auth fails."""
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test; HSID=test"
     client.refresh_token = None
@@ -661,7 +662,6 @@ def _make_rotating_client() -> MagicMock:
         return client.auth
 
     client.get_access_token_from_cookies = AsyncMock(side_effect=rotate)
-    client.get_access_token = AsyncMock(side_effect=rotate)
     client.authenticate = AsyncMock(side_effect=PynestException("session failed"))
     return client
 

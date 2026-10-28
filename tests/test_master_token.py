@@ -215,7 +215,7 @@ async def test_get_access_token_prefers_master_token() -> None:
 
 async def test_session_authenticates_with_master_token() -> None:
     """The session manager mints from the master token before trying cookies."""
-    client = MagicMock()
+    client = NestClient(session=MagicMock())
     client.master_token = "aas_et/master"
     client.issue_token = "https://accounts.google.com/issue"
     client.cookies = "SID=test"
@@ -553,3 +553,26 @@ async def test_master_token_step_blank_field(hass: HomeAssistant) -> None:
 
     assert result["errors"] == {"base": "invalid_auth"}
     client.exchange_master_token.assert_not_called()
+
+
+async def test_master_token_step_retry_waits_for_hung_exchange(
+    hass: HomeAssistant,
+) -> None:
+    """Retrying the form while Google hangs doesn't abandon another thread."""
+    flow_id = await _start_master_token_flow(hass)
+    user_input = {"google_email": "user@example.com", "oauth_token": "oauth2_4/once"}
+    release = threading.Event()
+
+    with (
+        patch(EXCHANGE, side_effect=lambda *args: release.wait(5)) as exchange,
+        patch(
+            "custom_components.nest_protect.pynest.client.REQUEST_TIMEOUT_SECONDS",
+            0.01,
+        ),
+    ):
+        for _ in range(2):
+            result = await hass.config_entries.flow.async_configure(flow_id, user_input)
+            assert result["errors"] == {"base": "cannot_connect"}
+
+    release.set()
+    assert exchange.call_count == 1

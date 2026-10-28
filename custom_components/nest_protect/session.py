@@ -172,18 +172,10 @@ class NestSessionManager:
         Returns a NestResponse on success, None if no credentials are available.
         Raises authentication exceptions from the underlying client on failure.
         """
-        if self._client.master_token:
-            auth = await self._client.get_access_token_from_master_token()
-        elif self._client.issue_token and self._client.cookies:
-            with self._report_rotated_cookies():
-                auth = await self._client.get_access_token_from_cookies(
-                    self._client.issue_token, self._client.cookies
-                )
-        elif self._client.refresh_token:
-            auth = await self._client.get_access_token_from_refresh_token(
-                self._client.refresh_token
-            )
-        else:
+        with self._report_rotated_cookies():
+            auth = await self._client.get_access_token()
+
+        if auth is None:
             return None
 
         return await self._client.authenticate(auth.access_token)
