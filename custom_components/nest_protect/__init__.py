@@ -8,6 +8,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from functools import partial
+from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
@@ -19,6 +20,8 @@ from aiohttp import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -61,6 +64,8 @@ from .pynest.models import (
 from .session import NestSessionManager
 from .stream_health import StreamHealth
 
+DEVICE_BUCKET_TYPES = {BucketType.TOPAZ, BucketType.KRYPTONITE}
+
 
 @dataclass
 class HomeAssistantNestProtectData:
@@ -79,6 +84,8 @@ class HomeAssistantNestProtectData:
     widget_tracks: dict[str, Bucket] = field(default_factory=dict)
     safety_summaries: dict[str, Bucket] = field(default_factory=dict)
     structure_names: dict[str, str] = field(default_factory=dict)
+    # Device keys from the account's bucket list at setup; None if not returned.
+    listed_device_keys: set[str] | None = None
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
@@ -143,9 +150,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     safety_summary_buckets: list[Bucket] = []
     areas: dict[str, str] = {}
     structure_names: dict[str, str] = {}
+    listed_device_keys: set[str] | None = None
 
     for bucket in data.updated_buckets:
-        if bucket.type in {BucketType.TOPAZ, BucketType.KRYPTONITE}:
+        if bucket.type in DEVICE_BUCKET_TYPES:
             device_buckets.append(bucket)
 
         if bucket.type == BucketType.WIDGET_TRACK:
@@ -155,6 +163,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
         if bucket.type == BucketType.STRUCTURE and (name := bucket.value.get("name")):
             structure_names[bucket.object_key.removeprefix("structure.")] = name
+        if bucket.type == BucketType.BUCKETS:
+            listed_device_keys = _listed_device_keys(bucket.value)
 
         if bucket.type == BucketType.WHERE and isinstance(
             bucket.value, WhereBucketValue
@@ -188,11 +198,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         safety_summaries=safety_summaries,
         structure_names=structure_names,
         stream_health=StreamHealth(hass, entry.entry_id),
+        listed_device_keys=listed_device_keys,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = entry_data
     # The first data fetch above counts as a response and starts the deadline.
     entry_data.stream_health.async_record_response()
     entry.async_on_unload(entry_data.stream_health.async_stop)
+
+    _async_remove_stale_devices(hass, entry, entry_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -207,6 +220,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
 
     return True
+
+
+def _listed_device_keys(value: Any) -> set[str] | None:
+    """Return the Protect and temperature sensor keys from a bucket list."""
+    keys = value.get("buckets") if isinstance(value, dict) else None
+    if not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
+        return None
+    return {key for key in keys if key.partition(".")[0] in DEVICE_BUCKET_TYPES}
+
+
+def _device_bucket_keys(hass: HomeAssistant, device_id: str) -> set[str]:
+    """Return the bucket keys of a device's entities, which prefix their unique IDs."""
+    return {
+        entity.unique_id.partition("-")[0]
+        for entity in er.async_entries_for_device(
+            er.async_get(hass), device_id, include_disabled_entities=True
+        )
+    }
+
+
+def _is_reported_device(
+    hass: HomeAssistant, entry_data: HomeAssistantNestProtectData, device: DeviceEntry
+) -> bool:
+    """Return whether the account still reports this device."""
+    reported = {lock.serial_number for lock in entry_data.lock_state_cache.values()}
+    for key, bucket in entry_data.devices.items():
+        reported.add(key)
+        if serial_number := bucket.value.get("serial_number"):
+            reported.add(serial_number)
+
+    if any(
+        domain == DOMAIN and identifier in reported
+        for domain, identifier in device.identifiers
+    ):
+        return True
+
+    # Sparse responses can omit the serial number the device was registered with.
+    # Homes are devices too, keyed by their safety summary bucket.
+    return not _device_bucket_keys(hass, device.id).isdisjoint(
+        entry_data.devices.keys() | entry_data.safety_summaries.keys()
+    )
+
+
+@callback
+def _async_remove_stale_devices(
+    hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
+) -> None:
+    """Remove Protects and temperature sensors that left the account."""
+    device_registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        if _is_reported_device(hass, entry_data, device):
+            continue
+
+        # Only Protect and temperature sensor devices are known at this point;
+        # locks are discovered later over gRPC, so anything else is kept.
+        bucket_keys = _device_bucket_keys(hass, device.id)
+        if not bucket_keys or any(
+            key.partition(".")[0] not in DEVICE_BUCKET_TYPES for key in bucket_keys
+        ):
+            continue
+
+        LOGGER.debug("Removing device %s that is no longer on the account", device.id)
+        device_registry.async_update_device(
+            device.id, remove_config_entry_id=entry.entry_id
+        )
 
 
 async def _async_observe_locks_loop(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -431,9 +509,17 @@ async def _async_subscribe_for_data(
         entry_data.connection_failures = 0
         entry_data.stream_health.async_record_response()
 
+        devices_changed = False
+
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
             key = bucket["object_key"]
+
+            # Bucket list, used to detect devices added to or removed from the account
+            if key.startswith(f"{BucketType.BUCKETS}."):
+                listed = _listed_device_keys(bucket["value"])
+                if listed is not None and listed != entry_data.listed_device_keys:
+                    devices_changed = True
 
             # Nest Protect
             if key.startswith("topaz."):
@@ -468,6 +554,12 @@ async def _async_subscribe_for_data(
                 entry_data.safety_summaries[key] = safety_summary
 
                 async_dispatcher_send(hass, key, safety_summary)
+        if devices_changed:
+            # Setup rebuilds the device list and records the new bucket list,
+            # so the reload only repeats if the account changes again.
+            LOGGER.debug("Subscriber: devices changed on the account, reloading")
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+            return
 
         # Update buckets with new data, to only receive new updates
         buckets = {d["object_key"]: d for d in result["objects"]}
@@ -588,5 +680,11 @@ async def _async_subscribe_for_data(
 async def async_remove_config_entry_device(
     hass: HomeAssistant, config_entry: ConfigEntry, device_entry: DeviceEntry
 ) -> bool:
-    """Remove a config entry from a device."""
-    return True
+    """Only allow removing devices that the account no longer reports."""
+    entry_data: HomeAssistantNestProtectData | None = hass.data.get(DOMAIN, {}).get(
+        config_entry.entry_id
+    )
+    if entry_data is None:
+        return True
+
+    return not _is_reported_device(hass, entry_data, device_entry)
