@@ -44,7 +44,7 @@ The values of "issue_token" and "cookies" are specific to your Google Account. Y
 
 The easiest way to get your credentials is with the **Nest Auth Helper** browser extension, which works in Chrome, Edge and Firefox (121+):
 
-1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.5.0b1/nest-auth-helper.zip) from the v0.5.0b1 release and unzip it.
+1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip) from the latest release and unzip it.
 1. Load the extension:
    - **Chrome/Edge**: go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
    - **Firefox**: go to `about:debugging` → **This Firefox** → **Load Temporary Add-on**, and select `manifest.json` in the unzipped folder.
