@@ -21,7 +21,7 @@ from .entity import subscribe_to_discovery
 from .pynest.thermostat_models import ThermostatState
 
 if TYPE_CHECKING:
-    from . import NestProtectConfigEntry
+    from . import HomeAssistantNestProtectData, NestProtectConfigEntry
 
 THERMOSTAT_SIGNAL_PREFIX = "nest_protect_thermostat_"
 
@@ -34,6 +34,11 @@ def thermostat_signal(resource_id: str) -> str:
 def thermostat_discovery_signal(entry_id: str) -> str:
     """Dispatcher signal for newly-discovered thermostats on a config entry."""
     return f"{THERMOSTAT_SIGNAL_PREFIX}discover_{entry_id}"
+
+
+def observer_stopped_signal(entry_id: str) -> str:
+    """Dispatcher signal sent when a config entry's observe loop gives up."""
+    return f"{DOMAIN}_observer_stopped_{entry_id}"
 
 
 def subscribe_to_thermostat_discovery(
@@ -63,6 +68,7 @@ class NestThermostatEntity(Entity):
 
     _attr_has_entity_name = True
     _attr_should_poll = False
+    _entry_data: HomeAssistantNestProtectData | None = None
 
     def __init__(self, state: ThermostatState, description: EntityDescription) -> None:
         """Initialize."""
@@ -79,13 +85,28 @@ class NestThermostatEntity(Entity):
             suggested_area=state.location,
         )
 
+    @property
+    def available(self) -> bool:
+        """Return False once the observe stream, the only source, has stopped."""
+        if self._entry_data is not None and not self._entry_data.observing:
+            return False
+        return super().available
+
     async def async_added_to_hass(self) -> None:
         """Subscribe to state updates for this thermostat."""
+        self._entry_data = self.platform.config_entry.runtime_data
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass,
                 thermostat_signal(self._state.resource_id),
                 self._handle_update,
+            )
+        )
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                observer_stopped_signal(self.platform.config_entry.entry_id),
+                self.async_write_ha_state,
             )
         )
 

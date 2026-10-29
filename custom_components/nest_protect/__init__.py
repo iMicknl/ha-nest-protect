@@ -70,7 +70,11 @@ from .pynest.models import (
 from .pynest.thermostat_models import ThermostatState
 from .session import NestSessionManager
 from .stream_health import StreamHealth
-from .thermostat import thermostat_discovery_signal, thermostat_signal
+from .thermostat import (
+    observer_stopped_signal,
+    thermostat_discovery_signal,
+    thermostat_signal,
+)
 
 DEVICE_BUCKET_TYPES = {BucketType.TOPAZ, BucketType.KRYPTONITE}
 
@@ -89,6 +93,9 @@ class HomeAssistantNestProtectData:
     observe_task: asyncio.Task | None = None
     lock_state_cache: dict[str, LockState] = field(default_factory=dict)
     thermostat_state_cache: dict[str, ThermostatState] = field(default_factory=dict)
+    # False once the observe loop has given up, e.g. for re-authentication.
+    # Thermostat readings only come from that stream, so they are stale then.
+    observing: bool = True
     connection_failures: int = 0
     # Consecutive subscribes Nest answered with data almost immediately.
     fast_data_responses: int = 0
@@ -328,6 +335,17 @@ async def _async_observe_loop(
     while the session is thoroughly broken.
     """
     entry_data = entry.runtime_data
+    await _async_run_observer(hass, entry, entry_data)
+    entry_data.observing = False
+    async_dispatcher_send(hass, observer_stopped_signal(entry.entry_id))
+
+
+async def _async_run_observer(
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    entry_data: HomeAssistantNestProtectData,
+) -> None:
+    """Run the observe stream until it gives up or finds nothing to watch."""
     sm = entry_data.session_manager
 
     # Every new stream starts by sending the current lock state, so a batch alone

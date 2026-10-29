@@ -385,6 +385,9 @@ class NestThermostatActiveSensor(NestThermostatEntity, SensorEntity):
 
     def _sensor_name(self, resource_id: str) -> str:
         """Name a Nest Temperature Sensor like its own device: label, else room."""
+        # A multi-sensor group can include the thermostat itself.
+        if resource_id == self._state.resource_id:
+            return THERMOSTAT_SOURCE_NAME
         sensor_id = resource_id.removeprefix("DEVICE_")
         if bucket := self._devices.get(f"{BucketType.KRYPTONITE}.{sensor_id}"):
             if label := bucket.value.get("description"):

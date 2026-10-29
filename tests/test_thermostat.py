@@ -4,13 +4,14 @@ from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from homeassistant.const import STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect import (
+    _async_observe_loop,
     _dispatch_states,
     async_remove_config_entry_device,
 )
@@ -173,6 +174,11 @@ async def test_thermostat_updates_its_state_and_device(hass: HomeAssistant):
             ["DEVICE_S2", "DEVICE_S1"],
             "Bedroom, Nursery",
         ),
+        (
+            TemperatureSource.MULTI_SENSOR,
+            ["DEVICE_T", "DEVICE_S1"],
+            "Nursery, Thermostat",
+        ),
         (None, [], STATE_UNKNOWN),
     ],
 )
@@ -188,6 +194,25 @@ async def test_active_temperature_sensor_names_the_sensors(
     await hass.async_block_till_done()
 
     assert _state(hass, "active_temperature_sensor") == expected
+
+
+async def test_thermostat_sensors_go_unavailable_when_the_observer_stops(
+    hass: HomeAssistant,
+):
+    entry = await _setup(hass)
+    _observe(hass, entry, THERMOSTAT)
+    await hass.async_block_till_done()
+
+    async def observe():
+        raise RuntimeError("boom")
+        yield
+
+    entry.runtime_data.grpc_client.observe = observe
+    await _async_observe_loop(hass, entry)
+    await hass.async_block_till_done()
+
+    assert _state(hass, "backplate_temperature") == STATE_UNAVAILABLE
+    assert _state(hass, "active_temperature_sensor") == STATE_UNAVAILABLE
 
 
 async def test_discovered_thermostat_is_reported(hass: HomeAssistant):
