@@ -24,6 +24,8 @@ CONF_MASTER_TOKEN: Final = "master_token"
 CONF_GOOGLE_EMAIL: Final = "google_email"
 CONF_ANDROID_ID: Final = "android_id"
 CONF_OAUTH_TOKEN: Final = "oauth_token"
+# Option: structure IDs of the homes to add. Absent means every home.
+CONF_HOMES: Final = "homes"
 CREDENTIAL_KEYS: Final = (
     CONF_ANDROID_ID,
     CONF_COOKIES,

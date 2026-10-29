@@ -74,7 +74,10 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: NestProtectConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    data: dict[str, Any] = {"config_entry": dict(entry.data)}
+    data: dict[str, Any] = {
+        "config_entry": dict(entry.data),
+        "config_entry_options": dict(entry.options),
+    }
 
     entry_data: HomeAssistantNestProtectData | None = getattr(
         entry, "runtime_data", None
