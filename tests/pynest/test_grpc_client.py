@@ -557,15 +557,16 @@ def test_streambody_frame_matches_the_observeresponse_encoding():
 
 
 def test_streambody_status_comes_from_googleapis_common_protos():
-    """StreamBody is generated locally; its Status still comes from upstream.
+    """StreamBody is generated locally; its Status is copied from upstream.
 
-    google/rpc/status.proto is deliberately left source-only so we don't
-    register a second `google/rpc/status.proto` in the default descriptor pool.
+    google/rpc/status.proto is source-only, so the private pool's copy must be
+    googleapis-common-protos' definition rather than one we generated.
     """
     from google.rpc import status_pb2 as upstream
 
-    body = streambody_pb2.StreamBody()
-    assert body.status.DESCRIPTOR is upstream.Status.DESCRIPTOR
+    status = streambody_pb2.StreamBody().status.DESCRIPTOR
+    assert status is not upstream.Status.DESCRIPTOR
+    assert status.file.serialized_pb == upstream.DESCRIPTOR.serialized_pb
 
 
 def test_parse_observe_buffer_single_frame():
