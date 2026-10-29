@@ -224,3 +224,42 @@ def test_date_sensors_unknown_when_missing_or_zero(key: str, value: dict):
     """Test that a missing or zero (never run) value reports unknown, not 1970."""
     sensor = build_sensor(key, {key: value["raw"]} if value else {})
     assert sensor.native_value is None
+
+
+def test_temperature_sensor_last_updated_is_timestamp():
+    """Test that a temperature sensor reports when it last sent a reading."""
+    sensor = build_sensor(
+        "last_updated_at",
+        {"current_temperature": 20.2, "last_updated_at": 1717405574},
+        object_key="kryptonite.1234",
+    )
+    assert sensor.unique_id == "kryptonite.1234-last_updated_at"
+    assert sensor.device_class == SensorDeviceClass.TIMESTAMP
+    assert sensor.entity_category is EntityCategory.DIAGNOSTIC
+    assert sensor.native_value == datetime(2024, 6, 3, 9, 6, 14, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("object_key", "created"),
+    [("kryptonite.1234", True), ("topaz.1234", False)],
+)
+async def test_last_updated_sensor_only_created_for_temperature_sensor(
+    hass, object_key: str, created: bool
+):
+    """Test that only temperature sensors get a last updated sensor."""
+    device = Bucket(object_key, 1, 1, {"last_updated_at": 1717405574})
+    entry = SimpleNamespace(entry_id="test")
+    entry.runtime_data = SimpleNamespace(
+        devices={device.object_key: device},
+        areas={},
+        client=MagicMock(),
+        safety_summaries={},
+        structure_names={},
+    )
+    add_entities = MagicMock()
+
+    with patch("custom_components.nest_protect.sensor.subscribe_to_lock_discovery"):
+        await async_setup_entry(hass, entry, add_entities)
+
+    keys = [entity.entity_description.key for entity in add_entities.call_args.args[0]]
+    assert ("last_updated_at" in keys) is created

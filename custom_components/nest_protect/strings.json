@@ -141,6 +141,9 @@
       "current_temperature": {
         "name": "Temperature"
       },
+      "last_updated_at": {
+        "name": "Last updated"
+      },
       "smoke_status_sensor": {
         "name": "Smoke alarm state",
         "state": {

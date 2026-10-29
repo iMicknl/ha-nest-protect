@@ -20,6 +20,7 @@ DISABLED_BY_DEFAULT = {
     "removed_from_base",
     "last_audio_self_test_end_utc_secs",
     "latest_manual_test_end_utc_secs",
+    "last_updated_at",
 }
 
 ENABLED_BY_DEFAULT = {
