@@ -249,6 +249,8 @@ class GrpcLockClient:
         self._grpc_host = grpc_host
         # Per-resource trait cache: resource_id -> {trait_full_name: trait_proto}
         self._trait_cache: dict[str, dict[str, Any]] = {}
+        # resource_id -> resource type, for every resource the gateway lists.
+        self.resource_types: dict[str, str] = {}
         # Global where_id -> room label, rebuilt whenever the structure-level
         # annotation traits change. Locks use this to resolve their location.
         self._wheres_map: dict[str, str] = {}
@@ -306,6 +308,7 @@ class GrpcLockClient:
             self._seen_resource_metas = True
             self._initial_metas_continue = inner.initialResourceMetasContinue
             for meta in inner.resourceMetas:
+                self.resource_types[meta.resourceId] = meta.type
                 for trait_meta in meta.traitMetas:
                     name = trait_meta.type.removeprefix(_NESTLABS_TYPE_URL_PREFIX)
                     if name == _BOLT_LOCK_TRAIT_NAME:

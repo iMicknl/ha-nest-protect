@@ -767,6 +767,26 @@ def test_ingest_bolt_lock_resource_meta_marks_locks_present():
     assert client._initial_metas_continue is False
 
 
+def test_ingest_records_the_type_of_every_resource():
+    """Resource types show in diagnostics whether Nest serves a device over gRPC."""
+    client = _make_client()
+    inner = v2_pb2.ObserveResponse.ObserveResponse()
+    for resource_id, resource_type in (
+        ("DEVICE_18B4300000000001", "nest.resource.NestProtect2BatteryPoweredResource"),
+        ("STRUCTURE_1", "google.resource.StructureResource"),
+    ):
+        meta = inner.resourceMetas.add()
+        meta.resourceId = resource_id
+        meta.type = resource_type
+
+    client._ingest_observe_response(inner)
+
+    assert client.resource_types == {
+        "DEVICE_18B4300000000001": "nest.resource.NestProtect2BatteryPoweredResource",
+        "STRUCTURE_1": "google.resource.StructureResource",
+    }
+
+
 def test_ingest_tracks_the_initial_meta_continuation_flag():
     client = _make_client()
     client._ingest_observe_response(

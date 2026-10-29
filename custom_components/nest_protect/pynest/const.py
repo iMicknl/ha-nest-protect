@@ -72,6 +72,7 @@ NEST_REQUEST = {
     "known_bucket_types": [
         BucketType.BUCKETS,
         BucketType.KRYPTONITE,
+        BucketType.SAFETY,
         BucketType.SAFETY_SUMMARY,
         BucketType.STRUCTURE,
         BucketType.TOPAZ,

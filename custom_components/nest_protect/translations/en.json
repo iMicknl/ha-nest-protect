@@ -193,5 +193,11 @@
         "name": "Steam check"
       }
     }
+  },
+  "issues": {
+    "protects_without_data": {
+      "title": "Nest sends no data for some Protects",
+      "description": "Nest lists {count} Protect(s) in {homes} without sending any data for them, so they can't be added to Home Assistant: {devices}.\n\nThis can last a few hours after a Protect is added, reset or moved to another account in the Nest or Google Home app. Once Nest sends their data, reload the integration if they don't appear on their own.\n\nIf you removed one of these Protects, you can ignore this issue. If a Protect you still use stays missing, open an issue on GitHub and attach the diagnostics of this integration."
+    }
   }
 }
