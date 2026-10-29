@@ -116,6 +116,9 @@
       "current_temperature": {
         "name": "Temperatuur"
       },
+      "last_updated_at": {
+        "name": "Laatst bijgewerkt"
+      },
       "smoke_status_sensor": {
         "name": "Rookalarmstatus",
         "state": {

@@ -170,6 +170,17 @@ SENSOR_DESCRIPTIONS: list[NestProtectSensorDescription] = [
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    # Nest keeps serving a temperature sensor's last reading after it stops
+    # reporting (e.g. a dead battery), so this is the only staleness signal.
+    NestProtectSensorDescription(
+        key="last_updated_at",
+        translation_key="last_updated_at",
+        value_fn=utc_secs_to_datetime,
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        bucket_type=BucketType.KRYPTONITE,
+    ),
     NestProtectSensorDescription(
         key="smoke_status",
         translation_key="smoke_status_sensor",
