@@ -214,6 +214,9 @@
       "night_light_enable": {
         "name": "Pathlight"
       },
+      "night_light_continuous": {
+        "name": "Pathlight always on"
+      },
       "ntp_green_led_enable": {
         "name": "Nightly promise"
       },
