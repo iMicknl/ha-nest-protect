@@ -131,6 +131,9 @@ _THERMOSTAT_MODELS: dict[str, str] = {
     "nest.resource.NestAgateDisplayResource": "Thermostat E",
     "google.resource.GoogleZirconium1Resource": "Thermostat (2020)",
     "google.resource.GoogleBismuth1Resource": "Learning Thermostat (4th gen)",
+    # homebridge-nest mounts this type as a thermostat; which model it is isn't
+    # known.
+    "nest.resource.NestThermostat3Resource": "Thermostat",
 }
 
 _RCS_SOURCE_TYPES: dict[int, TemperatureSource] = {
@@ -297,6 +300,16 @@ def _sensor_value(trait: Any, sample_field: str, value_field: str) -> float | No
     return getattr(sample, value_field).value
 
 
+def _current_reading(traits: dict[str, Any], label: str, trait_class: type) -> Any:
+    """Return the trait a thermostat controls on, by label if it has one.
+
+    Falls back to an instance under another label, like nest_legacy does, so a
+    thermostat that labels it differently still reports a reading.
+    """
+    trait = traits.get(label)
+    return trait if trait is not None else traits.get(trait_class.DESCRIPTOR.full_name)
+
+
 def _extract_thermostat_state(
     resource_id: str,
     resource_type: str | None,
@@ -349,10 +362,16 @@ def _extract_thermostat_state(
             traits.get("backplate_temperature"), "temperatureValue", "temperature"
         ),
         current_temperature=_sensor_value(
-            traits.get("current_temperature"), "temperatureValue", "temperature"
+            _current_reading(
+                traits, "current_temperature", nest_sensor_pb2.TemperatureTrait
+            ),
+            "temperatureValue",
+            "temperature",
         ),
         current_humidity=_sensor_value(
-            traits.get("current_humidity"), "humidityValue", "humidity"
+            _current_reading(traits, "current_humidity", nest_sensor_pb2.HumidityTrait),
+            "humidityValue",
+            "humidity",
         ),
         temperature_source=source,
         active_sensors=active_sensors,

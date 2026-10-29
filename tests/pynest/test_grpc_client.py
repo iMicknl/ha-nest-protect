@@ -1003,10 +1003,30 @@ def test_other_resource_types_are_not_thermostats():
     assert client._snapshot(touched).thermostats == {}
 
 
-def test_a_thermostat_counts_as_a_device_to_watch():
+def test_thermostat_falls_back_to_differently_labelled_current_readings():
+    state = _thermostat(
+        _make_client(),
+        ("backplate_temperature", _temperature(21.5)),
+        ("temperature", _temperature(19.0)),
+        ("humidity", _humidity(48.0)),
+    )
+
+    assert state.backplate_temperature == pytest.approx(21.5)
+    assert state.current_temperature == pytest.approx(19.0)
+    assert state.current_humidity == pytest.approx(48.0)
+
+
+@pytest.mark.parametrize(
+    "resource_type",
+    [THERMOSTAT_TYPE, "nest.resource.NestThermostat3Resource"],
+)
+def test_a_thermostat_counts_as_a_device_to_watch(resource_type):
     client = _make_client()
-    client._ingest_observe_response(_labelled_inner([], resource_type=THERMOSTAT_TYPE))
+    touched = client._ingest_observe_response(
+        _labelled_inner([("device_identity", _identity())], resource_type=resource_type)
+    )
     assert client._devices_present is True
+    assert THERMOSTAT in client._snapshot(touched).thermostats
 
 
 def _rcs(source: int, *, single: str = "", group: tuple[str, ...] = ()):
