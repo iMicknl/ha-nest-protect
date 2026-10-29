@@ -16,6 +16,7 @@ Nest x Yale locks on the same account are also supported. Each lock exposes a `l
 
 - Only Google Accounts are supported, there is no plan to support legacy Nest accounts
 - When Nest Protect (wired) occupancy is triggered, it will stay 'on' for 10 minutes. (API limitation)
+- Nest Protect firmware 5.0 and later (5.0rc31, 5.0rc38) no longer reports occupancy to Nest, so the occupancy sensor of those devices is shown as unavailable instead of a frozen value. It becomes available again once the Protect reports a change. ([#476](https://github.com/iMicknl/ha-nest-protect/issues/476))
 - Only _cookie authentication_ is supported as Google removed the API key authentication method. This means that you need to login to the Nest website at least once to generate a cookie. This cookie will be used to authenticate with the Nest API. The cookie will be stored in the Home Assistant configuration folder and will be used for future requests. If you logout from your browser or change your password, you need to reautenticate and and replace the current issue_token and cookies.
 
 ## Installation
