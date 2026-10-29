@@ -22,6 +22,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -97,6 +98,8 @@ class HomeAssistantNestProtectData:
     structure_names: dict[str, str] = field(default_factory=dict)
     # Device keys from the account's bucket list at setup; None if not returned.
     listed_device_keys: set[str] | None = None
+    # Protect keys a home lists but Nest sent no topaz bucket for, by structure id.
+    protects_without_data: dict[str, set[str]] = field(default_factory=dict)
 
 
 type NestProtectConfigEntry = ConfigEntry[HomeAssistantNestProtectData]
@@ -223,6 +226,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
         structure_names=structure_names,
         stream_health=StreamHealth(hass, entry.entry_id),
         listed_device_keys=listed_device_keys,
+        protects_without_data=_protects_without_data(data.updated_buckets),
     )
     entry.runtime_data = entry_data
     # The first data fetch above counts as a response and starts the deadline.
@@ -230,6 +234,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
     entry.async_on_unload(entry_data.stream_health.async_stop)
 
     _async_remove_stale_devices(hass, entry, entry_data)
+    _async_report_protects_without_data(hass, entry, entry_data)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -250,6 +255,93 @@ def _listed_device_keys(value: Any) -> set[str] | None:
     if not isinstance(keys, list) or not all(isinstance(key, str) for key in keys):
         return None
     return {key for key in keys if key.partition(".")[0] in DEVICE_BUCKET_TYPES}
+
+
+def _string_list(value: Any) -> list[str]:
+    """Return the strings in a list value, or nothing if it isn't a list."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _protects_without_data(buckets: list[Bucket]) -> dict[str, set[str]]:
+    """Return, per home, the Protects the home lists but Nest sent no bucket for.
+
+    Without a topaz bucket there is nothing to build entities from, so these
+    Protects would otherwise go missing without a trace (#579, #604). The swarm
+    and the self-test participants don't always agree, so both are checked.
+    """
+    received = {b.object_key for b in buckets if b.type == BucketType.TOPAZ}
+    listed: dict[str, set[str]] = {}
+    for bucket in buckets:
+        if not isinstance(bucket.value, dict):
+            continue
+        if bucket.type == BucketType.STRUCTURE:
+            keys = {
+                key
+                for key in _string_list(bucket.value.get("swarm"))
+                if key.startswith(f"{BucketType.TOPAZ}.")
+            }
+        elif bucket.type == BucketType.SAFETY:
+            # Participants are bare device ids rather than bucket keys.
+            keys = {
+                f"{BucketType.TOPAZ}.{device_id}"
+                for device_id in _string_list(
+                    bucket.value.get("audio_self_test_participants")
+                )
+            }
+        else:
+            continue
+        listed.setdefault(bucket.object_key.partition(".")[2], set()).update(keys)
+
+    return {
+        structure_id: missing
+        for structure_id, keys in listed.items()
+        if (missing := keys - received)
+    }
+
+
+def _protects_without_data_issue_id(entry: ConfigEntry) -> str:
+    return f"protects_without_data_{entry.entry_id}"
+
+
+@callback
+def _async_report_protects_without_data(
+    hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
+) -> None:
+    """Raise a repair issue for Protects Nest sends no data for, or clear it."""
+    issue_id = _protects_without_data_issue_id(entry)
+    missing = entry_data.protects_without_data
+    if not missing:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+
+    device_ids = sorted(
+        key.removeprefix(f"{BucketType.TOPAZ}.")
+        for key in set().union(*missing.values())
+    )
+    homes = ", ".join(
+        sorted(entry_data.structure_names.get(sid, sid) for sid in missing)
+    )
+    LOGGER.warning(
+        "Nest sends no data for %d Protect(s) listed in %s, so they can't be added: %s",
+        len(device_ids),
+        homes,
+        ", ".join(device_ids),
+    )
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="protects_without_data",
+        translation_placeholders={
+            "count": str(len(device_ids)),
+            "homes": homes,
+            "devices": ", ".join(device_ids),
+        },
+    )
 
 
 def _device_bucket_keys(hass: HomeAssistant, device_id: str) -> set[str]:
@@ -414,6 +506,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         hass, STORAGE_VERSION, STORAGE_KEY_FORMAT.format(entry_id=entry.entry_id)
     )
     await store.async_remove()
+    # Kept over unloads on purpose: deleting it would forget that the user
+    # ignored it, and a stale participant list would raise it on every restart.
+    ir.async_delete_issue(hass, DOMAIN, _protects_without_data_issue_id(entry))
 
 
 def _cookie_persister(

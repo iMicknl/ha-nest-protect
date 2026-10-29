@@ -99,6 +99,12 @@ async def async_get_config_entry_diagnostics(
         "locks": [
             dataclasses.asdict(lock) for lock in entry_data.lock_state_cache.values()
         ],
+        "protects_without_data": {
+            structure_id: sorted(keys)
+            for structure_id, keys in entry_data.protects_without_data.items()
+        },
+        # Shows whether Nest serves a Protect it sends no bucket for over gRPC.
+        "grpc_resources": dict(entry_data.grpc_lock_client.resource_types),
         "app_launch": dataclasses.asdict(app_launch) if app_launch else None,
         "app_launch_error": error,
     }

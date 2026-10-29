@@ -187,7 +187,7 @@ def _load(
         areas={"where-1": "Kitchen"},
         client=client,
         session_manager=session_manager,
-        grpc_lock_client=MagicMock(),
+        grpc_lock_client=MagicMock(resource_types={}),
         stream_health=MagicMock(),
         lock_state_cache=locks or {},
     )
@@ -264,6 +264,25 @@ async def test_diagnostics_report_google_refresh_stats(hass):
 
     assert result["google_refresh"]["attempts"] == 3
     assert result["google_refresh"]["throttled_until"] is None
+
+
+async def test_diagnostics_report_protects_without_data(hass):
+    """Diagnostics list the Protects Nest sends no data for, next to the gRPC resources."""
+    entry = _entry(hass)
+    _load(hass, entry, nest_session=_nest_session())
+    entry.runtime_data.protects_without_data = {"s1": {"topaz.DDD", "topaz.CCC"}}
+    entry.runtime_data.grpc_lock_client.resource_types = {
+        "DEVICE_CCC": "nest.resource.NestProtect2BatteryPoweredResource"
+    }
+
+    with _patched_client():
+        result = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert result["protects_without_data"] == {"s1": ["topaz.CCC", "topaz.DDD"]}
+    assert result["grpc_resources"] == {
+        "DEVICE_CCC": "nest.resource.NestProtect2BatteryPoweredResource"
+    }
+    json.dumps(result)
 
 
 async def test_diagnostics_redact_secrets_and_identifiers(hass):

@@ -6,6 +6,7 @@ import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.nest_protect import (
@@ -13,6 +14,8 @@ from custom_components.nest_protect import (
     _async_subscribe_for_data,
     async_remove_config_entry_device,
 )
+from custom_components.nest_protect.pynest.const import NEST_REQUEST
+from custom_components.nest_protect.pynest.enums import BucketType
 from custom_components.nest_protect.pynest.lock_models import LockBoltState, LockState
 from custom_components.nest_protect.pynest.models import (
     Bucket,
@@ -323,3 +326,131 @@ async def test_remove_device_allowed_when_entry_not_loaded(hass):
     device = MagicMock(id="dev", identifiers={(DOMAIN, "SERIAL_A")})
 
     assert await async_remove_config_entry_device(hass, entry, device)
+
+
+def _bucket(key: str, value: object) -> dict:
+    return {
+        "object_key": key,
+        "object_revision": 1,
+        "object_timestamp": 1,
+        "value": value,
+    }
+
+
+def _first_data(buckets: list[dict]) -> FirstDataAPIResponse:
+    return FirstDataAPIResponse(
+        weather_for_structures={},
+        service_urls={"urls": {"transport_url": "https://t.example.com"}},
+        _2fa_enabled=False,
+        updated_buckets=[
+            _bucket("topaz.A", {"serial_number": "SERIAL_A", "structure_id": "S"}),
+            *buckets,
+        ],
+    )
+
+
+def _protects_issue(hass, entry):
+    return ir.async_get(hass).async_get_issue(
+        DOMAIN, f"protects_without_data_{entry.entry_id}"
+    )
+
+
+def test_setup_requests_the_safety_bucket():
+    """The safety bucket's self-test participants list Protects outside the swarm."""
+    assert BucketType.SAFETY in NEST_REQUEST["known_bucket_types"]
+
+
+async def test_setup_reports_protects_nest_sends_no_data_for(hass, caplog):
+    """Protects the home lists without a topaz bucket are reported, not dropped silently."""
+    entry = _make_entry(hass)
+    data = _first_data(
+        [
+            _bucket(
+                "structure.S",
+                {
+                    "name": "Home",
+                    "swarm": ["topaz.A", "topaz.SWARM", "kryptonite.B"],
+                },
+            ),
+            # Bare device ids, as Nest sends them.
+            _bucket("safety.S", {"audio_self_test_participants": ["A", "SELFTEST"]}),
+        ]
+    )
+
+    await _setup(hass, entry, data)
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.protects_without_data == {
+        "S": {"topaz.SWARM", "topaz.SELFTEST"}
+    }
+    issue = _protects_issue(hass, entry)
+    assert issue is not None
+    assert issue.translation_key == "protects_without_data"
+    assert issue.translation_placeholders == {
+        "count": "2",
+        "homes": "Home",
+        "devices": "SELFTEST, SWARM",
+    }
+    assert "sends no data for 2 Protect(s)" in caplog.text
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert _protects_issue(hass, entry) is not None
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    assert _protects_issue(hass, entry) is None
+
+
+async def test_setup_clears_report_when_every_protect_has_data(hass, caplog):
+    """A reload after Nest starts sending the missing Protect clears the issue."""
+    entry = _make_entry(hass)
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"protects_without_data_{entry.entry_id}",
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="protects_without_data",
+    )
+    data = _first_data(
+        [
+            _bucket("structure.S", {"swarm": ["topaz.A"]}),
+            _bucket("safety.S", {"audio_self_test_participants": ["A"]}),
+        ]
+    )
+
+    await _setup(hass, entry, data)
+
+    assert entry.runtime_data.protects_without_data == {}
+    assert _protects_issue(hass, entry) is None
+    assert "sends no data" not in caplog.text
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    "buckets",
+    [
+        pytest.param([_bucket("structure.S", {"swarm": "topaz.X"})], id="swarm-str"),
+        pytest.param(
+            [_bucket("structure.S", {"swarm": [None, 1, {"key": "topaz.X"}]})],
+            id="swarm-non-string",
+        ),
+        pytest.param(
+            [_bucket("safety.S", {"audio_self_test_participants": None})],
+            id="participants-null",
+        ),
+        pytest.param(
+            [_bucket("safety.S", {"audio_self_test_participants": [1, None]})],
+            id="participants-non-string",
+        ),
+        pytest.param([_bucket("safety.S", ["X"])], id="safety-not-a-mapping"),
+    ],
+)
+async def test_setup_ignores_malformed_protect_lists(hass, buckets):
+    """Odd swarm or participant values neither fail setup nor raise an issue."""
+    entry = _make_entry(hass)
+
+    await _setup(hass, entry, _first_data(buckets))
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.protects_without_data == {}
+    assert _protects_issue(hass, entry) is None
+    assert await hass.config_entries.async_unload(entry.entry_id)
