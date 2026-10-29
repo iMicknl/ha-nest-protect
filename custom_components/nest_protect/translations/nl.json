@@ -149,6 +149,9 @@
       "night_light_enable": {
         "name": "Lichtpad"
       },
+      "night_light_continuous": {
+        "name": "Lichtpad altijd aan"
+      },
       "ntp_green_led_enable": {
         "name": "Nachtwacht"
       },
