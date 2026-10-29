@@ -7,6 +7,9 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+from google.protobuf.internal import api_implementation
+
 REPO_ROOT = Path(__file__).parents[2]
 
 
@@ -43,6 +46,11 @@ def test_import_survives_conflicting_weave_protos_in_default_pool() -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.skipif(
+    api_implementation.Type() == "python",
+    reason="the pure-Python builder always records message classes in the "
+    "default symbol database; HA runs the upb backend",
+)
 def test_generated_protos_do_not_register_in_default_pool() -> None:
     """Our protos must not break other integrations that load after us."""
     result = _run_isolated(
