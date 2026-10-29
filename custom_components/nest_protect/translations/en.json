@@ -10,7 +10,8 @@
       "invalid_issue_token": "Invalid issue token URL. Must start with {accounts_url} and contain the issueToken action.",
       "invalid_cookies": "Invalid cookies format. Ensure you copied the complete cookie header from the oauth2/iframe request.",
       "invalid_code": "Invalid authentication code. Make sure you copied the complete code from the extension.",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "no_homes_selected": "Select at least one home."
     },
     "step": {
       "user": {
@@ -59,7 +60,37 @@
           "issue_token": "Full URL starting with {issue_token_prefix}...",
           "cookies": "Complete cookie string from the oauth2/iframe request headers"
         }
+      },
+      "homes": {
+        "title": "Choose your homes",
+        "description": "Your Nest account has more than one home. Choose the homes to add to Home Assistant. Devices in other homes are not added.\n\nWhen every home is selected, homes added to the account later are added too.",
+        "data": {
+          "homes": "Homes"
+        },
+        "data_description": {
+          "homes": "The Nest homes whose devices this entry adds"
+        }
       }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Choose your homes",
+        "description": "Choose the homes to add to Home Assistant. Devices in homes that are no longer selected are removed.\n\nWhen every home is selected, homes added to the account later are added too.",
+        "data": {
+          "homes": "Homes"
+        },
+        "data_description": {
+          "homes": "The Nest homes whose devices this entry adds"
+        }
+      }
+    },
+    "error": {
+      "no_homes_selected": "Select at least one home."
+    },
+    "abort": {
+      "not_loaded": "Nest Protect must be set up before you can choose homes. Fix the setup error, then try again."
     }
   },
   "entity": {

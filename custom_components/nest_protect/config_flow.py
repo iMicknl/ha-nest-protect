@@ -14,7 +14,9 @@ from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
     ConfigEntry,
+    OptionsFlowWithReload,
 )
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
@@ -24,6 +26,7 @@ from .const import (
     CONF_AUTH_CODE,
     CONF_COOKIES,
     CONF_GOOGLE_EMAIL,
+    CONF_HOMES,
     CONF_ISSUE_TOKEN,
     CONF_MASTER_TOKEN,
     CONF_OAUTH_TOKEN,
@@ -32,6 +35,7 @@ from .const import (
     DOMAIN,
     LOGGER,
 )
+from .homes import account_homes, homes_options, homes_schema
 from .pynest.client import NestClient
 from .pynest.const import EMBEDDED_SETUP_URL, NEST_ENVIRONMENTS
 from .pynest.enums import Environment
@@ -60,6 +64,19 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # Email, oauth_token, android_id and master_token of the last exchange.
     _exchanged_master_token: tuple[str, str, str, str] | None = None
     _master_token_client: NestClient | None = None
+    # Title and data of the entry to create once the homes are chosen.
+    _pending_entry: tuple[str, dict[str, Any]] | None = None
+
+    def __init__(self) -> None:
+        """Initialize the flow."""
+        # Homes on the account that was just authenticated, as ID to name.
+        self._homes: dict[str, str] = {}
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlowHandler:
+        """Return the options flow."""
+        return OptionsFlowHandler()
 
     @staticmethod
     def _validate_issue_token(issue_token: str) -> bool:
@@ -127,13 +144,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return [issue_token, cookies, email]
 
-    @staticmethod
     async def _async_fetch_account(
-        client: NestClient, access_token: str
+        self, client: NestClient, access_token: str
     ) -> tuple[str, str]:
         """Sign in to Nest and return the Nest user ID (user.xxxx) and email."""
         nest = await client.authenticate(access_token)
         data = await client.get_first_data(nest.access_token, nest.userid)
+        self._homes = account_homes(data.updated_buckets)
 
         email = ""
         for bucket in data.updated_buckets:
@@ -157,7 +174,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self._entry_being_updated()
         if entry is None:
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(title=f"Nest Protect ({email})", data=data)
+            title = f"Nest Protect ({email})"
+            if len(self._homes) > 1:
+                self._pending_entry = (title, data)
+                return self._async_show_homes_form()
+            return self.async_create_entry(title=title, data=data)
 
         # Setup prefers some credentials over others, so any left over from a
         # previous method would shadow the ones just entered.
@@ -441,6 +462,34 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             last_step=True,
         )
 
+    def _async_show_homes_form(
+        self, errors: dict[str, str] | None = None
+    ) -> FlowResult:
+        """Ask which of the account's homes to add."""
+        return self.async_show_form(
+            step_id="homes",
+            data_schema=self.add_suggested_values_to_schema(
+                homes_schema(self._homes), {CONF_HOMES: list(self._homes)}
+            ),
+            errors=errors,
+            last_step=True,
+        )
+
+    async def async_step_homes(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle choosing the homes of a new entry."""
+        if user_input is None or self._pending_entry is None:
+            return self._async_show_homes_form()
+
+        if not (selected := user_input[CONF_HOMES]):
+            return self._async_show_homes_form({CONF_HOMES: "no_homes_selected"})
+
+        title, data = self._pending_entry
+        return self.async_create_entry(
+            title=title, data=data, options=homes_options(selected, self._homes)
+        )
+
     async def async_step_reauth(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -458,3 +507,33 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ]
 
         return await self.async_step_auth_method()
+
+
+class OptionsFlowHandler(OptionsFlowWithReload):
+    """Options flow for Nest Protect."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Choose the homes the entry covers."""
+        entry_data = getattr(self.config_entry, "runtime_data", None)
+        if entry_data is None:
+            return self.async_abort(reason="not_loaded")
+
+        homes: dict[str, str] = entry_data.homes
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            if selected := user_input[CONF_HOMES]:
+                return self.async_create_entry(data=homes_options(selected, homes))
+            errors[CONF_HOMES] = "no_homes_selected"
+
+        selected = self.config_entry.options.get(CONF_HOMES, list(homes))
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                homes_schema(homes),
+                {CONF_HOMES: [home for home in selected if home in homes]},
+            ),
+            errors=errors,
+        )

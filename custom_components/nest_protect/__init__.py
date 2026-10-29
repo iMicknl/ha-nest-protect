@@ -33,6 +33,7 @@ from .const import (
     CONF_ANDROID_ID,
     CONF_COOKIES,
     CONF_GOOGLE_EMAIL,
+    CONF_HOMES,
     CONF_ISSUE_TOKEN,
     CONF_MASTER_TOKEN,
     CONF_REFRESH_TOKEN,
@@ -49,6 +50,12 @@ from .const import (
     SUBSCRIBE_FAST_RESPONSE_WARNING,
     SUBSCRIBE_HEALTHY_SECONDS,
     SUBSCRIBE_MIN_INTERVAL_SECONDS,
+)
+from .homes import (
+    DEVICE_BUCKET_TYPES,
+    account_homes,
+    excluded_bucket_keys,
+    is_excluded_resource,
 )
 from .lock import discovery_signal, lock_signal
 from .pynest.client import NestClient
@@ -73,8 +80,6 @@ from .pynest.models import (
 from .session import NestSessionManager
 from .stream_health import StreamHealth
 
-DEVICE_BUCKET_TYPES = {BucketType.TOPAZ, BucketType.KRYPTONITE}
-
 
 @dataclass
 class HomeAssistantNestProtectData:
@@ -97,6 +102,10 @@ class HomeAssistantNestProtectData:
     structure_names: dict[str, str] = field(default_factory=dict)
     # Device keys from the account's bucket list at setup; None if not returned.
     listed_device_keys: set[str] | None = None
+    # Every home on the account, selected or not, as structure ID to name.
+    homes: dict[str, str] = field(default_factory=dict)
+    # Bucket keys, including swarm device keys, of homes that aren't selected.
+    excluded_keys: set[str] = field(default_factory=set)
 
 
 type NestProtectConfigEntry = ConfigEntry[HomeAssistantNestProtectData]
@@ -169,6 +178,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
     if data is None:
         raise ConfigEntryAuthFailed("No credentials available")
 
+    homes = account_homes(data.updated_buckets)
+    excluded_keys: set[str] = set()
+    if (selected_homes := entry.options.get(CONF_HOMES)) is not None:
+        excluded_keys = excluded_bucket_keys(data.updated_buckets, selected_homes)
+        # Also keeps the subscription from waking up for the other homes.
+        data.updated_buckets = [
+            b for b in data.updated_buckets if b.object_key not in excluded_keys
+        ]
+
     device_buckets: list[Bucket] = []
     widget_tracks: dict[str, Bucket] = {}
     safety_summary_buckets: list[Bucket] = []
@@ -223,6 +241,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NestProtectConfigEntry):
         structure_names=structure_names,
         stream_health=StreamHealth(hass, entry.entry_id),
         listed_device_keys=listed_device_keys,
+        homes=homes,
+        excluded_keys=excluded_keys,
     )
     entry.runtime_data = entry_data
     # The first data fetch above counts as a response and starts the deadline.
@@ -289,17 +309,24 @@ def _is_reported_device(
 def _async_remove_stale_devices(
     hass: HomeAssistant, entry: ConfigEntry, entry_data: HomeAssistantNestProtectData
 ) -> None:
-    """Remove Protects and temperature sensors that left the account."""
+    """Remove Protects and temperature sensors that left the account or its homes."""
     device_registry = dr.async_get(hass)
     for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
         if _is_reported_device(hass, entry_data, device):
             continue
 
         # Only Protect and temperature sensor devices are known at this point;
-        # locks are discovered later over gRPC, so anything else is kept.
+        # locks are discovered later over gRPC, so anything else is kept unless
+        # it is a home that is no longer selected.
         bucket_keys = _device_bucket_keys(hass, device.id)
-        if not bucket_keys or any(
-            key.partition(".")[0] not in DEVICE_BUCKET_TYPES for key in bucket_keys
+        if not any(
+            domain == DOMAIN and identifier in entry_data.excluded_keys
+            for domain, identifier in device.identifiers
+        ) and (
+            not bucket_keys
+            or any(
+                key.partition(".")[0] not in DEVICE_BUCKET_TYPES for key in bucket_keys
+            )
         ):
             continue
 
@@ -343,6 +370,9 @@ async def _async_observe_locks_loop(
                     sm.record_auth_success()
                 new_locks: dict[str, LockState] = {}
                 for resource_id, lock_state in batch.items():
+                    if is_excluded_resource(resource_id, entry_data.excluded_keys):
+                        _async_remove_lock_device(hass, entry, lock_state)
+                        continue
                     previous = cache.get(resource_id)
                     cache[resource_id] = lock_state
                     if previous is None:
@@ -387,6 +417,20 @@ async def _async_observe_locks_loop(
             # there is nothing to watch on this account.
             LOGGER.debug("Lock observer: no locks on this account, stopping")
             return
+
+
+@callback
+def _async_remove_lock_device(
+    hass: HomeAssistant, entry: ConfigEntry, lock_state: LockState
+) -> None:
+    """Remove the device of a lock in a home that is no longer selected."""
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, lock_state.serial_number), entry.entry_id
+    )
+    if device is not None:
+        LOGGER.debug("Removing lock %s of a home that is not selected", device.id)
+        device_registry.async_remove_device(device.id)
 
 
 async def async_unload_entry(
@@ -596,6 +640,8 @@ async def _async_subscribe_for_data(
         # TODO write this data away in a better way, best would be to directly model API responses in client
         for bucket in result["objects"]:
             key = bucket["object_key"]
+            if key in entry_data.excluded_keys:
+                continue
 
             # Bucket list, used to detect devices added to or removed from the account
             if key.startswith(f"{BucketType.BUCKETS}."):
