@@ -272,6 +272,29 @@ async def test_ensure_session_expired_refreshes():
 
 
 @pytest.mark.asyncio
+async def test_refresh_drops_google_token_nest_rejects():
+    """A Google token Nest refuses is fetched anew on the next refresh."""
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=True)
+    client.auth = MagicMock(access_token="stale-google-token")
+    client.auth.is_expired = MagicMock(return_value=False)
+    client.authenticate = AsyncMock(
+        side_effect=PynestException("400 error while authenticating")
+    )
+
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+
+    with pytest.raises(PynestException):
+        await manager.async_refresh_session()
+
+    assert client.auth is None
+    store.async_save.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_ensure_session_none_refreshes():
     """ensure_session refreshes when no session exists."""
     new_session = _make_nest_response(expired=False)
