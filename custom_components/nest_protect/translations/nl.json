@@ -1,8 +1,7 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Account is al geconfigureerd",
-      "reauth_successful": "Herauthenticatie geslaagd!"
+      "already_configured": "Account is al geconfigureerd"
     },
     "error": {
       "cannot_connect": "Kan niet verbinden",
@@ -149,6 +148,9 @@
     "switch": {
       "night_light_enable": {
         "name": "Lichtpad"
+      },
+      "night_light_continuous": {
+        "name": "Lichtpad altijd aan"
       },
       "ntp_green_led_enable": {
         "name": "Nachtwacht"

@@ -2,7 +2,7 @@
   "config": {
     "abort": {
       "already_configured": "Account is already configured",
-      "reauth_successful": "Re-authentication successful!"
+      "wrong_account": "The credentials belong to a different Nest account than the one configured. Sign in with the original account, or add the other account as a new entry."
     },
     "error": {
       "cannot_connect": "Failed to connect",
@@ -10,7 +10,8 @@
       "invalid_issue_token": "Invalid issue token URL. Must start with {accounts_url} and contain the issueToken action.",
       "invalid_cookies": "Invalid cookies format. Ensure you copied the complete cookie header from the oauth2/iframe request.",
       "invalid_code": "Invalid authentication code. Make sure you copied the complete code from the extension.",
-      "unknown": "Unexpected error"
+      "unknown": "Unexpected error",
+      "no_homes_selected": "Select at least one home."
     },
     "step": {
       "user": {
@@ -24,6 +25,18 @@
         "description": "Choose how to connect your Nest account. The Chrome Extension method is recommended for most users.",
         "data": {
           "method": "Method"
+        }
+      },
+      "master_token": {
+        "title": "Connect with a Master Token (experimental)",
+        "description": "**Experimental:** this uses an unofficial Google sign-in flow, which Google may change or block at any time. It creates a long-lived login, the same kind the mobile apps use. It stops working if you change your Google password or Google signs it out for security reasons.\n\n1. Open an **Incognito/Private** window and go to [Google EmbeddedSetup]({embedded_setup_url})\n2. Sign in with the Google account that owns your Nest devices (2-step verification is fine)\n3. If asked **\"Who will be using this device?\"**, choose **I will be using this device**\n4. Click **I agree** if prompted. The page may then show a spinner forever — that is expected, ignore it.\n5. Open **Developer Tools** (F12) → **Application** tab → **Cookies** → `{accounts_url}`\n6. Find the cookie named **`oauth_token`** and copy its **Value** (it starts with `oauth2_4/`)\n7. Enter your Google email and paste that value below\n\nThe `oauth_token` expires within minutes and works only once. If setup fails, repeat the steps to get a new one.\n\n⚠️ The master token gives lasting access to your whole Google account, not just Nest, and is stored in your Home Assistant configuration and backups. Do not share it. To revoke it, change your Google password.",
+        "data": {
+          "google_email": "Google Email",
+          "oauth_token": "oauth_token value"
+        },
+        "data_description": {
+          "google_email": "The Google account that owns your Nest devices",
+          "oauth_token": "The oauth_token cookie value from accounts.google.com (starts with oauth2_4/)"
         }
       },
       "extension": {
@@ -47,7 +60,37 @@
           "issue_token": "Full URL starting with {issue_token_prefix}...",
           "cookies": "Complete cookie string from the oauth2/iframe request headers"
         }
+      },
+      "homes": {
+        "title": "Choose your homes",
+        "description": "Your Nest account has more than one home. Choose the homes to add to Home Assistant. Devices in other homes are not added.\n\nWhen every home is selected, homes added to the account later are added too.",
+        "data": {
+          "homes": "Homes"
+        },
+        "data_description": {
+          "homes": "The Nest homes whose devices this entry adds"
+        }
       }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Choose your homes",
+        "description": "Choose the homes to add to Home Assistant. Devices in homes that are no longer selected are removed.\n\nWhen every home is selected, homes added to the account later are added too.",
+        "data": {
+          "homes": "Homes"
+        },
+        "data_description": {
+          "homes": "The Nest homes whose devices this entry adds"
+        }
+      }
+    },
+    "error": {
+      "no_homes_selected": "Select at least one home."
+    },
+    "abort": {
+      "not_loaded": "Nest Protect must be set up before you can choose homes. Fix the setup error, then try again."
     }
   },
   "entity": {
@@ -60,6 +103,9 @@
       },
       "heat_status": {
         "name": "Heat status"
+      },
+      "hushed_state": {
+        "name": "Alarm hushed"
       },
       "component_speaker_test_passed": {
         "name": "Speaker test"
@@ -91,6 +137,12 @@
       "component_hum_test_passed": {
         "name": "Humidity test"
       },
+      "component_als_test_passed": {
+        "name": "Ambient light sensor test"
+      },
+      "component_temp_test_passed": {
+        "name": "Temperature sensor test"
+      },
       "removed_from_base": {
         "name": "Removed from base"
       },
@@ -104,6 +156,9 @@
     "sensor": {
       "battery_level": {
         "name": "Battery level"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
       },
       "replace_by_date_utc_secs": {
         "name": "Replace by"
@@ -134,6 +189,15 @@
           "warning": "Warning",
           "emergency": "Emergency"
         }
+      },
+      "co_previous_peak": {
+        "name": "CO previous peak"
+      },
+      "total_critical_failures": {
+        "name": "Safety critical failures"
+      },
+      "total_warnings": {
+        "name": "Safety warnings"
       }
     },
     "select": {
@@ -149,6 +213,9 @@
     "switch": {
       "night_light_enable": {
         "name": "Pathlight"
+      },
+      "night_light_continuous": {
+        "name": "Pathlight always on"
       },
       "ntp_green_led_enable": {
         "name": "Nightly promise"

@@ -40,17 +40,27 @@ Copy the `custom_components/nest_protect` to your custom_components folder and r
 
 The values of "issue_token" and "cookies" are specific to your Google Account. You only need to retrieve them once, as long as you stay logged into your Google Account.
 
-### Recommended: Chrome Extension
+### Recommended: Nest Auth Helper extension
 
-The easiest way to get your credentials is with the **Nest Auth Helper** Chrome extension:
+The easiest way to get your credentials is with the **Nest Auth Helper** browser extension, which works in Chrome, Edge and Firefox (121+):
 
-1. Download `nest-auth-helper.zip` from the [v0.4.4 release](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip) and unzip it.
-1. In Chrome, go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
-1. Sign in to [home.nest.com](https://home.nest.com) in a regular browser window.
+1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/latest/download/nest-auth-helper.zip) from the latest release and unzip it.
+1. Load the extension:
+   - **Chrome/Edge**: go to `chrome://extensions`, enable **Developer mode**, and click **Load unpacked** to load the unzipped folder.
+   - **Firefox**: go to `about:debugging` → **This Firefox** → **Load Temporary Add-on**, and select `manifest.json` in the unzipped folder.
+1. Sign in to [home.nest.com](https://home.nest.com).
 1. Click the extension icon → **Extract Credentials** → **Copy Code**.
 1. Paste the code into the Home Assistant configuration flow.
 
 Keep the extension installed — you may need it again if Home Assistant requests re-authentication.
+
+> [!TIP]
+> **Getting credentials that last.** Google can end a captured session within hours if the browser you captured it from keeps using the same Google sign-in. Users report the longest-lasting credentials when they:
+>
+> - capture in a **separate browser profile** that is only used for this (Firefox works well; Chrome/Edge captures have more often expired within hours),
+> - close that profile right after copying the code, **without signing out**, and don't use Google in it afterwards.
+>
+> If your cookie string contains `__Secure-1PSIDTS` or `__Secure-3PSIDTS`, the session may be bound to that browser and expire sooner.
 
 ### Manual: Developer Tools
 
@@ -74,6 +84,24 @@ If you prefer not to use the extension, you can extract the credentials manually
 1. Do not log out of home.nest.com, as this will invalidate your credentials. Just close the browser tab.
 
 (adapted from [homebridge-nest documentation](https://github.com/chrisjshull/homebridge-nest))
+
+### Experimental: Master token
+
+> [!WARNING]
+> **Experimental.** This uses an unofficial Google sign-in flow, which Google may change or block at any time. The master token gives lasting access to your whole Google account, not just Nest, and is stored in your Home Assistant configuration and backups. Treat it like your password and keep your backups safe.
+
+Instead of browser cookies, you can sign in with a master token, the same kind of long-lived login the mobile apps use:
+
+1. Open a private/incognito window on a desktop browser and go to [accounts.google.com/EmbeddedSetup](https://accounts.google.com/EmbeddedSetup).
+1. Sign in with the Google account that owns your Nest devices. 2-step verification and passkeys are fine.
+1. If asked **"Who will be using this device?"**, choose **I will be using this device**, then click **I agree**. The page may then show a spinner forever; that is expected.
+1. Open Developer Tools (F12) → **Application** (Chrome/Edge) or **Storage** (Firefox) → **Cookies** → `https://accounts.google.com`.
+1. Copy the value of the `oauth_token` cookie (it starts with `oauth2_4/`).
+1. In Home Assistant, choose **Master token (experimental)**, then enter your Google email and paste the value.
+
+The `oauth_token` expires within minutes and works only once, so paste it right away. If setup fails, repeat the steps to get a new one.
+
+Home Assistant exchanges it for a master token and keeps you signed in with it. It stops working if you change your Google password or Google signs it out for security reasons; Home Assistant then asks you to re-authenticate. To revoke it yourself, change your Google password.
 
 ## Advanced
 

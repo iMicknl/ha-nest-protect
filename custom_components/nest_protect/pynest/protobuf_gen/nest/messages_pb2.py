@@ -5,7 +5,7 @@
 # Protobuf Python Version: 6.31.1
 """Generated protocol buffer code."""
 from google.protobuf import descriptor as _descriptor
-from google.protobuf import descriptor_pool as _descriptor_pool
+from ... import proto_pool as _proto_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13nest/messages.proto\x12\rnest.messages\"A\n\rSchemaVersion\x12\x16\n\x0e\x63urrentVersion\x18\x01 \x01(\r\x12\x18\n\x10minCompatVersion\x18\x02 \x01(\rb\x06proto3')
+DESCRIPTOR = _proto_pool.add_serialized_file(b'\n\x13nest/messages.proto\x12\rnest.messages\"A\n\rSchemaVersion\x12\x16\n\x0e\x63urrentVersion\x18\x01 \x01(\r\x12\x18\n\x10minCompatVersion\x18\x02 \x01(\rb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)

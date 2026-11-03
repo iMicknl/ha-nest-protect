@@ -4,7 +4,7 @@ A Chrome extension that extracts the authentication credentials needed to config
 
 ## Installation
 
-1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip)
+1. Download [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.5.0b1/nest-auth-helper.zip)
 2. Unzip the file
 3. Open Chrome and navigate to `chrome://extensions`
 4. Enable **Developer mode** (toggle in the top-right corner)
@@ -15,7 +15,7 @@ A Chrome extension that extracts the authentication credentials needed to config
 
 Firefox 121 or later is required.
 
-1. Download and unzip [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.4.4/nest-auth-helper.zip)
+1. Download and unzip [`nest-auth-helper.zip`](https://github.com/iMicknl/ha-nest-protect/releases/download/v0.5.0b1/nest-auth-helper.zip)
 2. Open Firefox and navigate to `about:debugging`
 3. Click **This Firefox**, then **Load Temporary Add-on**
 4. Select `manifest.json` in the unzipped folder
@@ -26,7 +26,7 @@ Firefox may not grant host access automatically. If extraction does not work, op
 
 ## Usage
 
-1. Sign in to [home.nest.com](https://home.nest.com) in Chrome
+1. Sign in to [home.nest.com](https://home.nest.com) (see the tips in the main README for long-lasting credentials)
 2. Click the extension icon in your toolbar
 3. Click **Extract Credentials**
 4. Click **Copy Code**

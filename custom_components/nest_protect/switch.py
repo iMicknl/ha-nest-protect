@@ -6,11 +6,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import HomeAssistantNestProtectData
-from .const import DOMAIN, LOGGER
+from . import NestProtectConfigEntry
+from .const import LOGGER
 from .entity import NestUpdatableEntity
+
+PARALLEL_UPDATES = 1
 
 
 @dataclass
@@ -27,6 +31,9 @@ class NestProtectSwitchDescription(
 ):
     """Class to describe an Nest Protect sensor."""
 
+    # Keys that must also be switched on for this setting to take effect.
+    turn_on_with: tuple[str, ...] = ()
+
 
 BRIGHTNESS_TO_PRESET: dict[str, str] = {1: "low", 2: "medium", 3: "high"}
 
@@ -39,6 +46,15 @@ SWITCH_DESCRIPTIONS: list[SwitchEntityDescription] = [
         translation_key="night_light_enable",
         entity_category=EntityCategory.CONFIG,
         icon="mdi:weather-night",
+    ),
+    NestProtectSwitchDescription(
+        key="night_light_continuous",
+        translation_key="night_light_continuous",
+        entity_category=EntityCategory.CONFIG,
+        icon="mdi:lightbulb-night",
+        # Always-on is a mode of the pathlight; it does nothing while the
+        # pathlight itself is disabled.
+        turn_on_with=("night_light_enable",),
     ),
     NestProtectSwitchDescription(
         key="ntp_green_led_enable",
@@ -61,10 +77,14 @@ SWITCH_DESCRIPTIONS: list[SwitchEntityDescription] = [
 ]
 
 
-async def async_setup_entry(hass, entry, async_add_devices):
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: NestProtectConfigEntry,
+    async_add_devices: AddEntitiesCallback,
+) -> None:
     """Set up the Nest Protect sensors from a config entry."""
 
-    data: HomeAssistantNestProtectData = hass.data[DOMAIN][entry.entry_id]
+    data = entry.runtime_data
     entities: list[NestProtectSwitch] = []
 
     supported_keys: dict[str, NestProtectSwitchDescription] = {
@@ -105,6 +125,7 @@ class NestProtectSwitch(NestUpdatableEntity, SwitchEntity):
                 "op": "MERGE",
                 "value": {
                     self.entity_description.key: True,
+                    **dict.fromkeys(self.entity_description.turn_on_with, True),
                 },
             }
         ]

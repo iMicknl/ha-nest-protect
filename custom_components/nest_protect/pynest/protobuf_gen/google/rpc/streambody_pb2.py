@@ -5,7 +5,7 @@
 # Protobuf Python Version: 6.31.1
 """Generated protocol buffer code."""
 from google.protobuf import descriptor as _descriptor
-from google.protobuf import descriptor_pool as _descriptor_pool
+from .... import proto_pool as _proto_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.rpc import status_pb2 as google_dot_rpc_dot_status__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bgoogle/rpc/streambody.proto\x12\ngoogle.rpc\x1a\x17google/rpc/status.proto\"A\n\nStreamBody\x12\x0f\n\x07message\x18\x01 \x03(\x0c\x12\"\n\x06status\x18\x02 \x01(\x0b\x32\x12.google.rpc.Statusb\x06proto3')
+DESCRIPTOR = _proto_pool.add_serialized_file(b'\n\x1bgoogle/rpc/streambody.proto\x12\ngoogle.rpc\x1a\x17google/rpc/status.proto\"A\n\nStreamBody\x12\x0f\n\x07message\x18\x01 \x03(\x0c\x12\"\n\x06status\x18\x02 \x01(\x0b\x32\x12.google.rpc.Statusb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)

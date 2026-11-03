@@ -26,10 +26,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # google/* protos that are source-only: vendored so protoc can resolve imports,
 # but not generated, because an installed package already provides the runtime
-# module. Generating google/rpc/status.proto here would register a second
-# `google/rpc/status.proto` in the default descriptor pool, which protobuf
-# rejects with `duplicate file name` unless the contents match byte for byte.
-# Not worth the risk for one dependency HA installs carry anyway.
+# module. googleapis-common-protos ships google/rpc/status.proto, and
+# proto_pool copies it from the default pool into our private pool on import.
 SOURCE_ONLY_PROTOS = ("google/rpc/status.proto",)
 
 
@@ -94,6 +92,7 @@ def generate_protos() -> None:
 
     # Automatically transform absolute imports to relative imports
     fix_imports(output_dir)
+    use_private_pool(output_dir)
 
 
 def _get_from_replacement(match: re.Match, dots: str, output_dir: Path) -> str:
@@ -179,6 +178,33 @@ def fix_imports(output_dir: Path) -> None:
                     new_content = new_content.replace("\r\n", "\n")
                     with file_path.open("w", encoding="utf-8", newline="\n") as f:
                         f.write(new_content)
+
+
+def use_private_pool(output_dir: Path) -> None:
+    """Register the generated files in pynest's private pool, not the default one.
+
+    See pynest/proto_pool.py for why the default pool is off limits.
+    """
+    for file_path in output_dir.rglob("*_pb2.py"):
+        depth = len(file_path.parent.relative_to(output_dir).parts)
+        # One level above protobuf_gen, where proto_pool.py lives
+        dots = "." * (depth + 2)
+
+        content = file_path.read_text(encoding="utf-8")
+        new_content = content.replace(
+            "from google.protobuf import descriptor_pool as _descriptor_pool\n",
+            f"from {dots} import proto_pool as _proto_pool\n",
+        ).replace(
+            "_descriptor_pool.Default().AddSerializedFile(",
+            "_proto_pool.add_serialized_file(",
+        )
+        if "_descriptor_pool" in new_content:
+            msg = f"{file_path}: protoc output changed, update use_private_pool()"
+            raise RuntimeError(msg)
+
+        if new_content != content:
+            with file_path.open("w", encoding="utf-8", newline="\n") as f:
+                f.write(new_content)
 
 
 if __name__ == "__main__":

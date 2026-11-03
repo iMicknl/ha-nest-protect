@@ -2,19 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import secrets
 import time
+from collections.abc import Callable, Collection
+from http.cookiejar import http2time
+from http.cookies import Morsel
 from random import randint
 from types import TracebackType
 from typing import Any, cast
 
-from aiohttp import ClientSession, ClientTimeout, ContentTypeError, FormData
+from aiohttp import (
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    ContentTypeError,
+    FormData,
+)
 
 from .const import (
     APP_LAUNCH_URL_FORMAT,
     DEFAULT_NEST_ENVIRONMENT,
+    GOOGLE_HOME_APP,
+    GOOGLE_OAUTH_CLIENT_SIG,
+    MASTER_TOKEN_CREDENTIAL_ERRORS,
+    NEST_ACCOUNT_OAUTH_SERVICE,
     NEST_AUTH_URL_JWT,
     NEST_REQUEST,
+    REQUEST_TIMEOUT_SECONDS,
+    SUBSCRIBE_CONNECT_TIMEOUT,
+    SUBSCRIBE_TIMEOUT_SECONDS,
     TOKEN_URL,
     USER_AGENT,
 )
@@ -23,6 +41,7 @@ from .exceptions import (
     BadGatewayException,
     EmptyResponseException,
     GatewayTimeoutException,
+    GoogleThrottledException,
     NestServiceException,
     NotAuthenticatedException,
     PynestException,
@@ -35,20 +54,80 @@ from .models import (
     NestAuthResponse,
     NestEnvironment,
     NestResponse,
+    NestUrls,
 )
 
 _LOGGER = logging.getLogger(__package__)
 
+TRANSIENT_CLIENT_STATUSES = {408, 429}
 
-def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
+REQUEST_TIMEOUT = ClientTimeout(total=REQUEST_TIMEOUT_SECONDS)
+
+
+def raise_for_transient_status(response: ClientResponse, action: str) -> None:
+    """Raise a NestServiceException for statuses that are worth retrying.
+
+    Checked before the body is parsed: outages often return HTML or an error
+    body that would otherwise be mistaken for an auth failure.
+    """
+    status = response.status
+
+    if status == 502:
+        raise BadGatewayException(f"{status} error while {action}")
+    if status == 504:
+        raise GatewayTimeoutException(f"{status} error while {action}")
+    if status >= 500 or status in TRANSIENT_CLIENT_STATUSES:
+        raise NestServiceException(f"{status} error while {action}")
+
+
+def raise_for_google_throttling(response: ClientResponse, action: str) -> None:
+    """Raise GoogleThrottledException, carrying Retry-After, on a 429."""
+    if response.status == 429:
+        raise GoogleThrottledException(
+            f"429 error while {action}",
+            retry_after=parse_retry_after(response.headers.get("Retry-After")),
+        )
+
+
+def is_cookie_expired(morsel: Morsel[str]) -> bool:
+    """Return True if a Set-Cookie morsel tells the client to delete the cookie."""
+    # Max-Age takes precedence over Expires (RFC 6265 section 5.3).
+    if max_age := morsel["max-age"]:
+        try:
+            return int(max_age) <= 0
+        except ValueError:
+            pass
+
+    if expires := morsel["expires"]:
+        expires_at = http2time(expires)
+        return expires_at is not None and expires_at <= time.time()
+
+    return False
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header (seconds or HTTP date) into seconds."""
+    if not value:
+        return None
+    if value.strip().isdigit():
+        return float(value.strip())
+    retry_at = http2time(value)
+    if retry_at is None:
+        return None
+    return max(retry_at - time.time(), 0.0)
+
+
+def merge_cookies(
+    original: str, new_cookies: dict[str, str], expired: Collection[str] = ()
+) -> str:
     """Merge new cookie values into an existing cookie header string.
 
-    New values override existing cookies with the same name.
-    Preserves cookies not present in new_cookies.
+    New values override existing cookies with the same name, and cookies named
+    in expired are removed. Preserves all other cookies.
     We don't use aiohttp's cookie jar because the user-provided cookie string
     spans multiple Google domains/paths that the jar's scoping would break.
     """
-    if not new_cookies:
+    if not new_cookies and not expired:
         return original
 
     parsed: dict[str, str] = {}
@@ -59,6 +138,8 @@ def merge_cookies(original: str, new_cookies: dict[str, str]) -> str:
             parsed[name.strip()] = value.strip()
 
     parsed.update(new_cookies)
+    for name in expired:
+        parsed.pop(name, None)
 
     return "; ".join(f"{k}={v}" for k, v in parsed.items())
 
@@ -72,6 +153,11 @@ class NestClient:
     transport_url: str | None = None
     environment: NestEnvironment
 
+    # Master token Auth (durable, app-style)
+    master_token: str | None = None
+    google_email: str | None = None
+    android_id: str | None = None
+    _gpsoauth_call: asyncio.Future[dict] | None = None
     # Legacy Auth
     refresh_token: str | None = None
     # Cookie Auth
@@ -97,6 +183,16 @@ class NestClient:
         # self.cookies = cookies
         self.environment = environment
 
+    def _drop_expired_cookies(self, cookies: str, expired: Collection[str]) -> None:
+        """Remove the cookies Google expired, once its response proved usable."""
+        merged = merge_cookies(self.refreshed_cookies or cookies, {}, expired)
+        # Keep the stored cookies rather than replacing them with an empty
+        # header that later refreshes would silently skip.
+        if not merged:
+            raise BadCredentialsException("Google expired all session cookies")
+        self.refreshed_cookies = merged
+        self.cookies = merged
+
     async def __aenter__(self) -> NestClient:
         """__aenter__."""
         return self
@@ -110,15 +206,20 @@ class NestClient:
         """__aexit__."""
         await self.session.close()
 
-    async def get_access_token(self) -> GoogleAuthResponse:
-        """Get a Nest access token."""
+    async def get_access_token(self) -> GoogleAuthResponse | None:
+        """Get a Google access token, or None without credentials."""
 
+        if self.master_token:
+            return await self.get_access_token_from_master_token()
+        # Entries re-authenticated with cookies may still hold a revoked legacy
+        # refresh token.
+        if self.issue_token and self.cookies:
+            return await self.get_access_token_from_cookies(
+                self.issue_token, self.cookies
+            )
         if self.refresh_token:
-            await self.get_access_token_from_refresh_token(self.refresh_token)
-        elif self.issue_token and self.cookies:
-            await self.get_access_token_from_cookies(self.issue_token, self.cookies)
-
-        return self.auth
+            return await self.get_access_token_from_refresh_token(self.refresh_token)
+        return None
 
     async def get_access_token_from_refresh_token(
         self, refresh_token: str | None = None
@@ -133,6 +234,7 @@ class NestClient:
 
         async with self.session.post(
             TOKEN_URL,
+            timeout=REQUEST_TIMEOUT,
             data=FormData(
                 {
                     "refresh_token": self.refresh_token,
@@ -145,6 +247,7 @@ class NestClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         ) as response:
+            raise_for_transient_status(response, "refreshing Google access token")
             result = await response.json()
 
             if "error" in result:
@@ -156,6 +259,151 @@ class NestClient:
             self.auth = GoogleAuthResponse(**result)
 
             return self.auth
+
+    @staticmethod
+    def generate_android_id() -> str:
+        """Generate a random 16-hex-character Android ID for the master-token flow."""
+        return secrets.token_hex(8)
+
+    @staticmethod
+    def _exchange_token_sync(oauth_token: str, email: str, android_id: str) -> dict:
+        """Blocking gpsoauth call: one-time oauth_token -> durable master token."""
+        import gpsoauth  # keeps the blocking import off the loop
+        import requests
+
+        try:
+            return gpsoauth.exchange_token(email, oauth_token, android_id)
+        except requests.RequestException as exception:
+            raise NestServiceException(
+                f"Could not reach Google to exchange the oauth_token: {exception}"
+            ) from exception
+
+    @staticmethod
+    def _perform_oauth_sync(email: str, master_token: str, android_id: str) -> dict:
+        """Blocking gpsoauth call: master token -> short-lived nest-account token."""
+        import gpsoauth  # keeps the blocking import off the loop
+        import requests
+
+        try:
+            return gpsoauth.perform_oauth(
+                email,
+                master_token,
+                android_id,
+                app=GOOGLE_HOME_APP,
+                service=NEST_ACCOUNT_OAUTH_SERVICE,
+                client_sig=GOOGLE_OAUTH_CLIENT_SIG,
+            )
+        except requests.RequestException as exception:
+            raise NestServiceException(
+                f"Could not reach Google to mint a Nest access token: {exception}"
+            ) from exception
+
+    async def _run_gpsoauth(self, func: Callable[..., dict], *args: str) -> dict:
+        """Run a blocking gpsoauth call in the executor.
+
+        gpsoauth sets no request timeout, and a hung call would hold the session
+        refresh lock forever. The worker thread can't be cancelled, only abandoned,
+        and it keeps an executor thread shared with all of Home Assistant. So
+        no new call starts until an abandoned one finishes.
+        """
+        if self._gpsoauth_call and not self._gpsoauth_call.done():
+            raise NestServiceException(
+                "Google still hasn't answered the previous sign-in request"
+            )
+
+        self._gpsoauth_call = asyncio.get_running_loop().run_in_executor(
+            None, func, *args
+        )
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                # Shielded so the timeout leaves the call running, which marks the
+                # thread as still busy.
+                return await asyncio.shield(self._gpsoauth_call)
+        except TimeoutError as exception:
+            # A plain TimeoutError reads as an ended long-poll to the subscriber,
+            # which would retry without backing off.
+            raise NestServiceException(
+                f"Google didn't answer within {REQUEST_TIMEOUT_SECONDS}s"
+            ) from exception
+
+    async def exchange_master_token(
+        self, oauth_token: str, email: str, android_id: str
+    ) -> str:
+        """Exchange a one-time ``oauth_token`` for a durable Google master token.
+
+        The ``oauth_token`` (starts with ``oauth2_4/``) is captured once from
+        ``accounts.google.com/EmbeddedSetup``. The resulting master token
+        (``aas_et/...``) has no fixed lifetime, mirroring how the mobile apps stay
+        signed in, but Google can still revoke it.
+        """
+        result = await self._run_gpsoauth(
+            self._exchange_token_sync, oauth_token, email, android_id
+        )
+
+        master_token = result.get("Token")
+        if not master_token:
+            error = result.get("Error")
+            if error in MASTER_TOKEN_CREDENTIAL_ERRORS:
+                raise BadCredentialsException(f"Could not obtain master token: {error}")
+            raise NestServiceException(
+                f"Google could not exchange the oauth_token: {error or list(result)}"
+            )
+
+        self.master_token = master_token
+        self.google_email = email
+        self.android_id = android_id
+
+        return master_token
+
+    async def get_access_token_from_master_token(
+        self,
+        master_token: str | None = None,
+        email: str | None = None,
+        android_id: str | None = None,
+    ) -> GoogleAuthResponse:
+        """Mint a short-lived nest-account access token from a master token."""
+        if master_token:
+            self.master_token = master_token
+        if email:
+            self.google_email = email
+        if android_id:
+            self.android_id = android_id
+
+        if not (self.master_token and self.google_email and self.android_id):
+            raise BadCredentialsException("Master token credentials are incomplete")
+
+        result = await self._run_gpsoauth(
+            self._perform_oauth_sync,
+            self.google_email,
+            self.master_token,
+            self.android_id,
+        )
+
+        access_token = result.get("Auth")
+        if not access_token:
+            error = result.get("Error")
+            # Only errors that mean the master token itself is unusable warrant
+            # re-authentication; anything else is retried as a service error.
+            if error in MASTER_TOKEN_CREDENTIAL_ERRORS:
+                raise BadCredentialsException(
+                    f"Could not mint access token from master token: {error}"
+                )
+            raise NestServiceException(
+                f"Google could not mint a Nest access token: {error or list(result)}"
+            )
+
+        expiry = int(result.get("Expiry", 0))
+        expires_in = max(0, expiry - int(time.time())) if expiry else 3600
+
+        self.auth = GoogleAuthResponse(
+            access_token=access_token,
+            scope=NEST_ACCOUNT_OAUTH_SERVICE,
+            token_type="Bearer",  # noqa: S106
+            expires_in=expires_in,
+            id_token=None,
+        )
+
+        return self.auth
 
     async def get_access_token_from_cookies(
         self, issue_token: str, cookies: str
@@ -172,6 +420,7 @@ class NestClient:
 
         async with self.session.get(
             issue_token,
+            timeout=REQUEST_TIMEOUT,
             headers={
                 "Sec-Fetch-Mode": "cors",
                 "User-Agent": USER_AGENT,
@@ -182,9 +431,17 @@ class NestClient:
         ) as response:
             # Capture refreshed cookies from Google's response
             new_cookies: dict[str, str] = {}
+            expired_cookies: set[str] = set()
             for cookie in response.cookies.values():
-                new_cookies[cookie.key] = cookie.value
+                if is_cookie_expired(cookie):
+                    expired_cookies.add(cookie.key)
+                else:
+                    new_cookies[cookie.key] = cookie.value
 
+            # Rotated values apply at once: the superseded set stops working
+            # even if this request then fails. Deletions wait for a successful
+            # response, so an error or throttled answer can't tear down
+            # cookies that still work.
             if new_cookies:
                 self.refreshed_cookies = merge_cookies(cookies, new_cookies)
                 # Google rotates cookies (e.g. __Secure-1PSIDTS) and only
@@ -192,19 +449,46 @@ class NestClient:
                 # rotated set for subsequent refreshes in this session.
                 self.cookies = self.refreshed_cookies
 
-            result = await response.json()
+            raise_for_google_throttling(response, "retrieving Google access token")
+            raise_for_transient_status(response, "retrieving Google access token")
 
+            try:
+                result = await response.json()
+            except ContentTypeError as exception:
+                # Google answers with an HTML page instead of JSON when it is
+                # rate limiting or showing an "unusual traffic" interstitial.
+                raise GoogleThrottledException(
+                    f"{response.status} non-JSON Google access token response"
+                ) from exception
+            except ValueError as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                ) from exception
+
+            if not isinstance(result, dict):
+                raise PynestException(
+                    f"{response.status} unexpected Google access token response"
+                )
+
+            # Any remaining Google error (USER_LOGGED_OUT, consent_required, ...)
+            # means the cookies or issue_token can no longer be used.
             if "error" in result:
-                # Cookie method
-                if result["error"] == "USER_LOGGED_OUT":
-                    raise BadCredentialsException(
-                        f"{result['error']} - {result['detail']}"
-                    )
+                detail = result.get("detail")
+                raise BadCredentialsException(
+                    f"{result['error']} - {detail}" if detail else result["error"]
+                )
 
-                raise Exception(result["error"])
+            try:
+                auth = GoogleAuthResponseForCookies(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"Unexpected Google access token response fields: {list(result)}"
+                ) from exception
 
-            self.auth = GoogleAuthResponseForCookies(**result)
+            if expired_cookies:
+                self._drop_expired_cookies(cookies, expired_cookies)
 
+            self.auth = auth
             return self.auth
 
     async def authenticate(self, access_token: str) -> NestResponse:
@@ -212,6 +496,7 @@ class NestClient:
 
         async with self.session.post(
             NEST_AUTH_URL_JWT,
+            timeout=REQUEST_TIMEOUT,
             data=FormData(
                 {
                     "embed_google_oauth_access_token": True,
@@ -226,17 +511,25 @@ class NestClient:
                 "Referer": self.environment.host,
             },
         ) as response:
+            raise_for_transient_status(response, "requesting Nest JWT")
             result = await response.json()
-            nest_auth = NestAuthResponse(**result)
+            try:
+                nest_auth = NestAuthResponse(**result)
+            except TypeError as exception:
+                raise PynestException(
+                    f"{response.status} unexpected Nest JWT response"
+                ) from exception
 
         async with self.session.get(
             self.environment.host + "/session",
+            timeout=REQUEST_TIMEOUT,
             headers={
                 "Authorization": f"Basic {nest_auth.jwt}",
                 "cookie": "G_ENABLED_IDPS=google; eu_cookie_accepted=1; viewer-volume=0.5; cztoken="
                 + (nest_auth.jwt or ""),
             },
         ) as response:
+            raise_for_transient_status(response, "authenticating")
             try:
                 nest_response = await response.json()
             except ContentTypeError as exception:
@@ -275,6 +568,13 @@ class NestClient:
                     f"{response.status} error while authenticating - {nest_response}. Please create an issue on GitHub."
                 ) from exception
 
+            # The transport host can change between sessions.
+            urls = self.nest_session.urls
+            if isinstance(urls, NestUrls):
+                urls = vars(urls)
+            if urls and urls.get("transport_url"):
+                self.transport_url = urls["transport_url"]
+
             return self.nest_session
 
     async def get_first_data(
@@ -283,6 +583,7 @@ class NestClient:
         """Get first data."""
         async with self.session.post(
             APP_LAUNCH_URL_FORMAT.format(host=self.environment.host, user_id=user_id),
+            timeout=REQUEST_TIMEOUT,
             json=request,
             headers={
                 "Authorization": f"Basic {nest_access_token}",
@@ -318,8 +619,6 @@ class NestClient:
         updated_buckets: dict,
     ) -> Any:
         """Subscribe for data."""
-        timeout = 600
-
         objects = []
         for bucket in updated_buckets:
             bucket = cast(Bucket, bucket)
@@ -334,10 +633,12 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/subscribe",
-            timeout=ClientTimeout(total=timeout),
+            timeout=ClientTimeout(
+                total=SUBSCRIBE_TIMEOUT_SECONDS, connect=SUBSCRIBE_CONNECT_TIMEOUT
+            ),
             json={
                 "objects": objects,
-                # "timeout": timeout,
+                # "timeout": SUBSCRIBE_TIMEOUT_SECONDS,
                 # "sessionID": f"ios-${user_id}.{random}.{epoch}",
             },
             headers={
@@ -387,6 +688,7 @@ class NestClient:
         # TODO throw better exceptions
         async with self.session.post(
             f"{transport_url}/v6/put",
+            timeout=REQUEST_TIMEOUT,
             json={
                 "session": f"ios-${user_id}.{random}.{epoch}",
                 "objects": objects_to_update,
