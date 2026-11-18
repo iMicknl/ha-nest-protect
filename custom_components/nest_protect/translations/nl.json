@@ -20,7 +20,7 @@
       },
       "auth_method": {
         "title": "Authenticatiemethode",
-        "description": "Kies hoe je je Nest-account wilt verbinden. De Chrome-extensiemethode wordt aanbevolen voor de meeste gebruikers.",
+        "description": "Kies hoe je je Nest-account wilt verbinden. De Chrome-extensiemethode wordt aanbevolen voor de meeste gebruikers.\n\nVerlopen browsergegevens (extensie of handmatig) steeds binnen een paar uur, bijvoorbeeld omdat de browser waaruit je ze kopieerde open en bij Google ingelogd blijft? Gebruik dan **Master token (experimental)**.",
         "data": {
           "method": "Methode"
         }

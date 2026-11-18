@@ -507,11 +507,7 @@ async def _async_recover_session(
     try:
         await entry_data.session_manager.async_refresh_session()
     except BadCredentialsException as err:
-        LOGGER.warning(
-            "Google rejected the stored credentials (%s). Please re-authenticate "
-            "the Nest Protect integration",
-            err,
-        )
+        _log_rejected_credentials(entry, err)
         _async_start_reauth(hass, entry, entry_data)
         return False
     except (
@@ -527,6 +523,26 @@ async def _async_recover_session(
         LOGGER.exception("Unexpected error during session recovery; retrying later")
 
     return _is_loaded(entry)
+
+
+def _log_rejected_credentials(
+    entry: NestProtectConfigEntry, err: BadCredentialsException
+) -> None:
+    """Warn that Google rejected the credentials, with a hint for cookie users."""
+    hint = ""
+    if not entry.data.get(CONF_MASTER_TOKEN) and entry.data.get(CONF_COOKIES):
+        # Browser cookies end when the browser they came from rotates or signs
+        # out its own Google session, often within hours if it stays in use.
+        hint = (
+            ". If browser cookies keep expiring within hours, re-authenticate "
+            "with a master token instead (see the README)"
+        )
+    LOGGER.warning(
+        "Google rejected the stored credentials (%s). Please re-authenticate "
+        "the Nest Protect integration%s",
+        err,
+        hint,
+    )
 
 
 @callback
@@ -789,11 +805,7 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
 
     except BadCredentialsException as err:
-        LOGGER.warning(
-            "Google rejected the stored credentials (%s). Please re-authenticate "
-            "the Nest Protect integration",
-            err,
-        )
+        _log_rejected_credentials(entry, err)
         _async_start_reauth(hass, entry, entry_data)
         return
 

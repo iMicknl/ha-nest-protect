@@ -5,16 +5,18 @@ from __future__ import annotations
 import asyncio
 import datetime
 import time
-from http.cookies import SimpleCookie
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from multidict import CIMultiDict
 
 from custom_components.nest_protect.const import (
     BACKOFF_INTERVALS,
     GOOGLE_THROTTLE_MAX_SECONDS,
     GOOGLE_THROTTLE_SECONDS,
+    GOOGLE_TOKEN_REUSE_MIN_SECONDS,
     MAX_AUTH_FAILURES,
+    SESSION_EXPIRY_BUFFER_SECONDS,
 )
 from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
@@ -23,7 +25,10 @@ from custom_components.nest_protect.pynest.exceptions import (
     NotAuthenticatedException,
     PynestException,
 )
-from custom_components.nest_protect.pynest.models import NestResponse
+from custom_components.nest_protect.pynest.models import (
+    GoogleAuthResponse,
+    NestResponse,
+)
 from custom_components.nest_protect.session import NestSessionManager
 
 
@@ -960,8 +965,7 @@ class _RotatingThenFailingResponse:
     status = 200
 
     def __init__(self) -> None:
-        self.cookies = SimpleCookie()
-        self.cookies["SID"] = "new"
+        self.headers = CIMultiDict([("Set-Cookie", "SID=new; Path=/")])
 
     async def __aenter__(self):
         return self
@@ -1082,3 +1086,61 @@ async def test_startup_google_failure_is_counted():
 
     stats = manager.google_refresh_diagnostics
     assert (stats["attempts"], stats["successes"], stats["failures"]) == (1, 0, 1)
+
+
+def _google_auth(seconds_left: int) -> GoogleAuthResponse:
+    return GoogleAuthResponse(
+        access_token=f"google-{seconds_left}",
+        scope="scope",
+        token_type="Bearer",
+        expires_in=seconds_left,
+    )
+
+
+@pytest.mark.asyncio
+async def test_nearly_expired_google_token_is_not_reused_for_a_new_session():
+    """A Nest session must not be minted from a token about to expire.
+
+    The scheduled refresh runs a few minutes before the Nest session expires,
+    when the Google token it came from has about as long left. Reusing it gave
+    a session that Nest rejected minutes later.
+    """
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=True)
+    client.auth = _google_auth(SESSION_EXPIRY_BUFFER_SECONDS)
+    client.refreshed_cookies = None
+    client.transport_url = None
+
+    async def fresh_token():
+        client.auth = _google_auth(3600)
+        return client.auth
+
+    client.get_access_token = AsyncMock(side_effect=fresh_token)
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    await manager.ensure_session()
+
+    client.get_access_token.assert_awaited_once()
+    client.authenticate.assert_awaited_once_with("google-3600")
+
+
+@pytest.mark.asyncio
+async def test_google_token_with_plenty_of_life_is_reused():
+    """A recent Google token still mints a session without asking Google."""
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=True)
+    client.auth = _google_auth(GOOGLE_TOKEN_REUSE_MIN_SECONDS + 600)
+    client.transport_url = None
+    client.get_access_token = AsyncMock()
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    await manager.ensure_session()
+
+    client.get_access_token.assert_not_awaited()
+    client.authenticate.assert_awaited_once()

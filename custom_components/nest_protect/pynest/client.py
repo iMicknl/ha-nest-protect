@@ -6,9 +6,9 @@ import asyncio
 import logging
 import secrets
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable
 from http.cookiejar import http2time
-from http.cookies import Morsel
+from http.cookies import CookieError, Morsel, SimpleCookie
 from random import randint
 from types import TracebackType
 from typing import Any, cast
@@ -103,6 +103,42 @@ def is_cookie_expired(morsel: Morsel[str]) -> bool:
         return expires_at is not None and expires_at <= time.time()
 
     return False
+
+
+def collect_set_cookies(
+    set_cookie_headers: Iterable[str],
+) -> tuple[dict[str, str], set[str]]:
+    """Split raw Set-Cookie headers into rotated values and deleted names.
+
+    Google regularly sends several Set-Cookie headers for one name in a single
+    response, scoped to different domains or paths: a fresh value for
+    ``.google.com`` next to a deletion of a stale host-only copy, for example.
+    ``ClientResponse.cookies`` keys morsels by name only, so whichever header
+    comes last wins, and a trailing deletion would throw away the fresh value
+    and remove the cookie from the stored header altogether. Google then sees an
+    incomplete cookie set on the next refresh and answers USER_LOGGED_OUT.
+
+    The stored cookie header has no domain or path information, so a name only
+    counts as deleted when no header in the response sets a value for it.
+    """
+    new_cookies: dict[str, str] = {}
+    deleted: set[str] = set()
+
+    for header in set_cookie_headers:
+        jar: SimpleCookie = SimpleCookie()
+        try:
+            jar.load(header)
+        except CookieError:
+            _LOGGER.debug("Ignoring unparsable Set-Cookie header from Google")
+            continue
+
+        for morsel in jar.values():
+            if is_cookie_expired(morsel):
+                deleted.add(morsel.key)
+            else:
+                new_cookies[morsel.key] = morsel.value
+
+    return new_cookies, deleted - new_cookies.keys()
 
 
 def parse_retry_after(value: str | None) -> float | None:
@@ -430,13 +466,18 @@ class NestClient:
             },
         ) as response:
             # Capture refreshed cookies from Google's response
-            new_cookies: dict[str, str] = {}
-            expired_cookies: set[str] = set()
-            for cookie in response.cookies.values():
-                if is_cookie_expired(cookie):
-                    expired_cookies.add(cookie.key)
-                else:
-                    new_cookies[cookie.key] = cookie.value
+            # Read the raw headers: response.cookies keeps one morsel per name.
+            new_cookies, expired_cookies = collect_set_cookies(
+                response.headers.getall("Set-Cookie", ())
+            )
+            if new_cookies or expired_cookies:
+                # Names only: the values are credentials.
+                _LOGGER.debug(
+                    "Google cookie update (status %s): rotated %s, deleted %s",
+                    response.status,
+                    sorted(new_cookies),
+                    sorted(expired_cookies),
+                )
 
             # Rotated values apply at once: the superseded set stops working
             # even if this request then fails. Deletions wait for a successful

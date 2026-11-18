@@ -23,6 +23,9 @@ from custom_components.nest_protect import (
 from custom_components.nest_protect.const import (
     BACKOFF_INTERVALS,
     CONF_COOKIES,
+    CONF_GOOGLE_EMAIL,
+    CONF_ISSUE_TOKEN,
+    CONF_MASTER_TOKEN,
     MAX_AUTH_FAILURES,
     RECONNECT_INTERVALS,
     SUBSCRIBE_FAST_RESPONSE_WARNING,
@@ -512,7 +515,9 @@ async def test_command_refresh_persists_rotated_cookies(
     async def rotate(*args):
         client.refreshed_cookies = rotated_cookies
         client.cookies = rotated_cookies
-        client.auth = MagicMock(access_token="google-token", is_expired=lambda: False)
+        client.auth = MagicMock(
+            access_token="google-token", is_expired=lambda buffer_seconds=0: False
+        )
         return client.auth
 
     command = AsyncMock(side_effect=[NotAuthenticatedException(), "ok"])
@@ -613,7 +618,9 @@ def _rotate_cookies_on_token_refresh(client, new_cookies):
 
     def rotate():
         client.refreshed_cookies = new_cookies
-        client.auth = MagicMock(access_token="google-token", is_expired=lambda: False)
+        client.auth = MagicMock(
+            access_token="google-token", is_expired=lambda buffer_seconds=0: False
+        )
 
     client.get_access_token = AsyncMock(side_effect=rotate)
 
@@ -1094,6 +1101,35 @@ async def test_subscriber_rejected_credentials_start_reauth(hass, caplog):
     reauth.assert_called_once_with(hass)
     entry.runtime_data.stream_health.async_mark_unavailable.assert_called_once()
     assert "Google rejected the stored credentials (USER_LOGGED_OUT)" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("data", "hint_expected"),
+    [
+        ({CONF_COOKIES: "SID=x", CONF_ISSUE_TOKEN: "https://issue"}, True),
+        ({CONF_MASTER_TOKEN: "aas_et/x", CONF_GOOGLE_EMAIL: "a@b.c"}, False),
+    ],
+)
+async def test_rejected_cookies_point_to_master_token(
+    hass, caplog, data, hint_expected
+):
+    """Cookie entries are told about the master token when Google signs them out."""
+    entry = MockConfigEntry(domain=DOMAIN, data=data)
+    entry.add_to_hass(hass)
+    _, sm = _make_subscriber_entry_data(hass, entry)
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(
+            sm,
+            "ensure_session",
+            side_effect=BadCredentialsException("USER_LOGGED_OUT"),
+        ),
+        patch.object(entry, "async_start_reauth"),
+    ):
+        await _async_subscribe_for_data(hass, entry, _make_subscribe_data())
+
+    assert ("with a master token instead" in caplog.text) is hint_expected
 
 
 @pytest.mark.parametrize("transport", ["subscriber", "lock"])

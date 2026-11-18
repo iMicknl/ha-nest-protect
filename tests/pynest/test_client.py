@@ -14,6 +14,7 @@ from aiohttp.test_utils import TestServer
 from custom_components.nest_protect.pynest.client import (
     REQUEST_TIMEOUT,
     NestClient,
+    collect_set_cookies,
     merge_cookies,
     parse_retry_after,
 )
@@ -763,3 +764,69 @@ async def test_short_requests_use_request_timeout():
     # authenticate() sends two requests: the JWT exchange and /session.
     assert len(requests) == len(calls) + 1
     assert all(r.kwargs.get("timeout") is REQUEST_TIMEOUT for r in requests)
+
+
+def test_collect_set_cookies_keeps_value_set_next_to_a_deletion():
+    """A deletion of a stale copy must not undo a rotation in the same response."""
+    new_cookies, expired = collect_set_cookies(
+        [
+            (
+                "__Secure-1PSIDTS=fresh; Domain=.google.com; Path=/; Secure; "
+                "Expires=Fri, 01-Jan-2100 00:00:00 GMT"
+            ),
+            (
+                "__Secure-1PSIDTS=; Domain=accounts.google.com; Path=/; "
+                "Expires=Mon, 01-Jan-1990 00:00:00 GMT"
+            ),
+            "LSOLH=; Max-Age=0",
+        ]
+    )
+
+    assert new_cookies == {"__Secure-1PSIDTS": "fresh"}
+    assert expired == {"LSOLH"}
+
+
+@pytest.mark.enable_socket
+async def test_get_access_token_from_cookies_keeps_rotated_cookie_despite_deletion(
+    socket_enabled,
+):
+    """Google setting and deleting the same name keeps the new value.
+
+    aiohttp's response.cookies holds one morsel per name, so a trailing
+    deletion used to drop the cookie from the header entirely.
+    """
+
+    async def make_token_response(request):
+        response = web.json_response(
+            {
+                "token_type": "Bearer",
+                "access_token": "new-access-token",
+                "scope": "The scope",
+                "login_hint": "login-hint",
+                "expires_in": 3600,
+                "id_token": "",
+                "session_state": {"prop": "value"},
+            }
+        )
+        response.headers.add(
+            "Set-Cookie",
+            "__Secure-1PSIDTS=fresh; Domain=.google.com; Path=/; Secure; "
+            "Max-Age=63072000",
+        )
+        response.headers.add(
+            "Set-Cookie",
+            "__Secure-1PSIDTS=; Domain=accounts.google.com; Path=/; Max-Age=0",
+        )
+        return response
+
+    app = web.Application()
+    app.router.add_get("/issue-token", make_token_response)
+
+    async with TestServer(app) as server, ClientSession() as session:
+        nest_client = NestClient(session)
+        url = server.make_url("/issue-token")
+        await nest_client.get_access_token_from_cookies(
+            str(url), "SID=sid; __Secure-1PSIDTS=old"
+        )
+
+    assert nest_client.cookies == "SID=sid; __Secure-1PSIDTS=fresh"
