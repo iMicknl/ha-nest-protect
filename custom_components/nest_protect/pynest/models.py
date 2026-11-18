@@ -275,9 +275,11 @@ class GoogleAuthResponse:
             seconds=self.expires_in
         )
 
-    def is_expired(self):
-        """Check if access token is expired."""
-        return self.expiry_date <= datetime.datetime.now()
+    def is_expired(self, buffer_seconds: int = 0):
+        """Check if access token is expired, with optional early-expiry buffer."""
+        return self.expiry_date <= datetime.datetime.now() + datetime.timedelta(
+            seconds=buffer_seconds
+        )
 
 
 @dataclass

@@ -15,6 +15,7 @@ from .const import (
     BACKOFF_INTERVALS,
     GOOGLE_THROTTLE_MAX_SECONDS,
     GOOGLE_THROTTLE_SECONDS,
+    GOOGLE_TOKEN_REUSE_MIN_SECONDS,
     LOGGER,
     MAX_AUTH_FAILURES,
     SESSION_EXPIRY_BUFFER_SECONDS,
@@ -266,9 +267,14 @@ class NestSessionManager:
     async def _async_ensure_google_token(self) -> None:
         """Make sure a valid Google token exists to authenticate against Nest.
 
-        Reuses a valid in-memory token. Caller must hold the lock.
+        Reuses the in-memory token only while it has a good part of its life
+        left. Nest ties the session to the Google token it was minted from, so a
+        session minted from a nearly expired token is rejected minutes later
+        while it still advertises a full hour. Caller must hold the lock.
         """
-        if self._client.auth and not self._client.auth.is_expired():
+        if self._client.auth and not self._client.auth.is_expired(
+            buffer_seconds=GOOGLE_TOKEN_REUSE_MIN_SECONDS
+        ):
             return
 
         if time.time() < self._google_throttled_until:

@@ -9,7 +9,7 @@
       },
       "auth_method": {
         "title": "Authentication Method",
-        "description": "Choose how to connect your Nest account. The Chrome Extension method is recommended for most users.",
+        "description": "Choose how to connect your Nest account. The Chrome Extension method is recommended for most users.\n\nIf browser credentials (extension or manual) keep expiring within hours, for example because the browser you copied them from stays open and signed in to Google, use **Master token (experimental)** instead.",
         "data": {
           "method": "Method"
         }

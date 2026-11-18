@@ -46,6 +46,10 @@ PLATFORMS: list[Platform] = [
 STORAGE_VERSION: Final = 1
 STORAGE_KEY_FORMAT: Final = "nest_protect_{entry_id}"
 SESSION_EXPIRY_BUFFER_SECONDS: Final = 300  # 5 minutes
+# A cached Google token needs at least this much life left to mint a Nest
+# session from. The session is refreshed SESSION_EXPIRY_BUFFER_SECONDS before
+# it expires, when the token it was minted from has about that much left too.
+GOOGLE_TOKEN_REUSE_MIN_SECONDS: Final = 900  # 15 minutes
 # Minimum and maximum pause for all Google refreshes after a throttling response.
 GOOGLE_THROTTLE_SECONDS: Final = 900  # 15 minutes
 GOOGLE_THROTTLE_MAX_SECONDS: Final = 21600  # 6 hours
