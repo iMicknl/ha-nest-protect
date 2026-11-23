@@ -388,8 +388,15 @@ async def _async_observe_locks_loop(
         except asyncio.CancelledError:
             raise
         except NestLockAuthException as err:
+            now = time.monotonic()
+            # A refreshed session is rejected within seconds if it is bad. One
+            # that outlived the settle window expired normally: Nest sessions
+            # last about an hour, and a quiet lock sends no batch in between.
+            if auth_failures and now - last_auth_failure >= LOCK_AUTH_SETTLE_SECONDS:
+                auth_failures = 0
+                sm.record_auth_success()
             auth_failures += 1
-            last_auth_failure = time.monotonic()
+            last_auth_failure = now
             sm.record_auth_failure()
             if auth_failures >= MAX_AUTH_FAILURES or sm.should_trigger_reauth:
                 LOGGER.warning(

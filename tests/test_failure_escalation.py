@@ -151,6 +151,47 @@ async def test_lock_stream_failures_far_apart_do_not_add_up(hass):
     reauth.assert_not_called()
 
 
+async def test_hourly_lock_session_expiry_does_not_reauth(hass):
+    """A quiet lock whose session expires every hour must not escalate to reauth.
+
+    Each new stream sends its initial state right away and then nothing while
+    the lock is idle, until the gateway rejects the expired session an hour on.
+    """
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    _, sm = _entry_data(hass, entry)
+    now = 0.0
+    streams = 0
+
+    async def observe_locks():
+        nonlocal now, streams
+        streams += 1
+        if streams > MAX_AUTH_FAILURES + 2:
+            raise asyncio.CancelledError
+        yield {}
+        now += 3600
+        raise NestLockAuthException("code=7 message='authentication failed'")
+
+    entry.runtime_data.grpc_lock_client.observe_locks = observe_locks
+
+    async def sleep(delay):
+        nonlocal now
+        now += delay
+
+    with (
+        patch.object(sm, "async_refresh_session", return_value=True) as refresh,
+        patch("custom_components.nest_protect.asyncio.sleep", side_effect=sleep),
+        patch("custom_components.nest_protect.time.monotonic", side_effect=lambda: now),
+        patch.object(entry, "async_start_reauth") as reauth,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await _async_observe_locks_loop(hass, entry)
+
+    reauth.assert_not_called()
+    assert refresh.await_count == MAX_AUTH_FAILURES + 2
+    assert sm.consecutive_auth_failures == 1
+
+
 async def test_runtime_refresh_prefers_cookies_over_legacy_refresh_token():
     """An entry re-authenticated with cookies must not refresh with its old token."""
     client = NestClient(session=MagicMock())
