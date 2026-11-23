@@ -1,10 +1,15 @@
 """Tests for pynest models."""
 
 import datetime
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-from custom_components.nest_protect.pynest.models import NestResponse
+from custom_components.nest_protect.pynest.models import (
+    GoogleAuthResponse,
+    NestResponse,
+)
 
 
 @pytest.fixture
@@ -107,3 +112,35 @@ def test_nest_response_is_expired_without_buffer():
 
     assert response.is_expired() is True
     assert response.is_expired(buffer_seconds=300) is True
+
+
+class _DstClock(datetime.datetime):
+    """A clock whose local time runs on a fixed UTC offset, like a host on DST."""
+
+    utc: datetime.datetime
+    offset: datetime.timedelta
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is None:
+            return (cls.utc + cls.offset).replace(tzinfo=None)
+        return cls.utc.astimezone(tz)
+
+
+def test_google_auth_response_expiry_survives_dst_fall_back():
+    """An expired token must not look valid again when local clocks fall back."""
+    clock = SimpleNamespace(
+        datetime=_DstClock, timedelta=datetime.timedelta, UTC=datetime.UTC
+    )
+    with patch("custom_components.nest_protect.pynest.models.datetime", clock):
+        # 01:30 PDT, half an hour before clocks go back to 01:00 PST.
+        _DstClock.utc = datetime.datetime(2026, 11, 1, 8, 30, tzinfo=datetime.UTC)
+        _DstClock.offset = datetime.timedelta(hours=-7)
+        auth = GoogleAuthResponse(
+            access_token="t", scope="s", token_type="Bearer", expires_in=3600
+        )
+
+        # 70 minutes later local time reads 01:40 PST, before a naive 02:30 expiry.
+        _DstClock.utc += datetime.timedelta(minutes=70)
+        _DstClock.offset = datetime.timedelta(hours=-8)
+        assert auth.is_expired() is True

@@ -341,9 +341,15 @@ class NestSessionManager:
         if not self._client.auth:
             return False
 
-        self._client.nest_session = await self._client.authenticate(
-            self._client.auth.access_token
-        )
+        try:
+            self._client.nest_session = await self._client.authenticate(
+                self._client.auth.access_token
+            )
+        except (NotAuthenticatedException, PynestException):  # fmt: skip
+            # Nest refused a Google token that looked valid; reusing it would
+            # fail the same way on every retry, so fetch a new one next time.
+            self._client.auth = None
+            raise
         await self._async_persist(self._client.nest_session)
         self._refresh_generation += 1
         return True

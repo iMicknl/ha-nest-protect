@@ -271,13 +271,14 @@ class GoogleAuthResponse:
 
     def __post_init__(self):
         """Set the expiry date during post init."""
-        self.expiry_date = datetime.datetime.now() + datetime.timedelta(
+        # UTC, so a DST change can't make an expired token look valid again.
+        self.expiry_date = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
             seconds=self.expires_in
         )
 
     def is_expired(self):
         """Check if access token is expired."""
-        return self.expiry_date <= datetime.datetime.now()
+        return self.expiry_date <= datetime.datetime.now(datetime.UTC)
 
 
 @dataclass
