@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
@@ -13,8 +13,10 @@ from custom_components.nest_protect import (
     _async_subscribe_for_data,
 )
 from custom_components.nest_protect.binary_sensor import (
+    BINARY_SENSOR_DESCRIPTIONS,
     CONNECTIVITY_DESCRIPTION,
     NestProtectConnectivitySensor,
+    NestProtectOccupancySensor,
     async_setup_entry,
 )
 from custom_components.nest_protect.const import DOMAIN
@@ -207,3 +209,148 @@ async def test_connectivity_from_first_data_and_subscriber(
         await hass.async_block_till_done()
 
     assert hass.states.get(entity_id).state == STATE_UNKNOWN
+
+
+OCCUPANCY_UNIQUE_ID = f"{TOPAZ_KEY}-auto_away"
+
+
+def build_occupancy_sensor(value: dict) -> NestProtectOccupancySensor:
+    """Build an occupancy sensor for a wired Protect."""
+    description = next(d for d in BINARY_SENSOR_DESCRIPTIONS if d.key == "auto_away")
+    sensor = NestProtectOccupancySensor(
+        make_bucket(TOPAZ_KEY, {"wired_or_battery": 0, **value}),
+        description,
+        {},
+        MagicMock(),
+    )
+    # Built without a platform, so there is no entry to read stream health from.
+    sensor._follows_stream_health = False
+    return sensor
+
+
+@pytest.mark.parametrize(
+    ("software_version", "available"),
+    [
+        ("3.1.4rc3", True),
+        ("3.6rc8", True),
+        ("5.0rc31", False),
+        ("5.0rc38", False),
+        ("6.0", False),
+        (None, True),
+        ("", True),
+        ("unknown", True),
+    ],
+)
+def test_occupancy_unavailable_on_firmware_without_motion_reports(
+    software_version: str | None, available: bool
+):
+    """Firmware 5 and later freezes auto_away, so its value is not shown."""
+    sensor = build_occupancy_sensor(
+        {"auto_away": False, "software_version": software_version}
+    )
+
+    assert sensor.available is available
+
+
+def test_occupancy_available_once_auto_away_changes():
+    """A change proves the Protect still reports motion despite its firmware."""
+    sensor = build_occupancy_sensor({"auto_away": False, "software_version": "5.0rc38"})
+
+    with patch.object(sensor, "async_write_ha_state"):
+        sensor.update_callback(
+            make_bucket(
+                TOPAZ_KEY,
+                {
+                    "wired_or_battery": 0,
+                    "auto_away": False,
+                    "software_version": "5.0rc38",
+                },
+            )
+        )
+        assert sensor.available is False
+
+        sensor.update_callback(
+            make_bucket(
+                TOPAZ_KEY,
+                {
+                    "wired_or_battery": 0,
+                    "auto_away": True,
+                    "software_version": "5.0rc38",
+                },
+            )
+        )
+
+    assert sensor.available is True
+    assert sensor.is_on is False
+
+
+def test_occupancy_missing_sample_is_not_a_change():
+    """A sparse update must not count as the Protect reporting motion."""
+    sensor = build_occupancy_sensor({"auto_away": False, "software_version": "5.0rc38"})
+
+    with patch.object(sensor, "async_write_ha_state"):
+        sensor.update_callback(make_bucket(TOPAZ_KEY, {"software_version": "5.0rc38"}))
+        sensor.update_callback(
+            make_bucket(TOPAZ_KEY, {"auto_away": True, "software_version": "5.0rc38"})
+        )
+
+    assert sensor.available is False
+
+
+async def test_occupancy_state_follows_firmware_from_first_data_and_subscriber(
+    hass, component_setup_with_cookies: ComponentSetup
+):
+    """A Protect updating to firmware 5 turns its occupancy sensor unavailable."""
+    topaz = {
+        "object_key": TOPAZ_KEY,
+        "object_revision": 1,
+        "object_timestamp": 1,
+        "value": {
+            "wired_or_battery": 0,
+            "auto_away": False,
+            "software_version": "3.6rc8",
+        },
+    }
+    first_data = FirstDataAPIResponse(
+        weather_for_structures={},
+        service_urls={"urls": {"transport_url": "https://t.example.com"}},
+        _2fa_enabled=False,
+        updated_buckets=[topaz],
+    )
+
+    with (
+        patch.object(NestSessionManager, "async_setup", return_value=first_data),
+        patch("custom_components.nest_protect._async_subscribe_for_data"),
+        patch("custom_components.nest_protect._async_observe_locks_loop"),
+    ):
+        await component_setup_with_cookies()
+
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, OCCUPANCY_UNIQUE_ID
+    )
+    assert entity_id is not None
+    assert hass.states.get(entity_id).state == STATE_ON
+
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    entry_data: HomeAssistantNestProtectData = entry.runtime_data
+    entry_data.client.nest_session = MagicMock()
+    entry_data.client.subscribe_for_data = AsyncMock(
+        return_value={
+            "objects": [
+                {
+                    **topaz,
+                    "object_revision": 2,
+                    "value": {**topaz["value"], "software_version": "5.0rc31"},
+                }
+            ]
+        }
+    )
+
+    with (
+        patch("custom_components.nest_protect._register_subscribe_task"),
+        patch.object(NestSessionManager, "ensure_session", new_callable=AsyncMock),
+    ):
+        await _async_subscribe_for_data(hass, entry, first_data)
+        await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE

@@ -198,6 +198,17 @@ BINARY_SENSOR_DESCRIPTIONS: list[BinarySensorEntityDescription] = [
     ),
 ]
 
+# From 5.0rc31 (still in 5.0rc38) auto_away stops updating and stays at its
+# last value (#476). Older firmware on the same account keeps updating.
+FIRST_FIRMWARE_WITHOUT_OCCUPANCY = 5
+
+
+def _firmware_stops_occupancy(software_version: Any) -> bool:
+    """Return True for Protect firmware that no longer reports motion to Nest."""
+    major, _, _ = str(software_version or "").partition(".")
+    return major.isdigit() and int(major) >= FIRST_FIRMWARE_WITHOUT_OCCUPANCY
+
+
 # Not a topaz field: online state comes from the Protect's widget_track bucket.
 CONNECTIVITY_DESCRIPTION = NestProtectBinarySensorDescription(
     key="is_online",
@@ -229,10 +240,13 @@ async def async_setup_entry(
                 if description.wired_only and device.value.get("wired_or_battery") != 0:
                     continue
 
+                entity_class = (
+                    NestProtectOccupancySensor
+                    if description.key == "auto_away"
+                    else NestProtectBinarySensor
+                )
                 entities.append(
-                    NestProtectBinarySensor(
-                        device, description, data.areas, data.client
-                    )
+                    entity_class(device, description, data.areas, data.client)
                 )
 
         if device.type == BucketType.TOPAZ:
@@ -264,6 +278,32 @@ class NestProtectBinarySensor(NestDescriptiveEntity, BinarySensorEntity):
         if state is None:
             return None
         return self.entity_description.value_fn(state)
+
+
+class NestProtectOccupancySensor(NestProtectBinarySensor):
+    """Representation of a Nest Protect occupancy sensor."""
+
+    # A change in auto_away proves this Protect still reports motion, in case
+    # a later firmware restores it.
+    _occupancy_reported = False
+
+    @property
+    def available(self) -> bool:
+        """Hide the frozen value of firmware that no longer reports motion."""
+        if not self._occupancy_reported and _firmware_stops_occupancy(
+            self.bucket.value.get("software_version")
+        ):
+            return False
+        return super().available
+
+    @callback
+    def update_callback(self, bucket: Bucket) -> None:
+        """Update the state and note whether occupancy still changes."""
+        previous = self.bucket.value.get("auto_away")
+        current = bucket.value.get("auto_away")
+        if previous is not None and current is not None and previous != current:
+            self._occupancy_reported = True
+        super().update_callback(bucket)
 
 
 class NestProtectConnectivitySensor(NestProtectBinarySensor):
