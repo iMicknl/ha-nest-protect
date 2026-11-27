@@ -338,6 +338,12 @@ class NestSessionManager:
             if self._refresh_generation != generation:
                 return True
 
+            # Nest rejected a session minted from the cached Google token. If
+            # Google revoked that token early, every session minted from it is
+            # rejected too, and retries would only run up the failure count
+            # until re-authentication. A fresh token costs nothing extra in the
+            # usual case, where the cached one has expired by now anyway.
+            self._client.auth = None
             return await self._async_refresh_session()
 
     async def _async_refresh_session(self) -> bool:

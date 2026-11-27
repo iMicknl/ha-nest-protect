@@ -517,8 +517,16 @@ def _make_persisting_client(
     client.nest_session = nest_session
     client.auth = MagicMock(access_token="google-token")
     client.auth.is_expired = MagicMock(return_value=False)
+    client.refreshed_cookies = None
     client.transport_url = "https://transport.example.com"
     sessions = iter(new_sessions)
+
+    async def get_access_token():
+        client.auth = MagicMock(access_token="google-token")
+        client.auth.is_expired = MagicMock(return_value=False)
+        return client.auth
+
+    client.get_access_token = AsyncMock(side_effect=get_access_token)
 
     async def authenticate(access_token):
         # Yield like the real request, so a concurrent caller sees the old session.
@@ -1144,3 +1152,32 @@ async def test_google_token_with_plenty_of_life_is_reused():
 
     client.get_access_token.assert_not_awaited()
     client.authenticate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_forced_refresh_fetches_a_new_google_token():
+    """A session Nest rejected is never re-minted from the same Google token.
+
+    Google can revoke a token before its expiry. Reusing it gave a new session
+    that Nest rejected again, until three failures forced re-authentication.
+    """
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=False)
+    client.auth = _google_auth(3000)
+    client.refreshed_cookies = None
+    client.transport_url = None
+
+    async def fresh_token():
+        client.auth = _google_auth(3600)
+        return client.auth
+
+    client.get_access_token = AsyncMock(side_effect=fresh_token)
+    client.authenticate = AsyncMock(return_value=_make_nest_response(expired=False))
+    store = MagicMock()
+    store.async_save = AsyncMock()
+
+    manager = NestSessionManager(client=client, store=store)
+    assert await manager.async_refresh_session() is True
+
+    client.get_access_token.assert_awaited_once()
+    client.authenticate.assert_awaited_once_with("google-3600")
