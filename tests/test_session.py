@@ -7,6 +7,7 @@ import datetime
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 from multidict import CIMultiDict
 
@@ -22,6 +23,7 @@ from custom_components.nest_protect.pynest.client import NestClient
 from custom_components.nest_protect.pynest.exceptions import (
     BadCredentialsException,
     GoogleThrottledException,
+    NestServiceException,
     NotAuthenticatedException,
     PynestException,
 )
@@ -1181,3 +1183,60 @@ async def test_forced_refresh_fetches_a_new_google_token():
 
     client.get_access_token.assert_awaited_once()
     client.authenticate.assert_awaited_once_with("google-3600")
+
+
+def _unreachable_refresh_manager(error: Exception) -> NestSessionManager:
+    client = MagicMock()
+    client.nest_session = _make_nest_response(expired=False)
+    client.auth = _google_auth(3000)
+    client.refreshed_cookies = None
+    client.get_access_token = AsyncMock(side_effect=error)
+    store = MagicMock()
+    store.async_save = AsyncMock()
+    return NestSessionManager(client=client, store=store)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        aiohttp.ClientConnectionError("network is unreachable"),
+        TimeoutError(),
+        NestServiceException("Could not reach Google"),
+    ],
+)
+async def test_unreachable_refresh_does_not_count_toward_reauth(error):
+    """A rejection that can't be retried while offline is not counted twice.
+
+    After a network outage the session has often expired. Nest answers 401
+    while Google is still unreachable, and every retry hit the same stale
+    session, so a short outage ended in re-authentication.
+    """
+    manager = _unreachable_refresh_manager(error)
+    for _ in range(MAX_AUTH_FAILURES - 1):
+        manager.record_auth_failure()
+
+    with pytest.raises(type(error)):
+        await manager.async_refresh_session()
+
+    assert manager.last_refresh_unreachable is True
+    assert manager.consecutive_auth_failures == MAX_AUTH_FAILURES - 2
+    assert manager.consecutive_errors == 1
+
+    manager.record_auth_failure()
+    assert manager.should_trigger_reauth is False
+
+
+@pytest.mark.asyncio
+async def test_rejected_refresh_still_counts_toward_reauth():
+    """Nest refusing new credentials is an auth failure, not a network error."""
+    manager = _unreachable_refresh_manager(PynestException("access_denied"))
+    for _ in range(MAX_AUTH_FAILURES - 1):
+        manager.record_auth_failure()
+
+    with pytest.raises(PynestException):
+        await manager.async_refresh_session()
+
+    assert manager.last_refresh_unreachable is False
+    manager.record_auth_failure()
+    assert manager.should_trigger_reauth is True

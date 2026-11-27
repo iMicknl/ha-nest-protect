@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from aiohttp import ClientError
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -23,6 +24,7 @@ from .const import (
 from .pynest.client import NestClient
 from .pynest.exceptions import (
     GoogleThrottledException,
+    NestServiceException,
     NotAuthenticatedException,
     PynestException,
 )
@@ -65,6 +67,8 @@ class NestSessionManager:
         # Kept apart from auth failures so unrelated errors only slow polling
         # down and never push the user toward re-authentication.
         self._consecutive_errors: int = 0
+        # Set when the last forced refresh couldn't reach Google or Nest.
+        self._last_refresh_unreachable: bool = False
         self._refresh_lock = asyncio.Lock()
         self._refresh_generation: int = 0
         # Wall-clock times; 0 means "never" / "not throttled".
@@ -92,6 +96,11 @@ class NestSessionManager:
     def consecutive_errors(self) -> int:
         """Return the number of consecutive non-authentication errors."""
         return self._consecutive_errors
+
+    @property
+    def last_refresh_unreachable(self) -> bool:
+        """Return True if the last forced refresh failed on a network error."""
+        return self._last_refresh_unreachable
 
     @property
     def should_trigger_reauth(self) -> bool:
@@ -344,7 +353,22 @@ class NestSessionManager:
             # until re-authentication. A fresh token costs nothing extra in the
             # usual case, where the cached one has expired by now anyway.
             self._client.auth = None
-            return await self._async_refresh_session()
+            try:
+                refreshed = await self._async_refresh_session()
+            except TimeoutError, ClientError, NestServiceException:
+                # The rejection that led here can't be tested with new
+                # credentials while Google or Nest is unreachable, e.g. right
+                # after the network came back. The next rejection of the same
+                # stale session must not count again, or a short outage ends
+                # in re-authentication with valid credentials.
+                self._last_refresh_unreachable = True
+                self._consecutive_auth_failures = max(
+                    0, self._consecutive_auth_failures - 1
+                )
+                self._consecutive_errors += 1
+                raise
+            self._last_refresh_unreachable = False
+            return refreshed
 
     async def _async_refresh_session(self) -> bool:
         """Refresh the Nest session; the caller must hold the refresh lock."""

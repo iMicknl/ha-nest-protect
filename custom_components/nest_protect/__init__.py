@@ -409,6 +409,9 @@ async def _async_observe_locks_loop(
             await asyncio.sleep(delay)
             if not await _async_recover_session(hass, entry, entry_data):
                 return
+            if sm.last_refresh_unreachable:
+                # Not a verdict on the credentials; see async_refresh_session.
+                auth_failures = max(0, auth_failures - 1)
         except Exception:
             LOGGER.exception("Lock observe loop failed unexpectedly")
             return
@@ -792,12 +795,15 @@ async def _async_subscribe_for_data(
             _async_start_reauth(hass, entry, entry_data)
             return
 
+        # Network errors during recovery don't add to the auth count, so let
+        # them stretch the pause instead.
+        delay = max(sm.backoff_interval, sm.error_backoff_interval)
         LOGGER.debug(
             "Subscriber: retrying in %ds (attempt %d)",
-            sm.backoff_interval,
+            delay,
             sm.consecutive_auth_failures,
         )
-        await asyncio.sleep(sm.backoff_interval)
+        await asyncio.sleep(delay)
 
         if not await _async_recover_session(hass, entry, entry_data):
             return
