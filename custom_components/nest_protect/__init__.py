@@ -409,6 +409,9 @@ async def _async_observe_locks_loop(
             await asyncio.sleep(delay)
             if not await _async_recover_session(hass, entry, entry_data):
                 return
+            if sm.last_refresh_unreachable:
+                # Not a verdict on the credentials; see async_refresh_session.
+                auth_failures = max(0, auth_failures - 1)
         except Exception:
             LOGGER.exception("Lock observe loop failed unexpectedly")
             return
@@ -507,11 +510,7 @@ async def _async_recover_session(
     try:
         await entry_data.session_manager.async_refresh_session()
     except BadCredentialsException as err:
-        LOGGER.warning(
-            "Google rejected the stored credentials (%s). Please re-authenticate "
-            "the Nest Protect integration",
-            err,
-        )
+        _log_rejected_credentials(entry, err)
         _async_start_reauth(hass, entry, entry_data)
         return False
     except (
@@ -527,6 +526,26 @@ async def _async_recover_session(
         LOGGER.exception("Unexpected error during session recovery; retrying later")
 
     return _is_loaded(entry)
+
+
+def _log_rejected_credentials(
+    entry: NestProtectConfigEntry, err: BadCredentialsException
+) -> None:
+    """Warn that Google rejected the credentials, with a hint for cookie users."""
+    hint = ""
+    if not entry.data.get(CONF_MASTER_TOKEN) and entry.data.get(CONF_COOKIES):
+        # Browser cookies end when the browser they came from rotates or signs
+        # out its own Google session, often within hours if it stays in use.
+        hint = (
+            ". If browser cookies keep expiring within hours, re-authenticate "
+            "with a master token instead (see the README)"
+        )
+    LOGGER.warning(
+        "Google rejected the stored credentials (%s). Please re-authenticate "
+        "the Nest Protect integration%s",
+        err,
+        hint,
+    )
 
 
 @callback
@@ -776,12 +795,15 @@ async def _async_subscribe_for_data(
             _async_start_reauth(hass, entry, entry_data)
             return
 
+        # Network errors during recovery don't add to the auth count, so let
+        # them stretch the pause instead.
+        delay = max(sm.backoff_interval, sm.error_backoff_interval)
         LOGGER.debug(
             "Subscriber: retrying in %ds (attempt %d)",
-            sm.backoff_interval,
+            delay,
             sm.consecutive_auth_failures,
         )
-        await asyncio.sleep(sm.backoff_interval)
+        await asyncio.sleep(delay)
 
         if not await _async_recover_session(hass, entry, entry_data):
             return
@@ -789,11 +811,7 @@ async def _async_subscribe_for_data(
         _register_subscribe_task(hass, entry, data)
 
     except BadCredentialsException as err:
-        LOGGER.warning(
-            "Google rejected the stored credentials (%s). Please re-authenticate "
-            "the Nest Protect integration",
-            err,
-        )
+        _log_rejected_credentials(entry, err)
         _async_start_reauth(hass, entry, entry_data)
         return
 

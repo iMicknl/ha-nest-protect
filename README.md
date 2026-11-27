@@ -61,6 +61,8 @@ Keep the extension installed — you may need it again if Home Assistant request
 > - close that profile right after copying the code, **without signing out**, and don't use Google in it afterwards.
 >
 > If your cookie string contains `__Secure-1PSIDTS` or `__Secure-3PSIDTS`, the session may be bound to that browser and expire sooner.
+>
+> If you capture from the browser you use every day and it stays open and signed in to Google, it rotates the shared session in the background and Home Assistant gets logged out, often within hours (`USER_LOGGED_OUT - No active session found` in the log). In that case use the [master token](#experimental-master-token) instead: it doesn't depend on browser cookies.
 
 ### Manual: Developer Tools
 
@@ -100,6 +102,8 @@ Instead of browser cookies, you can sign in with a master token, the same kind o
 1. In Home Assistant, choose **Master token (experimental)**, then enter your Google email and paste the value.
 
 The `oauth_token` expires within minutes and works only once, so paste it right away. If setup fails, repeat the steps to get a new one.
+
+To switch an existing entry from browser cookies to a master token, go to **Settings → Devices & services → Nest Protect**, open the entry's menu (⋮) and choose **Reconfigure**, or use the re-authentication prompt when Home Assistant asks for it. Then pick **Master token (experimental)** and follow the steps above. Your devices and entities are kept.
 
 Home Assistant exchanges it for a master token and keeps you signed in with it. It stops working if you change your Google password or Google signs it out for security reasons; Home Assistant then asks you to re-authenticate. To revoke it yourself, change your Google password.
 
